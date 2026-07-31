@@ -11,6 +11,7 @@ Predecessor repo `~/dev/Motiva_Challenge` is a **read-only parts donor** — nev
 - `geometry/` — only what DA3 lacks: ground plane, known-object scale check, height. With tests.
 - `fixtures/` — real DA3 output (GLB/PLY/NPZ + manifest). Offline dev + tests run on this, not the cloud.
 - `donor/` — verbatim copies from the predecessor repo, reference only, never imported by app code.
+- `docs/PROGRESS.md` — **read this first.** What is done, what is not, open bugs, handoff notes.
 - `docs/DESIGN.md` — UI spec + acceptance checklist. `docs/SOURCES.md` — canon references.
 
 ## Hard rules
@@ -58,6 +59,16 @@ not just the seconds of actual inference.
   four. Plan the whole sweep before deploying.
 - Always deploy with `--no-gpu-zonal-redundancy` (there is no zonal-redundant L4 quota on this project).
 - Always tear down what you start. Leaving a service or a 12 GB image alive bills silently.
+
+## Handoff — non-negotiable
+
+Your task list dies with your session; `docs/PROGRESS.md` is the only thing that survives.
+
+- **Read `docs/PROGRESS.md` before starting work**, and update it before you finish.
+- Tick `[x]` only for what you *verified*, not what you wrote. Anything built but unexercised
+  goes in a "NOT done" list with the reason — an untested seam marked done is worse than absent.
+- Every bug or limitation you find and don't fix becomes an unchecked follow-up item there,
+  with enough context to act on without this conversation.
 
 ## Git hygiene
 

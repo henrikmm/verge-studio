@@ -32,7 +32,8 @@ service to use a real GPU.
 - `server/` — FastAPI + Docker DA3 inference service (Cloud Run, 1× NVIDIA L4, scale-to-zero)
 - `geometry/` — measurement code DA3 doesn't provide (ground plane, scale check, height)
 - `fixtures/` — real DA3 output used for offline development and tests
-- `docs/` — [DESIGN.md](docs/DESIGN.md) (UI spec), [SOURCES.md](docs/SOURCES.md) (canon references)
+- `docs/` — **[PROGRESS.md](docs/PROGRESS.md) (what's done, what's next — start here)**,
+  [DESIGN.md](docs/DESIGN.md) (UI spec), [SOURCES.md](docs/SOURCES.md) (canon references)
 - `donor/` — verbatim staging copies from the predecessor repo (read-only reference)
 
 Conventions and agent workflow: see [CLAUDE.md](CLAUDE.md).
