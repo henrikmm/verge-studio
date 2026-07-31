@@ -1,0 +1,315 @@
+"""DA3 inference service — Cloud Run Service, 1x NVIDIA L4, scale-to-zero.
+
+Design notes that matter:
+
+* Inference runs in a thread executor and is guarded by a lock, so exactly one run
+  happens at a time while `/gpu` stays responsive. That is what makes the app's live
+  VRAM readout possible — Cloud Run must therefore be deployed with concurrency > 1
+  even though only one inference executes at once.
+* Frames arrive already extracted. The Mac does ffmpeg (local-first); the server
+  never resamples and never downloads video.
+* Artifacts go to GCS when `VERGE_OUTPUT_BUCKET` is set, otherwise they stay on
+  local disk and are served from `/artifact`. The mock server uses the same shape.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import os
+import shutil
+import tempfile
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+
+from contract import (
+    Artifact,
+    FrameInfo,
+    GpuSnapshot,
+    HealthResponse,
+    InferManifest,
+    InferParams,
+    Timing,
+    VramStats,
+    WarmupResponse,
+)
+import vram
+
+MODEL_DIR = os.environ.get("VERGE_MODEL_DIR", "/opt/mvl-models/da3_nested_giant_large_1_1")
+OUTPUT_BUCKET = os.environ.get("VERGE_OUTPUT_BUCKET", "")
+OUTPUT_PREFIX = os.environ.get("VERGE_OUTPUT_PREFIX", "runs/transient").strip("/")
+RUN_ROOT = Path(os.environ.get("VERGE_RUN_ROOT", tempfile.gettempdir())) / "verge-runs"
+
+app = FastAPI(title="Verge Studio DA3 service")
+
+# The app is served from localhost during development; the service is identity-token
+# protected, so permissive CORS here does not widen access.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+_model: Any = None
+_model_load_seconds: float | None = None
+_infer_lock = asyncio.Lock()
+_busy = False
+_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="da3")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_model() -> Any:
+    """Blocking. ~6.7 GB checkpoint; this is the bulk of the ~3 min cold start."""
+    global _model, _model_load_seconds
+    if _model is not None:
+        return _model
+    from depth_anything_3.api import DepthAnything3
+
+    started = time.monotonic()
+    model = DepthAnything3.from_pretrained(MODEL_DIR).to("cuda")
+    _model_load_seconds = time.monotonic() - started
+    _model = model
+    return _model
+
+
+def _snapshot() -> GpuSnapshot:
+    stats = vram.current_snapshot()
+    return GpuSnapshot(
+        available=vram.cuda_available(),
+        model_loaded=_model is not None,
+        busy=_busy,
+        device_name=str(stats["device_name"]),
+        current_bytes=int(stats["current_bytes"]),
+        peak_bytes=int(stats["peak_bytes"]),
+        total_bytes=int(stats["total_bytes"]) or GpuSnapshot.model_fields["total_bytes"].default,
+    )
+
+
+@app.get("/healthz", response_model=HealthResponse)
+def healthz() -> HealthResponse:
+    return HealthResponse(
+        status="ok",
+        model_loaded=_model is not None,
+        gpu_available=vram.cuda_available(),
+    )
+
+
+@app.get("/gpu", response_model=GpuSnapshot)
+def gpu() -> GpuSnapshot:
+    """Polled by the UI during inference for the live VRAM bar."""
+    return _snapshot()
+
+
+@app.post("/warmup", response_model=WarmupResponse)
+async def warmup() -> WarmupResponse:
+    if not vram.cuda_available():
+        raise HTTPException(status_code=503, detail="no CUDA device")
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(_executor, _load_model)
+    return WarmupResponse(
+        model_loaded=True,
+        model_load_seconds=_model_load_seconds or 0.0,
+        gpu=_snapshot(),
+    )
+
+
+def _run_inference(frame_paths: list[str], params: InferParams, export_dir: Path) -> dict[str, Any]:
+    """Blocking; runs on the executor thread."""
+    model = _load_model()
+
+    export_formats = ["npz", "glb"]
+    if params.infer_gs:
+        export_formats += ["gs_ply"]
+
+    started = time.monotonic()
+    with vram.VramSampler() as sampler:
+        prediction = model.inference(
+            frame_paths,
+            process_res=params.process_res,
+            process_res_method=params.process_res_method,
+            ref_view_strategy=params.ref_view_strategy,
+            infer_gs=params.infer_gs,
+            export_dir=str(export_dir),
+            export_format="-".join(export_formats),
+        )
+    gpu_seconds = time.monotonic() - started
+
+    import numpy as np
+
+    np.savez_compressed(
+        export_dir / "result.npz",
+        depth=prediction.depth,
+        confidence=prediction.conf,
+        extrinsics=prediction.extrinsics,
+        intrinsics=prediction.intrinsics,
+    )
+    depth = np.asarray(prediction.depth)
+    return {
+        "gpu_seconds": gpu_seconds,
+        "peak_bytes": sampler.peak_bytes,
+        "total_bytes": sampler.total_bytes,
+        "height": int(depth.shape[-2]),
+        "width": int(depth.shape[-1]),
+    }
+
+
+def _collect_artifacts(export_dir: Path, run_id: str) -> list[Artifact]:
+    kinds = {
+        ".glb": "glb",
+        ".npz": "npz",
+        ".png": "depth_preview",
+        ".ply": "gs_ply",
+        ".mp4": "gs_video",
+    }
+    artifacts: list[Artifact] = []
+    for path in sorted(export_dir.iterdir()):
+        if not path.is_file():
+            continue
+        kind = kinds.get(path.suffix.lower())
+        if kind is None:
+            continue
+        artifacts.append(
+            Artifact(
+                kind=kind,  # type: ignore[arg-type]
+                name=path.name,
+                size_bytes=path.stat().st_size,
+                sha256=_sha256(path),
+                url=_publish(path, run_id),
+            )
+        )
+    return artifacts
+
+
+def _publish(path: Path, run_id: str) -> str:
+    """Upload to the transient GCS prefix, or fall back to serving from disk."""
+    if not OUTPUT_BUCKET:
+        return f"/artifact/{run_id}/{path.name}"
+    from google.cloud import storage
+
+    blob = storage.Client().bucket(OUTPUT_BUCKET).blob(f"{OUTPUT_PREFIX}/{run_id}/{path.name}")
+    blob.upload_from_filename(str(path), if_generation_match=0)
+    return f"gs://{OUTPUT_BUCKET}/{OUTPUT_PREFIX}/{run_id}/{path.name}"
+
+
+@app.post("/infer", response_model=InferManifest)
+async def infer(
+    frames: list[UploadFile] = File(...),
+    params: str = Form("{}"),
+) -> InferManifest:
+    global _busy
+
+    try:
+        parsed = InferParams(**json.loads(params))
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=f"bad params: {exc}") from exc
+
+    if len(frames) < 2:
+        raise HTTPException(
+            status_code=422,
+            detail="DA3 needs multiple views — single images skip cross-view attention entirely",
+        )
+    if len(frames) > parsed.max_frames:
+        raise HTTPException(
+            status_code=422,
+            detail=f"{len(frames)} frames exceeds max_frames={parsed.max_frames}; "
+            "lower the sampling fps rather than truncating the clip",
+        )
+    if not vram.cuda_available():
+        raise HTTPException(status_code=503, detail="no CUDA device")
+
+    run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    run_dir = RUN_ROOT / run_id
+    frame_dir = run_dir / "frames"
+    export_dir = run_dir / "exports"
+    frame_dir.mkdir(parents=True)
+    export_dir.mkdir(parents=True)
+
+    frame_paths: list[str] = []
+    for index, upload in enumerate(frames):
+        target = frame_dir / f"frame-{index:04d}.jpg"
+        with target.open("wb") as handle:
+            shutil.copyfileobj(upload.file, handle)
+        frame_paths.append(str(target))
+
+    wall_started = time.monotonic()
+    loop = asyncio.get_running_loop()
+    async with _infer_lock:
+        _busy = True
+        try:
+            result = await loop.run_in_executor(
+                _executor, _run_inference, frame_paths, parsed, export_dir
+            )
+        except Exception as exc:  # surface the real reason, OOM included
+            shutil.rmtree(run_dir, ignore_errors=True)
+            raise HTTPException(status_code=500, detail=f"inference failed: {exc}") from exc
+        finally:
+            _busy = False
+
+    manifest = InferManifest(
+        run_id=run_id,
+        params=parsed,
+        frames=FrameInfo(
+            count=len(frame_paths),
+            requested_count=len(frame_paths),
+            width=result["width"],
+            height=result["height"],
+            capped=False,
+            effective_fps=parsed.fps,
+        ),
+        timing=Timing(
+            gpu_seconds=result["gpu_seconds"],
+            wall_seconds=time.monotonic() - wall_started,
+            model_load_seconds=_model_load_seconds,
+        ),
+        vram=VramStats(
+            peak_bytes=result["peak_bytes"],
+            current_bytes=int(vram.current_snapshot()["current_bytes"]),
+            total_bytes=result["total_bytes"],
+            device_name=vram.device_name(),
+        ),
+        artifacts=_collect_artifacts(export_dir, run_id),
+    )
+    (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
+    return manifest
+
+
+@app.get("/artifact/{run_id}/{name}")
+def artifact(run_id: str, name: str) -> FileResponse:
+    # Defend against path traversal in both segments.
+    if "/" in run_id or "/" in name or ".." in run_id or ".." in name:
+        raise HTTPException(status_code=400, detail="bad path")
+    path = RUN_ROOT / run_id / "exports" / name
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="no such artifact")
+    return FileResponse(path)
+
+
+@app.post("/shutdown")
+async def shutdown() -> dict[str, str]:
+    """Release the model so the instance can scale down without waiting out the
+    idle timeout. GPU time is billed for the instance's whole lifetime, so this
+    button is a real cost lever, not a nicety."""
+    global _model, _model_load_seconds
+    _model = None
+    _model_load_seconds = None
+    if vram.cuda_available():
+        import torch
+
+        torch.cuda.empty_cache()
+    return {"status": "released"}

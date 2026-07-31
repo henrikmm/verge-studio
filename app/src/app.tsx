@@ -3,6 +3,8 @@ import { Depth2D } from "./panes/depth-2d";
 import { GraphPane } from "./panes/graph-pane";
 import { Inspector } from "./panes/inspector";
 import { Viewport3D } from "./panes/viewport-3d";
+import { formatBytes } from "./lib/contract";
+import { useSession } from "./lib/session-store";
 
 const components = {
   "depth-2d": (_props: IDockviewPanelProps) => <Depth2D />,
@@ -38,16 +40,36 @@ function onReady(event: DockviewReadyEvent) {
 }
 
 export function App() {
+  const { gpu, lastRun, running } = useSession();
+
+  const gpuState = !gpu?.available
+    ? "cold"
+    : running || gpu.busy
+      ? "busy"
+      : gpu.modelLoaded
+        ? "warm"
+        : "cold";
+
   return (
     <div className="app-shell">
       <div className="app-dock">
         <DockviewReact className="dockview-theme-dark" components={components} onReady={onReady} />
       </div>
       <div className="status-bar">
-        <span className="chip">
-          <span className="dot" /> GPU: cold
+        <span className={`chip ${gpuState}`}>
+          <span className="dot" /> GPU: {gpuState}
         </span>
-        <span className="chip">fixture mode</span>
+        {gpu?.available && (
+          <span className="chip">
+            VRAM {formatBytes(gpu.busy ? gpu.currentBytes : gpu.peakBytes)} /{" "}
+            {formatBytes(gpu.totalBytes)}
+          </span>
+        )}
+        {lastRun && (
+          <span className="chip">
+            {lastRun.frames.count}f · {lastRun.timing.gpuSeconds.toFixed(1)}s GPU
+          </span>
+        )}
         <span className="cost">$0.00</span>
       </div>
     </div>
