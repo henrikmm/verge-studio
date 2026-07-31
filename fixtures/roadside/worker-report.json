@@ -1,0 +1,93 @@
+{
+  "artifacts": [
+    {
+      "artifact_id": "raw-depth-pose-result",
+      "path": "result.npz",
+      "sha256": "154021cd3d8ec7bc7e1a1c0b33ea985ba913c84d50c4616b398db4e2f97ac538",
+      "size_bytes": 608561
+    },
+    {
+      "artifact_id": "depth-preview",
+      "path": "depth-preview.png",
+      "sha256": "d618d55e274f53faf40e5086b8a3643bf0dc38ae0cc46483456f0ab972057768",
+      "size_bytes": 10014
+    },
+    {
+      "artifact_id": "native-glb-preview",
+      "path": "scene.glb",
+      "presentation_only": true,
+      "sha256": "4f91cbb5715922997c3fb23e0ec8219b300f53d1039ca5f2aa5f44a73608064c",
+      "size_bytes": 5624372
+    },
+    {
+      "artifact_id": "canonical-point-cloud-preview",
+      "metadata": {
+        "construction": "confidence_percentile_filtered_depth_backprojection_with_w2c_inverse",
+        "coordinate_frame": "da3_world_camera_pose",
+        "linear_unit": "metre_if_model_is_metric_else_relative_scale",
+        "max_points": 250000,
+        "point_count": 175616,
+        "point_count_before_cap": 351232
+      },
+      "path": "canonical-preview.ply",
+      "presentation_only": false,
+      "sha256": "9c7c418bbc94c4264ad1c731c9c082c173764764079e64c2ebe42f986db77d12",
+      "size_bytes": 5931039
+    }
+  ],
+  "billed_runtime_ceiling_seconds": 600,
+  "image_digest": "sha256:ccfb52a700f9572eea59b5790c226a551d43e027f573d00b56146259b7a2119d",
+  "measurements": {
+    "inference_gpu_seconds": 7.6731635419999975,
+    "peak_vram_bytes": 9163968512,
+    "wall_seconds": 53.651154997999996
+  },
+  "model": {
+    "checkpoint_filename": "model.safetensors",
+    "checkpoint_sha256": "8ebe871a022ed58d2fc8fdfb2ebdb31d57b60fe39611c849095851a7b7c6020c",
+    "checkpoint_size_bytes": 6759558100,
+    "depth_mode": "metric",
+    "depth_unit": "metre",
+    "licence": "CC-BY-NC-4.0",
+    "local_dir": "/opt/mvl-models/da3_nested_giant_large_1_1",
+    "repository_id": "depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+    "revision": "b2359bdf726fb44ef62acca04d629dcf158053e7"
+  },
+  "model_key": "da3_nested_giant_large_1_1",
+  "non_acceptance": [
+    "This is a temporary academic comparison and not the final worker-image acceptance.",
+    "The YouTube source has no independent metric ground truth and cannot support an end-to-end height claim.",
+    "Public redistribution of the YouTube clip waits for creator permission or a confirmed reusable licence."
+  ],
+  "pipeline": {
+    "canonical_cloud_role": "own_depth_backprojection_preview",
+    "height_claim": "unknown_without_independent_registered_canopy_and_soil_truth",
+    "native_glb_role": "presentation_only"
+  },
+  "run_profile": "academic_poc",
+  "schema_version": "mvl.mvl029-demo-report/0.1.0",
+  "source": {
+    "channel": "Papo no volante",
+    "clip_identity_sha256": "c1b8eb9872867f1e98d0e1d46770b8be6385e387a453954611c72484411a94a2",
+    "clip_seconds": 10,
+    "frame_count": 4,
+    "frame_sha256": [
+      "7b99233437a382643859cd6d000bd4d2c5b0ecc59682253d29e48a17b007501e",
+      "370ef895ea3c16707c13aa1ba90a12a30b4a0e8dc9ca580ae42debb0db8373d3",
+      "77bda47bece3725d2b89c38d0a7c7d1b7c8e4826f3ca1e23cd07e5e48cab85d1",
+      "3783108f8a708646adeff87839ad7180c572856bc43bcdb2c769b8c64c71e3d6"
+    ],
+    "input_transport": "gcs_window_object",
+    "licence_status": "permission_pending_for_public_redistribution",
+    "licence_url": "https://support.google.com/youtube/answer/2797468?hl=en",
+    "sampling": "four_evenly_spaced_frames_across_window",
+    "scientific_role": "visual_demo_only",
+    "source_duration_seconds": 9.968292,
+    "source_id": "YOUTUBE-RODOVIA-FERNAO-DIAS-DRZD3YOBUOY",
+    "title": "O maior v\u00eddeo de estrada: Rodovia Fern\u00e3o dias, v\u00eddeo sem cortes. 6h40 de viagem de SP \u00e0 BH",
+    "url": "https://www.youtube.com/watch?v=DrZd3YobUOY",
+    "window_start_seconds": 20559
+  },
+  "source_key": "primary",
+  "task_id": "MVL-029"
+}

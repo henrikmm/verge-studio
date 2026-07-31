@@ -1,0 +1,69 @@
+{
+  "schema_version": "mvl.viewer-fixture/0.1.0",
+  "fixture_id": "mvl035-youtube-roadside-nested-giant-20260731",
+  "task_id": "MVL-035",
+  "role": "deferred_real_artifact_browser_fixture",
+  "source": {
+    "source_id": "YOUTUBE-RODOVIA-FERNAO-DIAS-DRZD3YOBUOY",
+    "url": "https://www.youtube.com/watch?v=DrZd3YobUOY",
+    "window_start_seconds": 20559,
+    "window_end_seconds": 20569,
+    "frame_count": 4,
+    "scientific_role": "visual_demo_only",
+    "licence_status": "permission_pending_for_public_redistribution",
+    "source_video_in_fixture": false
+  },
+  "model": {
+    "repository_id": "depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+    "revision": "b2359bdf726fb44ef62acca04d629dcf158053e7",
+    "depth_mode": "metric",
+    "checkpoint_sha256": "8ebe871a022ed58d2fc8fdfb2ebdb31d57b60fe39611c849095851a7b7c6020c"
+  },
+  "coordinate_convention": {
+    "frame": "da3_world_camera_pose",
+    "parent_frame": "da3_world",
+    "extrinsics": "world_to_camera_in_raw_result; native GLB uses provider export alignment",
+    "linear_unit": "metre_if_model_metric_else_relative_scale",
+    "height_claim": "unknown_without_independent_registered_canopy_and_soil_truth"
+  },
+  "artifacts": {
+    "native_glb": {
+      "path": "scene.glb",
+      "role": "presentation_only",
+      "size_bytes": 5624372,
+      "sha256": "4f91cbb5715922997c3fb23e0ec8219b300f53d1039ca5f2aa5f44a73608064c"
+    },
+    "canonical_ply": {
+      "path": "canonical-preview.ply",
+      "role": "own_depth_backprojection_preview",
+      "size_bytes": 5931039,
+      "point_count": 175616,
+      "sha256": "9c7c418bbc94c4264ad1c731c9c082c173764764079e64c2ebe42f986db77d12"
+    },
+    "raw_result": {
+      "path": "result.npz",
+      "size_bytes": 608561,
+      "sha256": "154021cd3d8ec7bc7e1a1c0b33ea985ba913c84d50c4616b398db4e2f97ac538"
+    },
+    "depth_preview": {
+      "path": "depth-preview.png",
+      "size_bytes": 10014,
+      "sha256": "d618d55e274f53faf40e5086b8a3643bf0dc38ae0cc46483456f0ab972057768"
+    },
+    "worker_report": {
+      "path": "worker-report.json",
+      "size_bytes": 3869,
+      "sha256": "024c77517f8e52a4c5013c1531129179f5897b19d68a9edc89e409101100ac4c"
+    },
+    "run_summary": {
+      "path": "run-summary.json",
+      "size_bytes": 3359,
+      "sha256": "b46a3c9eb87845e524bf063c39be8215d6998e19a497c26cc85d7ebad57b1a28"
+    }
+  },
+  "notes": [
+    "The source video is intentionally not copied into this repository until redistribution permission is established.",
+    "The current web viewer uses a synthetic fixture and does not load these files yet.",
+    "This fixture must not be used as independent canopy or soil truth."
+  ]
+}

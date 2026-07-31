@@ -1,0 +1,72 @@
+{
+  "schema_version": "mvl.real-cloud-run-summary/0.1.0",
+  "task_id": "MVL-029",
+  "evidence_class": "real-cloud",
+  "provider": "google-cloud",
+  "project_id": "motiva-verge-lab-dev",
+  "region": "us-central1",
+  "accelerator": "NVIDIA L4",
+  "execution": {
+    "id": "mvl029-demo-20260731-6mldn",
+    "status": "succeeded",
+    "start_time": "2026-07-31T17:04:28.354916Z",
+    "completion_time": "2026-07-31T17:08:23.969629Z",
+    "provider_elapsed_seconds": 235.61,
+    "task_timeout_seconds": 300,
+    "tasks": 1,
+    "retries": 0
+  },
+  "image": {
+    "digest": "sha256:ccfb52a700f9572eea59b5790c226a551d43e027f573d00b56146259b7a2119d",
+    "temporary": true,
+    "registry_size_mb_after_patch": 12419.401,
+    "registry_ceiling_bytes": 21474836480
+  },
+  "source": {
+    "url": "https://www.youtube.com/watch?v=DrZd3YobUOY",
+    "window_start_seconds": 20559,
+    "requested_seconds": 10,
+    "staged_duration_seconds": 9.968292,
+    "staged_size_bytes": 5148051,
+    "public_redistribution": "permission_pending",
+    "scientific_role": "visual_demo_only"
+  },
+  "result": {
+    "model": "depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+    "model_revision": "b2359bdf726fb44ef62acca04d629dcf158053e7",
+    "checkpoint_sha256": "8ebe871a022ed58d2fc8fdfb2ebdb31d57b60fe39611c849095851a7b7c6020c",
+    "depth_mode": "metric",
+    "frame_count": 4,
+    "inference_gpu_seconds": 7.673163542,
+    "worker_wall_seconds": 53.651154998,
+    "peak_vram_bytes": 9163968512,
+    "canonical_point_count": 175616,
+    "canonical_point_count_before_cap": 351232,
+    "height_claim": "unknown_without_independent_registered_canopy_and_soil_truth"
+  },
+  "artifacts": {
+    "local_compact_report": "worker-report.json",
+    "local_compact_preview": "depth-preview.png",
+    "remote_prefix_as_executed": "gs://motiva-verge-lab-dev-fdcfc626/runs/transient/mvl029-demo-20260731da3_nested_giant_large_1_1/",
+    "remote_bytes": 12177855,
+    "source_remote_bytes": 5148051
+  },
+  "attempts": [
+    {"execution": "mvl029-demo-20260731-mfwmm", "result": "pre-inference rejection", "reason": "output bucket environment key mismatch"},
+    {"execution": "mvl029-demo-20260731-zzpnm", "result": "pre-inference rejection", "reason": "YouTube resolver rejected cloud data-centre request"},
+    {"execution": "mvl029-demo-20260731-bw96s", "result": "pre-inference rejection", "reason": "worker identity lacked exact source-object read"},
+    {"execution": "mvl029-demo-20260731-6mldn", "result": "success"}
+  ],
+  "budget": {
+    "owner_batch_ceiling_brl": 20.0,
+    "action_mapped_authorization_ceiling_brl": 19.8,
+    "note": "Ceilings are conservative authorization maxima, not provider-billed cost. The earlier 16:09:46 gate receipt authorized no mapped billable action and is excluded from this action-mapped total; it remains in the repository ledger. Delayed billing reconciliation is pending."
+  },
+  "remaining_work": [
+    "run or record a measured rejection for the pinned Large 1.1 same-slice candidate",
+    "select and rebuild the final retained worker image only after the comparison",
+    "prove runtime-network-denied checkpoint acquisition and reconcile delayed billing",
+    "obtain creator permission or replace the YouTube source before public redistribution",
+    "teardown temporary image, job, exact-object IAM, source, and outputs after owner approval"
+  ]
+}

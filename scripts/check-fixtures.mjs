@@ -27,7 +27,7 @@ assert.equal(glb.readUInt32LE(8), glb.length, "GLB length mismatch");
 // NPZ: zip signature + expected entry names in central directory
 const npz = readFileSync(join(dir, "result.npz"));
 assert.equal(npz.readUInt16LE(0), 0x4b50, "result.npz is not a zip");
-const names = ["depth", "conf", "extrinsics", "intrinsics"];
+const names = ["depth", "confidence", "extrinsics", "intrinsics"];
 const raw = npz.toString("latin1");
 for (const n of names) assert.ok(raw.includes(`${n}.npy`), `npz missing entry: ${n}.npy`);
 
