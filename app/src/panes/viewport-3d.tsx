@@ -1,9 +1,31 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { PLYLoader } from "three/examples/jsm/loaders/PLYLoader.js";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 const GIZMO_PX = 72;
+
+// Fallback for colorless clouds: turbo-ish ramp along world height (z-up in DA3 world frame).
+function colorByHeight(geometry: THREE.BufferGeometry) {
+  const pos = geometry.getAttribute("position");
+  const colors = new Float32Array(pos.count * 3);
+  let min = Infinity;
+  let max = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    const z = pos.getZ(i);
+    if (z < min) min = z;
+    if (z > max) max = z;
+  }
+  const c = new THREE.Color();
+  for (let i = 0; i < pos.count; i++) {
+    const t = (pos.getZ(i) - min) / (max - min || 1);
+    c.setHSL(0.66 - 0.66 * t, 0.85, 0.55);
+    colors[i * 3] = c.r;
+    colors[i * 3 + 1] = c.g;
+    colors[i * 3 + 2] = c.b;
+  }
+  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+}
 
 export function Viewport3D() {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -33,29 +55,37 @@ export function Viewport3D() {
     gizmoScene.add(new THREE.AxesHelper(1));
     const gizmoCam = new THREE.PerspectiveCamera(40, 1, 0.1, 10);
 
-    const loader = new PLYLoader();
+    // DA3-native export: colored point cloud + camera frustums (see docs/SOURCES.md).
+    const loader = new GLTFLoader();
     loader.load(
-      "/roadside/canonical-preview.ply",
-      (geometry) => {
-        geometry.computeBoundingBox();
-        const bbox = geometry.boundingBox!;
+      "/roadside/scene.glb",
+      (gltf) => {
+        const bbox = new THREE.Box3().setFromObject(gltf.scene);
         const center = bbox.getCenter(new THREE.Vector3());
         const size = bbox.getSize(new THREE.Vector3()).length();
-        const material = new THREE.PointsMaterial({
-          size: size / 800,
-          vertexColors: geometry.hasAttribute("color"),
-          sizeAttenuation: true,
+        let count = 0;
+        gltf.scene.traverse((obj) => {
+          if (obj instanceof THREE.Points) {
+            const geometry = obj.geometry;
+            count += geometry.getAttribute("position").count;
+            if (!geometry.hasAttribute("color")) colorByHeight(geometry);
+            obj.material = new THREE.PointsMaterial({
+              size: size / 800,
+              vertexColors: true,
+              sizeAttenuation: true,
+            });
+          }
         });
-        scene.add(new THREE.Points(geometry, material));
+        scene.add(gltf.scene);
         controls.target.copy(center);
         camera.position.copy(center).add(new THREE.Vector3(0, -size * 0.15, -size * 0.6));
         camera.near = size / 1000;
         camera.far = size * 10;
         camera.updateProjectionMatrix();
-        setPoints(geometry.getAttribute("position").count);
+        setPoints(count);
       },
       undefined,
-      (err) => setError(err instanceof Error ? err.message : "PLY load failed"),
+      (err) => setError(err instanceof Error ? err.message : "GLB load failed"),
     );
 
     let raf = 0;

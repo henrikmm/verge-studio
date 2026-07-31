@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 
 interface WorkerReport {
-  model?: { key?: string; hf_repo_id?: string; hf_revision?: string };
-  measurements?: Record<string, number>;
-  frames?: unknown[];
+  model_key?: string;
+  model?: { repository_id?: string; revision?: string; licence?: string; depth_unit?: string };
+  measurements?: { inference_gpu_seconds?: number; peak_vram_bytes?: number; wall_seconds?: number };
 }
 
 function Row({ k, v }: { k: string; v: string }) {
@@ -39,16 +39,16 @@ export function Inspector() {
       <div className="pane-body inspector">
         <div className="inspector-section">
           <h3>Module</h3>
-          <Row k="Model" v={report?.model?.key ?? "da3_nested_giant_large_1_1"} />
-          <Row k="Revision" v={(report?.model?.hf_revision ?? "b2359bdf").slice(0, 8)} />
-          <Row k="License" v="CC-BY-NC-4.0" />
+          <Row k="Model" v={report?.model_key ?? "da3_nested_giant_large_1_1"} />
+          <Row k="Revision" v={(report?.model?.revision ?? "b2359bdf").slice(0, 8)} />
+          <Row k="Depth unit" v={report?.model?.depth_unit ?? "metre"} />
+          <Row k="License" v={report?.model?.licence ?? "CC-BY-NC-4.0"} />
         </div>
         <div className="inspector-section">
           <h3>Run (recorded)</h3>
-          <Row k="Frames" v={String(report?.frames?.length ?? 4)} />
-          <Row k="Inference" v={sec(m.inference_seconds)} />
-          <Row k="Peak VRAM" v={gib(m.peak_gpu_memory_bytes)} />
-          <Row k="Wall" v={sec(m.total_wall_seconds)} />
+          <Row k="Inference" v={sec(m.inference_gpu_seconds)} />
+          <Row k="Peak VRAM" v={gib(m.peak_vram_bytes)} />
+          <Row k="Wall" v={sec(m.wall_seconds)} />
         </div>
         <div className="inspector-section">
           <h3>Session</h3>
