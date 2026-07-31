@@ -63,3 +63,9 @@ conf-filtered point cloud + optional camera frustums (no mesh).
 - YouTube blocks datacenter resolvers — never fetch video URLs from the cloud; upload frames from the Mac.
 - Cloud Run on `verge-lab` has **no L4 quota with zonal redundancy**; `--no-gpu-zonal-redundancy`
   is mandatory on every deploy (verified by probe 2026-07-31).
+- **DA3 imports `cv2` at module load** (`utils/export/gs.py` → `model/utils/gs_renderer.py` →
+  `utils/camera_trj_helpers.py`), so the image needs OpenCV's shared libraries even though we
+  never decode video server-side: `libglib2.0-0` (provides `libgthread-2.0.so.0`) and `libgl1`.
+  The donor image got these transitively from `ffmpeg`; dropping ffmpeg drops them too, and the
+  failure only appears at the first `/warmup` after a full build+deploy. The Dockerfile now runs
+  an import check at build time so this class of error fails in the build instead.
