@@ -23,8 +23,8 @@ if [[ -z "${VIDEO}" ]]; then
     -c:v libx264 -pix_fmt yuv420p -y "${VIDEO}"
 fi
 
-echo "== healthz =="
-curl -sS -f -H "Authorization: Bearer ${VERGE_TOKEN}" "${VERGE_URL}/healthz"
+echo "== health =="
+curl -sS -f -H "Authorization: Bearer ${VERGE_TOKEN}" "${VERGE_URL}/health"
 echo
 
 echo "== extracting 4 frames locally =="

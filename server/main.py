@@ -101,8 +101,11 @@ def _snapshot() -> GpuSnapshot:
     )
 
 
-@app.get("/healthz", response_model=HealthResponse)
-def healthz() -> HealthResponse:
+# NOT /healthz: Google's frontend swallows that path on Cloud Run and returns its own
+# HTML 404 before the request ever reaches the container. Verified 2026-07-31 — /gpu,
+# /docs and /openapi.json all served fine from the same revision while /healthz 404'd.
+@app.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
     return HealthResponse(
         status="ok",
         model_loaded=_model is not None,

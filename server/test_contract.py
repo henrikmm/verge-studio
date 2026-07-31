@@ -11,8 +11,8 @@ import main  # noqa: E402
 
 client = TestClient(main.app)
 
-# /healthz on a CPU box
-r = client.get("/healthz")
+# /health on a CPU box
+r = client.get("/health")
 assert r.status_code == 200, r.text
 body = r.json()
 assert body["status"] == "ok"

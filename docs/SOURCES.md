@@ -69,3 +69,13 @@ conf-filtered point cloud + optional camera frustums (no mesh).
   The donor image got these transitively from `ffmpeg`; dropping ffmpeg drops them too, and the
   failure only appears at the first `/warmup` after a full build+deploy. The Dockerfile now runs
   an import check at build time so this class of error fails in the build instead.
+- **Cloud Run's frontend swallows `/healthz`** — it returns Google's own HTML 404 before the
+  request reaches the container. Verified 2026-07-31: on the same revision, `/gpu`, `/docs`,
+  `/openapi.json` and `/` all served correctly while `/healthz` 404'd, authenticated or not.
+  The health endpoint is therefore `/health`. Don't "fix" a 404 by rebuilding — probe another
+  path first to tell an edge-reserved path from a dead container.
+- **A user-account identity token has the wrong audience for Cloud Run.**
+  `gcloud auth print-identity-token` mints `aud=32555940559.apps.googleusercontent.com`, not the
+  service URL, so Cloud Run treats the call as unauthenticated and answers 404 (not 403).
+  Use `gcloud run services proxy <service> --port=N` for local access — it supplies correct auth —
+  rather than making the service public.

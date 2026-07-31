@@ -18,7 +18,10 @@ COUNTS=("${@:-}")
 [[ -z "${COUNTS[0]:-}" ]] && COUNTS=(4 8 16 24 32)
 
 : "${VERGE_URL:?set VERGE_URL to the deployed service URL}"
-: "${VERGE_TOKEN:?set VERGE_TOKEN=\$(gcloud auth print-identity-token)}"
+# Token is optional: when going through `gcloud run services proxy` the proxy supplies
+# auth itself, and a user-account identity token has the wrong audience for Cloud Run
+# anyway (it authenticates to the gcloud OAuth client, not the service).
+VERGE_TOKEN="${VERGE_TOKEN:-}"
 
 PROCESS_RES="${PROCESS_RES:-504}"
 WORK="$(mktemp -d)"
@@ -26,7 +29,11 @@ OUT="docs/vram-measurements.json"
 trap 'rm -rf "${WORK}"' EXIT
 
 api() {
-  curl -sS -f -H "Authorization: Bearer ${VERGE_TOKEN}" "$@"
+  if [[ -n "${VERGE_TOKEN}" ]]; then
+    curl -sS -f -H "Authorization: Bearer ${VERGE_TOKEN}" "$@"
+  else
+    curl -sS -f "$@"
+  fi
 }
 
 echo "== warmup (one cold start for the whole sweep) =="
