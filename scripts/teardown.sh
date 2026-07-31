@@ -34,6 +34,12 @@ else
   fi
 fi
 
+# Cloud Build stages a source tarball per build and never cleans up after itself.
+# Tiny (~50 KB each) but it accumulates, and "tear down what you start" means all of it.
+echo "== clearing Cloud Build source staging =="
+gcloud storage rm -r "gs://${PROJECT_ID}_cloudbuild/source/**" \
+  --project="${PROJECT_ID}" 2>/dev/null || echo "  (nothing staged)"
+
 echo
 echo "remaining Cloud Run services:"
 gcloud run services list --region="${REGION}" --project="${PROJECT_ID}" 2>&1 | tail -3
