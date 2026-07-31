@@ -17,14 +17,14 @@ SCHEMA_VERSION = "verge.infer-manifest/0.1.0"
 MODEL_REPOSITORY_ID = "depth-anything/DA3NESTED-GIANT-LARGE-1.1"
 MODEL_REVISION = "b2359bdf726fb44ef62acca04d629dcf158053e7"
 
-# The L4 we deploy on. Used for the UI's VRAM budget bar.
-L4_TOTAL_VRAM_BYTES = 24 * 1024**3
+# MEASURED from torch.cuda.mem_get_info() on the deployed L4 (2026-07-31): 22.03 GiB
+# usable. The advertised "24 GB" is decimal and some is reserved.
+L4_TOTAL_VRAM_BYTES = 23_659_151_360
 
-# Frame-count ceiling. This is a safety rail, not a quality target: DA3 itself
-# imposes no cap, and its in-repo memory estimator under-predicts real usage ~4x,
-# so the real ceiling has to come from a measured sweep. Until that sweep runs,
-# this stays conservative.
-DEFAULT_MAX_FRAMES = 16
+# Frame-count ceiling — a safety rail, not a quality target (DA3 imposes none).
+# Set from the sweep in docs/vram-measurements.json: 32 frames @ 504 px peaked at
+# 14.03 GiB with ~8 GiB headroom and no OOM. 32 is the largest count actually run.
+DEFAULT_MAX_FRAMES = 32
 
 ProcessResMethod = Literal["upper_bound_resize", "lower_bound_resize"]
 RefViewStrategy = Literal["first", "middle", "saddle_balanced", "saddle_sim_range"]

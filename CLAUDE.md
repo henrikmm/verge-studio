@@ -38,7 +38,7 @@ Predecessor repo `~/dev/Motiva_Challenge` is a **read-only parts donor** — nev
 | Param | Default | Range / notes |
 |---|---|---|
 | `fps` (frame sampling) | `10` | 1–50 in the UI. Matches the HF Space's own slider default. |
-| `max_frames` | measured cap | Hard ceiling protecting the L4's 24 GiB. Never remove it. |
+| `max_frames` | `32` | Measured ceiling (14.03 GiB of 22.03 GiB). Never remove it. |
 | `process_res` | `504` | API/CLI/Space default alike. |
 | `process_res_method` | `upper_bound_resize` | The Space's `low_res` option. |
 | `ref_view_strategy` | `middle` | DA3 docs recommend this for temporally-ordered video. |
@@ -70,5 +70,9 @@ not just the seconds of actual inference.
 - `ffmpeg` 8.1.2 installed via Homebrew. Node 22+/npm via Homebrew; python3 at `/usr/local/bin/python3`.
 - Dev server: `cd app && npm run dev` (Vite, port 5173). Use the browser-pane preview to verify visually.
 - GCP: project **`verge-lab`**, region `us-central1`, keyless ADC; identity tokens via `gcloud auth print-identity-token`. No `--immutable-tags` on Artifact Registry; push by digest; `objectCreator` + conditional prefix IAM; `if_generation_match=0` on uploads.
-- VRAM budget: L4 = 24 GiB. Only one real measurement exists (4 frames @ 392 px = 8.53 GiB peak);
-  DA3's own estimator under-predicts it ~4×, so the frame cap must come from a measured sweep.
+- VRAM budget: L4 reports **22.03 GiB usable** (23,659,151,360 B) — not 24 GiB; the advertised
+  figure is decimal and some is reserved. Measured sweep in `docs/vram-measurements.json`:
+  model resident 6.57 GiB; peaks 10.12 / 12.79 / 12.79 / 14.03 / 14.03 GiB at 4/8/16/24/32 frames
+  @ 504 px. No OOM at 32 frames (~8 GiB headroom). Cold start 64 s, model load 40 s.
+  Those readings are warm-instance high-water marks that include allocator cache from earlier
+  runs, so they are safe upper bounds, not isolated per-run costs.

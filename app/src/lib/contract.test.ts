@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PARAMS,
-  estimateVramRange,
   formatBytes,
   L4_TOTAL_VRAM_BYTES,
+  MODEL_RESIDENT_BYTES,
   planFrames,
+  predictVram,
   vramFraction,
+  VRAM_MEASUREMENTS,
 } from "./contract";
 
 describe("planFrames", () => {
@@ -41,39 +43,50 @@ describe("defaults track upstream", () => {
   });
 });
 
-describe("estimateVramRange", () => {
-  it("brackets the one measurement it is anchored to", () => {
-    // Both extremes are fitted through 4 frames @ 392 px = 8.53 GiB, so at that
-    // exact point the bracket must collapse onto the measurement.
-    const { lowBytes, highBytes } = estimateVramRange(4, 392);
-    expect(lowBytes / 1024 ** 3).toBeCloseTo(8.53, 2);
-    expect(highBytes / 1024 ** 3).toBeCloseTo(8.53, 2);
+describe("predictVram", () => {
+  it("returns each measured point exactly", () => {
+    for (const { frames, peakBytes } of VRAM_MEASUREMENTS) {
+      const p = predictVram(frames, 504);
+      expect(p.bytes).toBe(peakBytes);
+      expect(p.measured).toBe(true);
+    }
   });
 
-  it("widens as it extrapolates away from the measurement", () => {
-    const near = estimateVramRange(4, 392);
-    const far = estimateVramRange(32, 504);
-    expect(far.highBytes - far.lowBytes).toBeGreaterThan(near.highBytes - near.lowBytes);
+  it("interpolates between measured points and flags it as not measured", () => {
+    const p = predictVram(12, 504);
+    expect(p.measured).toBe(false);
+    // 8 and 16 both measured 13_732_151_296, so 12 must land on the same plateau.
+    expect(p.bytes).toBe(13_732_151_296);
   });
 
-  it("grows with frame count and with resolution", () => {
-    expect(estimateVramRange(8, 504).highBytes).toBeGreaterThan(
-      estimateVramRange(4, 504).highBytes,
-    );
-    expect(estimateVramRange(4, 1024).highBytes).toBeGreaterThan(
-      estimateVramRange(4, 504).highBytes,
-    );
+  it("flags extrapolation beyond the measured envelope", () => {
+    expect(predictVram(64, 504).measured).toBe(false);
+    expect(predictVram(64, 504).bytes).toBeGreaterThan(predictVram(32, 504).bytes);
   });
 
-  it("never claims to be measured", () => {
-    expect(estimateVramRange(16, 504).measured).toBe(false);
+  it("flags any resolution other than the one measured", () => {
+    expect(predictVram(32, 504).measured).toBe(true);
+    expect(predictVram(32, 1024).measured).toBe(false);
+    expect(predictVram(32, 1024).bytes).toBeGreaterThan(predictVram(32, 504).bytes);
   });
 
-  it("keeps the shipped default's lower bracket inside the L4 budget", () => {
+  it("never predicts less than the resident model", () => {
+    expect(predictVram(1, 504).bytes).toBeGreaterThanOrEqual(MODEL_RESIDENT_BYTES);
+  });
+
+  it("keeps the shipped default inside the measured L4 budget", () => {
     const plan = planFrames(DEFAULT_PARAMS.fps, 10, DEFAULT_PARAMS.maxFrames);
-    expect(estimateVramRange(plan.count, DEFAULT_PARAMS.processRes).lowBytes).toBeLessThan(
-      L4_TOTAL_VRAM_BYTES,
-    );
+    const p = predictVram(plan.count, DEFAULT_PARAMS.processRes);
+    expect(p.measured).toBe(true);
+    expect(p.bytes).toBeLessThan(L4_TOTAL_VRAM_BYTES);
+  });
+});
+
+describe("measured device constants", () => {
+  it("uses the real usable VRAM, not the advertised 24 GiB", () => {
+    // torch.cuda.mem_get_info() on the deployed L4 reported 23_659_151_360 bytes.
+    expect(L4_TOTAL_VRAM_BYTES).toBe(23_659_151_360);
+    expect(L4_TOTAL_VRAM_BYTES).toBeLessThan(24 * 1024 ** 3);
   });
 });
 

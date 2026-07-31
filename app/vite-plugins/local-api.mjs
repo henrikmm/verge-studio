@@ -13,20 +13,36 @@ import { extractFrames, probeVideo } from "../../scripts/extract-frames.mjs";
 const FIXTURE_DIR = new URL("../../fixtures/roadside/", import.meta.url);
 
 /**
- * PLACEHOLDER VRAM MODEL — fitted to a single real datapoint (4 frames @ 392 px =
- * 8.53 GiB on an L4) and therefore not trustworthy for capacity planning. It exists
- * so the UI has something to render offline and so the cap warnings are exercised.
- * scripts/vram-sweep.sh replaces these constants with measured values.
- *
- * Keep in sync with the same constants in app/src/lib/contract.ts.
+ * Measured on a real L4 by scripts/vram-sweep.sh (2026-07-31); raw data in
+ * docs/vram-measurements.json. Keep in sync with app/src/lib/contract.ts.
  */
-const VRAM_BASE_BYTES = 6.0 * 1024 ** 3;
-const VRAM_PER_FRAME_AT_504 = 1.045 * 1024 ** 3;
-const TOTAL_VRAM_BYTES = 24 * 1024 ** 3;
+const VRAM_BASE_BYTES = 7_050_625_024; // resident after model load
+const TOTAL_VRAM_BYTES = 23_659_151_360; // 22.03 GiB usable, not 24
+const MEASUREMENTS = [
+  [4, 10_863_247_360],
+  [8, 13_732_151_296],
+  [16, 13_732_151_296],
+  [24, 15_065_939_968],
+  [32, 15_065_939_968],
+];
 
 export function estimateVramBytes(frameCount, processRes) {
   const resScale = (processRes / 504) ** 2;
-  return VRAM_BASE_BYTES + frameCount * resScale * VRAM_PER_FRAME_AT_504;
+  const last = MEASUREMENTS[MEASUREMENTS.length - 1];
+  if (frameCount >= last[0]) {
+    const prev = MEASUREMENTS[MEASUREMENTS.length - 3];
+    const slope = (last[1] - prev[1]) / (last[0] - prev[0]);
+    return (last[1] + slope * (frameCount - last[0])) * resScale;
+  }
+  for (let i = 0; i < MEASUREMENTS.length - 1; i++) {
+    const [f0, b0] = MEASUREMENTS[i];
+    const [f1, b1] = MEASUREMENTS[i + 1];
+    if (frameCount >= f0 && frameCount <= f1) {
+      const t = f1 === f0 ? 0 : (frameCount - f0) / (f1 - f0);
+      return (b0 + t * (b1 - b0)) * resScale;
+    }
+  }
+  return Math.max(VRAM_BASE_BYTES, MEASUREMENTS[0][1] * (frameCount / MEASUREMENTS[0][0])) * resScale;
 }
 
 function json(res, status, body) {

@@ -72,7 +72,7 @@ print("path traversal refused OK")
 # defaults track the verified upstream values
 p = main.InferParams()
 assert (p.process_res, p.ref_view_strategy, p.fps, p.infer_gs) == (504, "middle", 10.0, False)
-assert p.max_frames == 16
+assert p.max_frames == 32
 print("defaults OK:", p.model_dump())
 
 print("\nALL SERVER CONTRACT CHECKS PASSED")

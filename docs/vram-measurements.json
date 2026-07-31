@@ -1,0 +1,42 @@
+[
+    {
+        "frames": 4,
+        "process_res": 504,
+        "peak_bytes": 10863247360,
+        "peak_gib": 10.12,
+        "gpu_seconds": 6.38,
+        "ok": true
+    },
+    {
+        "frames": 8,
+        "process_res": 504,
+        "peak_bytes": 13732151296,
+        "peak_gib": 12.79,
+        "gpu_seconds": 2.17,
+        "ok": true
+    },
+    {
+        "frames": 16,
+        "process_res": 504,
+        "peak_bytes": 13732151296,
+        "peak_gib": 12.79,
+        "gpu_seconds": 2.79,
+        "ok": true
+    },
+    {
+        "frames": 24,
+        "process_res": 504,
+        "peak_bytes": 15065939968,
+        "peak_gib": 14.03,
+        "gpu_seconds": 4.37,
+        "ok": true
+    },
+    {
+        "frames": 32,
+        "process_res": 504,
+        "peak_bytes": 15065939968,
+        "peak_gib": 14.03,
+        "gpu_seconds": 6.13,
+        "ok": true
+    }
+]

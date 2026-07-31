@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import {
-  estimateVramRange,
   FPS_MAX,
   FPS_MIN,
   formatBytes,
   L4_TOTAL_VRAM_BYTES,
+  MAX_MEASURED_FRAMES,
   planFrames,
+  predictVram,
   type RefViewStrategy,
 } from "../lib/contract";
 import { getGpu, infer, shutdown, warmup } from "../lib/infer-client";
@@ -105,7 +106,7 @@ export function Inspector() {
   }, [session.running]);
 
   const plan = planFrames(params.fps, clipDurationS, params.maxFrames);
-  const vramRange = estimateVramRange(plan.count, params.processRes);
+  const vram = predictVram(plan.count, params.processRes);
 
   const act = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -197,16 +198,21 @@ export function Inspector() {
           <h3>Frame plan</h3>
           <Row k="Frames" v={`${plan.count}`} />
           <Row k="Effective FPS" v={plan.effectiveFps.toFixed(2)} />
-          <Row
-            k="VRAM (unmeasured)"
-            v={`${formatBytes(vramRange.lowBytes)} – ${formatBytes(vramRange.highBytes)}`}
-            title="Bracketed from a single datapoint; run scripts/vram-sweep.sh to replace with measurements"
+          <VramBar
+            used={vram.bytes}
+            total={L4_TOTAL_VRAM_BYTES}
+            label={vram.measured ? "VRAM (measured)" : "VRAM (interpolated)"}
           />
-          {vramRange.highBytes > L4_TOTAL_VRAM_BYTES && (
+          {plan.count > MAX_MEASURED_FRAMES && (
             <div className="inspector-note">
-              Upper bracket exceeds the L4's 24 GiB, so this setting may OOM. We only have
-              one real datapoint — the range is this wide because nothing has been measured
-              yet, not because the run is known to be unsafe.
+              Beyond {MAX_MEASURED_FRAMES} frames is extrapolated — the sweep has not run
+              that high. Peak VRAM here is a projection, not a measurement.
+            </div>
+          )}
+          {vram.bytes > L4_TOTAL_VRAM_BYTES && (
+            <div className="inspector-note">
+              Projected over the L4's {formatBytes(L4_TOTAL_VRAM_BYTES)} — expect an OOM.
+              Lower the frame cap or the process resolution.
             </div>
           )}
           {plan.capped && (

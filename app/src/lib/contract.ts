@@ -10,54 +10,98 @@ export const SCHEMA_VERSION = "verge.infer-manifest/0.1.0";
 export const MODEL_REPOSITORY_ID = "depth-anything/DA3NESTED-GIANT-LARGE-1.1";
 export const MODEL_REVISION = "b2359bdf726fb44ef62acca04d629dcf158053e7";
 
-/** The L4 we deploy on — the denominator for the VRAM budget bar. */
-export const L4_TOTAL_VRAM_BYTES = 24 * 1024 ** 3;
+/**
+ * The L4 we deploy on — the denominator for the VRAM budget bar.
+ * MEASURED from `torch.cuda.mem_get_info()` on the real device: 22.03 GiB usable.
+ * An L4's advertised "24 GB" is decimal and some is reserved, so 24 GiB was wrong.
+ */
+export const L4_TOTAL_VRAM_BYTES = 23_659_151_360;
+
+/** VRAM resident after the model loads, before any inference. Measured. */
+export const MODEL_RESIDENT_BYTES = 7_050_625_024;
 
 /**
- * Conservative until `scripts/vram-sweep.sh` measures the real ceiling. DA3 caps
- * nothing itself and its in-repo estimator under-predicts real usage ~4x, so this
- * number must come from hardware, not arithmetic. Raise it only from measurements.
+ * Set from measurement: 32 frames @ 504 px peaked at 14.03 GiB of the L4's 22.03 GiB,
+ * leaving ~8 GiB headroom, with no OOM anywhere in the sweep. 32 is the largest count
+ * actually run — the UI allows more, clearly marked as unmeasured.
  */
-export const DEFAULT_MAX_FRAMES = 16;
+export const DEFAULT_MAX_FRAMES = 32;
 
 /**
- * VRAM prediction, bracketed rather than pointwise.
+ * Measured peak VRAM, from scripts/vram-sweep.sh on a real L4 (2026-07-31).
+ * Raw data in docs/vram-measurements.json.
  *
- * We have exactly ONE measurement (4 frames @ 392 px = 8.53 GiB on an L4) and the
- * model `base + frames x res_scale x per_frame` has TWO unknowns — it is
- * underdetermined. Any single "estimate" would be an arbitrary choice of split
- * dressed up as a number, so we report the interval spanned by the plausible
- * extremes instead. The interval is wide on purpose: that width is exactly the
- * argument for running scripts/vram-sweep.sh.
+ * IMPORTANT — what these numbers are: peaks observed on a WARM instance running the
+ * sweep in ascending order. PyTorch's caching allocator retains freed blocks between
+ * runs, so each reading includes cache from earlier runs. That is why 8 and 16 report
+ * an identical 12.79 GiB, and 24 and 32 an identical 14.03 GiB — the readings quantise
+ * to allocator growth steps rather than tracking true per-run cost.
  *
- * Replace both brackets with a real fit once the sweep has ≥3 datapoints.
+ * They are therefore SAFE UPPER BOUNDS for sequential use, and conservative for a
+ * cold instance running one batch. Good enough to set a frame cap; not a clean
+ * cost model. See task: isolate per-run peaks with empty_cache() between runs.
  */
-const MEASURED_GIB = 8.53;
-const MEASURED_FRAMES = 4;
-const MEASURED_RES_SCALE = (392 / 504) ** 2;
+export const VRAM_MEASUREMENTS: ReadonlyArray<{ frames: number; peakBytes: number }> = [
+  { frames: 4, peakBytes: 10_863_247_360 },
+  { frames: 8, peakBytes: 13_732_151_296 },
+  { frames: 16, peakBytes: 13_732_151_296 },
+  { frames: 24, peakBytes: 15_065_939_968 },
+  { frames: 32, peakBytes: 15_065_939_968 },
+];
 
-/** High base / low per-frame: cost is dominated by fixed model+context overhead. */
-const OPTIMISTIC_BASE_GIB = 8.0;
-/** Low base / high per-frame: cost is dominated by per-view activations. */
-const PESSIMISTIC_BASE_GIB = 4.0;
+/** Highest frame count we have actually run. Beyond this we are extrapolating. */
+export const MAX_MEASURED_FRAMES = 32;
+/** The resolution every measurement was taken at. */
+export const MEASURED_PROCESS_RES = 504;
 
-function perFrameGib(baseGib: number): number {
-  return (MEASURED_GIB - baseGib) / (MEASURED_FRAMES * MEASURED_RES_SCALE);
+export interface VramPrediction {
+  bytes: number;
+  /** True only when interpolating inside measured data at the measured resolution. */
+  measured: boolean;
 }
 
-export interface VramBracket {
-  lowBytes: number;
-  highBytes: number;
-  measured: false;
-}
+/**
+ * Peak VRAM for a given frame count, interpolated from real measurements.
+ * Anything outside the measured envelope is flagged so the UI can say so.
+ */
+export function predictVram(frameCount: number, processRes: number): VramPrediction {
+  const inResRange = processRes === MEASURED_PROCESS_RES;
+  const points = VRAM_MEASUREMENTS;
+  const first = points[0]!;
+  const last = points[points.length - 1]!;
 
-export function estimateVramRange(frameCount: number, processRes: number): VramBracket {
-  const resScale = (processRes / 504) ** 2;
-  const project = (baseGib: number) =>
-    (baseGib + frameCount * resScale * perFrameGib(baseGib)) * 1024 ** 3;
-  const a = project(OPTIMISTIC_BASE_GIB);
-  const b = project(PESSIMISTIC_BASE_GIB);
-  return { lowBytes: Math.min(a, b), highBytes: Math.max(a, b), measured: false };
+  let bytes: number;
+  // `measured` means this exact configuration was actually run — interpolating
+  // between two real points is still a guess, even when both ends agree.
+  const exact = points.some((p) => p.frames === frameCount);
+
+  if (frameCount <= first.frames) {
+    // Below the measured floor: scale down from the first point, but never below
+    // what the model alone occupies.
+    bytes = Math.max(MODEL_RESIDENT_BYTES, first.peakBytes * (frameCount / first.frames));
+  } else if (frameCount >= last.frames) {
+    // Extrapolate on the slope of the last measured segment.
+    const prev = points[points.length - 3]!; // last distinct step
+    const slope = (last.peakBytes - prev.peakBytes) / (last.frames - prev.frames);
+    bytes = last.peakBytes + slope * (frameCount - last.frames);
+  } else {
+    let lo = first;
+    let hi = last;
+    for (let i = 0; i < points.length - 1; i++) {
+      if (frameCount >= points[i]!.frames && frameCount <= points[i + 1]!.frames) {
+        lo = points[i]!;
+        hi = points[i + 1]!;
+        break;
+      }
+    }
+    const span = hi.frames - lo.frames;
+    const t = span === 0 ? 0 : (frameCount - lo.frames) / span;
+    bytes = lo.peakBytes + t * (hi.peakBytes - lo.peakBytes);
+  }
+
+  // Resolution scales the token count quadratically; only 504 was measured.
+  const resScale = (processRes / MEASURED_PROCESS_RES) ** 2;
+  return { bytes: bytes * resScale, measured: exact && inResRange };
 }
 
 export type ProcessResMethod = "upper_bound_resize" | "lower_bound_resize";
