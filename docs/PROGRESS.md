@@ -6,7 +6,7 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-01 · M2a complete
+Last updated: 2026-08-01 · M2b complete (one warm cloud session, torn down)
 
 ---
 
@@ -17,8 +17,8 @@ Last updated: 2026-08-01 · M2a complete
 | M0 — Bootstrap + offline viewer | **done** |
 | M1 — GPU service live | **done** (with carve-outs below) |
 | M2a — Node graph, local only | **done** (one carve-out: mock badge) |
-| M2b — One warm cloud session | not started (blocked on M2a) |
-| M3 — Height measurement (the goal) | not started (blocked on M2b's fixture) |
+| M2b — One warm cloud session | **done** (fixture home, service deleted) |
+| M3 — Height measurement (the goal) | not started — **unblocked**, fixture is local |
 | M4 — Splats + polish | not started |
 
 ---
@@ -128,17 +128,26 @@ These were in the M1 plan but are not implemented. Do not assume they work.
 
 ## Open follow-ups (bugs/limitations found, not yet fixed)
 
-- [ ] **Isolate per-run VRAM peaks.** `server/vram.py::VramSampler` reads driver memory, which
-      includes PyTorch's caching allocator holding blocks from *previous* runs. On a warm
-      instance the sweep reports cumulative high-water marks — visible as 8 and 16 frames both
-      reporting exactly 12.79 GiB, and 24 and 32 both 14.03 GiB. Fix: `empty_cache()` +
-      `reset_peak_memory_stats()` before each run, and record `max_memory_allocated()` alongside
-      the driver number. The current figures are safe **upper bounds**, fine for a frame cap, but
-      they are not a cost model.
-- [ ] **`result.npz` may clobber DA3's native npz.** `_run_inference` writes its own
-      `result.npz` (keys matching the fixture and `npz.ts`) into the same `export_dir` DA3's
-      `npz` exporter writes to. If DA3 emits the same filename, ours overwrites it and the
-      embedded images are lost. Rename ours and confirm DA3's native key names from a real run.
+- [x] ~~Isolate per-run VRAM peaks~~ — fixed in M2b, see `server/vram.py`.
+- [x] ~~`result.npz` may clobber DA3's native npz~~ — measured in M2b: DA3 writes no npz at
+      all, so there was nothing to clobber. Ours renamed to `verge-result.npz` defensively.
+- [ ] **`infer_gs` is broken: `gsplat` is missing from the image.** One real run returned
+      `name 'rasterization' is not defined`. Add `gsplat` to the pip install in
+      `server/Dockerfile` (line 17) — costs a ~20 min rebuild, so bundle it with other server
+      changes. Until then treat splats as unavailable, not merely untested. Blocks M4.
+- [ ] **Cloud Run's 32 MiB response cap makes `/artifact` unusable for the npz.** A 108 MB
+      npz returns **HTTP 500 with zero bytes**, direct and through the proxy alike; the 16 MB
+      GLB is fine. `save-run.sh` works around it with 24 MiB Range chunks, but **the browser
+      still cannot load the npz** — the Depth 2D pane showed "Failed to fetch" on the real
+      cloud run while the 3D viewport (GLB) rendered fine. Real fixes, in preference order:
+      (a) the GCS + signed-URL path that was always the plan, which sidesteps the cap entirely;
+      (b) a `mini_npz` export or float16/subsampled depth, which would also cut 108 MB to
+      something sane; (c) range-aware chunked fetching in `depth-2d.tsx`.
+      **This is the main reason M3 should read the fixture from disk, not over HTTP.**
+- [ ] **`scene.jpg` is produced but never collected** — no `.jpg` in `_collect_artifacts`.
+- [ ] **`predictVram` interpolation table stops at 128** while the measured envelope reaches
+      144. `MAX_MEASURED_FRAMES` says 144, so 129–144 is flagged as extrapolation even though
+      it was measured. Cosmetic, but it makes the UI slightly more pessimistic than the data.
 
 ## M2a — Node graph, local only ✅ (mostly)
 
@@ -189,11 +198,95 @@ Deliberately excluded from M2a: any real cloud run, the splat node, the cost tic
 - The acceptance checklist in `docs/DESIGN.md` has not been re-graded end to end since the
   layout gained the control/OUTPUT rows.
 
-## M2b — One warm cloud session ⬜
+## M2b — One warm cloud session ✅
 
-Blocked on M2a. Plan the whole batch before deploying; do not deploy to do one of these.
+**One session, 2026-08-01.** Build 19m30s (registry had been deleted under the old policy),
+service warm ~50 min, **deleted at the end — 0 Cloud Run services remain**. Image kept
+(9.8 GB, ~$1/month) so the next deploy skips the build.
 
-- [ ] **Add frame downscaling to `scripts/extract-frames.mjs` BEFORE deploying** (long edge
+- [x] **Frame downscaling** in `scripts/extract-frames.mjs` (1024 px long edge, default on).
+      Measured on the real clip: native 4K **460 KB/frame** vs **56.6 KB/frame** scaled.
+      128 frames would have been 57.5 MB — over Cloud Run's 32 MiB request cap. Now 14.5 MB
+      at 256 frames.
+- [x] **`VramSampler` isolates per-run peaks** — `synchronize()` + `empty_cache()` +
+      `reset_peak_memory_stats()` at entry; records driver peak, allocator peak and the
+      pre-run baseline. The manifest carries all three (`VramStats.torch_peak_bytes`,
+      `baseline_bytes`). Proven by the ladder: readings now track frame count instead of
+      quantising to allocator growth steps.
+- [x] **Frame ladder to actual OOM**, then bisected. See "Measured facts" below.
+- [x] **Second ladder at reduced `process_res`** (356 and 252 px). 10 fps IS reachable.
+- [x] **Room video end-to-end through the browser, against the real service.** All five
+      nodes green; `mock:false`, device `NVIDIA L4`, card reads `112f · 30.5s GPU` with no
+      MOCK suffix. The 3D viewport rendered 1,000,000 points of the actual room.
+- [x] **`scripts/save-run.sh`** — three fixtures downloaded, sha256-verified, before teardown.
+- [x] **DA3 npz question answered** (see below — there was no clobber).
+- [x] **`scripts/teardown.sh`** — service deleted, image kept, staging cleared.
+- [x] Mock-vs-real badge on `DA3Depth` (carried over from M2a; now closed).
+
+### The fixture — LOCAL ONLY, not in git
+
+`fixtures/room/` holds three settings, **346 MB total**, gitignored except `manifest.json`
+and `SHA256SUMS`. **A fresh clone will not have the payloads** — regenerate with a cloud run
+plus `save-run.sh`. All three verified to parse with numpy: `depth`, `confidence`,
+`extrinsics` (N,3,4), `intrinsics` (N,3,3), all float32 and finite.
+
+| Directory | Frames | process_res | Depth output | Depth range | GPU |
+|---|---|---|---|---|---|
+| `504px-112f` | 112 @ 4.21 fps | 504 | 504×280 | 0.28–4.16 m | 30.2 s |
+| `356px-256f` | 256 @ 9.62 fps | 356 | 350×196 | 0.24–3.61 m | 35.2 s |
+| `252px-256f` | 256 @ 9.62 fps | 252 | 252×140 | 0.22–2.63 m | 16.2 s |
+
+M3 compares these offline. **No further cloud session is needed to decide the
+resolution-vs-frames trade** — that was the point of saving more than one.
+
+### NOT done in M2b, with reasons
+
+- [ ] **`infer_gs` DOES NOT WORK.** One run at 32 frames failed with
+      `name 'rasterization' is not defined`. Root cause: `server/Dockerfile` line 17 installs
+      xformers, google-cloud-storage, fastapi, uvicorn, python-multipart and DA3 — but **not
+      `gsplat`**, which provides `rasterization` for DA3's splat path. Fix is to add `gsplat`
+      to that pip install, which costs a full ~20 min rebuild. Deferred to M4, where the splat
+      viewer work makes the rebuild worth paying for. The parameter is plumbed correctly end
+      to end; only the image dependency is missing.
+- [ ] **Session cost ticker** — still `$0.00` and unlabelled. Not built. The instance-lifetime
+      data now exists to drive it (build 19m30s, warm ~50 min) but nothing consumes it.
+- [ ] **Transient GCS storage, signed URLs, explicit Save.** Untouched, as in M1. Artifacts
+      still come off the container's local disk. `save-run.sh` is the manual stand-in.
+- [ ] **`scene.jpg`** appears in the export dir but is not collected as an artifact (no `.jpg`
+      in `_collect_artifacts`' suffix map). Harmless, but it means one DA3 output is never
+      served or saved. Decide whether it is worth a `kind`.
+
+### Bugs found and FIXED during M2b
+
+1. **`max_frames` wire cap was 200**, so the 256-frame rung would have been rejected by
+   pydantic before reaching the GPU — losing the OOM datapoint the ladder exists to collect.
+   Raised to 512 (a sanity bound; the safety rail is `max_frames` itself).
+2. **One base URL served two different services.** Setting `VITE_INFER_BASE` sent the local
+   ffmpeg routes (`/probe`, `/upload`, `/extract`, `/frame`) to Cloud Run, where they 404.
+   The first browser-to-cloud run would have died before inference. Split into `LOCAL_BASE`
+   and `INFER_BASE` in `app/src/lib/infer-client.ts`.
+3. **Artifact URLs were never rebased.** Manifest URLs are relative to the *service*; fetched
+   as-is they resolved against the Vite origin. Every GLB and npz would have 404'd *after* the
+   GPU was paid for. Added `artifactUrl()`, used by `point-cloud.ts`, `depth-2d.tsx`,
+   `da3-depth.ts`. 7 tests.
+4. **The server contract test had been silently skipping** for want of fastapi, so
+   `verify.sh` was green while never exercising `server/`. It now runs (pass
+   `VERGE_PY=<venv python>`) and caught bugs 1 and 5.
+5. **`result.npz` name collision** — our npz is now `verge-result.npz` and any DA3-written npz
+   gets `kind: "npz_native"`, so a client looking up `kind === "npz"` can never be handed the
+   wrong file. A test proves `result.npz` sorts first and *would* have shadowed ours.
+6. **Sweep merge erased its own data.** Re-running with the same `LABEL` replaced the whole
+   sweep, so the 144f and 160f bisect rungs were overwritten by the next run. Now merges per
+   `(frames, process_res)`. Those two rungs are restored in the JSON from console output and
+   flagged `"recovered": true` with null `*_bytes` — the GiB figures are exact, byte-level
+   precision was genuinely lost and is not back-computed.
+7. **Local extraction froze the Mac** — see Gotcha 5. Fixed to one decode + hwaccel + strided
+   subsets: 435 s → 13 s.
+
+<details>
+<summary>Original M2b plan (kept for context — all items resolved above)</summary>
+
+- [x] **Add frame downscaling to `scripts/extract-frames.mjs` BEFORE deploying** (long edge
       ~1024 px). This is now a hard prerequisite for the ladder below, not a nicety: at native
       4K (432 KB/frame) a 128-frame run is ~55 MB and a 256-frame run ~110 MB, both far over
       Cloud Run's documented 32 MiB HTTP/1 request cap. At 1024 px (62 KB/frame) even 256 frames
@@ -238,11 +331,20 @@ Known consequence: a 64–96 frame run's GLB will be far over the 5 MB commit li
 roadside GLB is already 5.6 MB). `fixtures/room/` will therefore be **local-only and gitignored**,
 with only its `manifest.json` + checksums committed. It will not survive a fresh clone.
 
+*(Confirmed: the 112-frame GLB is 16.1 MB and its npz 108 MB.)*
+
+</details>
+
 ## M3 — Height measurement ⬜
 
-Runs fully offline against `fixtures/room/` once M2b brings it home.
+**Unblocked.** Runs fully offline against `fixtures/room/` — three settings, already local.
+Read the npz **from disk**, not over HTTP (see the 32 MiB cap follow-up above).
 
-- [ ] `MEASUREMENTS.md` seeded with the user's tape-measure truths (needed *before* M2b films)
+- [x] `MEASUREMENTS.md` seeded with the user's tape-measure truths (table 0.750 m, monitor
+      0.534 m, derived composite 1.284 m). **Two caveats recorded there, both need the user:**
+      (a) "table 75 cm" is *assumed* to be height — if it is width or depth, object 3 and the
+      scale factor are both wrong; (b) no door was available, so the largest reference is
+      0.750 m rather than ~2.03 m, making the calibration baseline proportionally noisier.
 - [ ] `geometry/` is still an **empty directory** — nothing implemented
 - [ ] `GroundPlane` (robust/RANSAC plane fit)
 - [ ] `ScaleCheck` (known-object calibration, seeded from donor `scale.js`)
@@ -264,12 +366,18 @@ cd app && npm install && npm run dev     # localhost:5173, fully offline (mock +
 ./scripts/verify.sh                      # 24 tests: typecheck, units, fixture smoke, server contract
 ```
 
-`verify.sh` skips the server-contract test unless a Python with `fastapi` is on `PATH`;
-pass `VERGE_PY=/path/to/venv/bin/python` to include it.
+⚠️ **`verify.sh` silently skips the server-contract test unless a Python with `fastapi` is on
+`PATH`.** It skipped for the whole of M0–M2a, so `server/` was never exercised by the green
+checkmark. Always run it with a venv:
 
-Cloud is **fully torn down**, including the image (the repository was deleted under the old
-policy), so the *next* deploy still pays the full 15–20 min build once. Every deploy after that
-should skip it.
+```bash
+python3 -m venv /tmp/verge-venv && /tmp/verge-venv/bin/pip install fastapi pydantic \
+  python-multipart httpx numpy
+VERGE_PY=/tmp/verge-venv/bin/python ./scripts/verify.sh    # 97 tests + server contract
+```
+
+The service is **deleted** (0 Cloud Run services). The **image is kept** (9.8 GB, ~$1/month),
+so the next deploy should **skip the build and start in ~1 min**.
 
 ```bash
 ./scripts/deploy.sh                  # builds only if server/ changed since the stored image
@@ -278,20 +386,52 @@ PURGE_IMAGE=1 ./scripts/teardown.sh  # ...and deletes the image, when the projec
 FORCE_BUILD=1 ./scripts/deploy.sh    # rebuild even when the source hash matches
 ```
 
-⚠️ **The build-skip logic is UNVERIFIED.** `deploy.sh` now tags the image `src-<hash of server/>`
-and skips the build when that tag already exists in Artifact Registry. Locally the hash computes
-(`73e73d76427701b9` at time of writing) and both scripts pass `bash -n`, but the registry
-describe/skip branch has never run against real GCP. Watch it on the first two M2b deploys: the
-first should build, the second should print "already in the registry, skipping build".
+⚠️ **The build-skip logic is STILL UNVERIFIED.** M2b deployed exactly once, so only the
+"no image for this source, building" branch ran (correctly — it created the registry, tagged
+`src-d8977556a0573326`, built in 19m30s, deployed by digest). **The skip branch has never
+executed.** The next deploy is the test: with `server/` unchanged it must print
+*"image for this exact server/ source already in the registry, skipping build"* and start in
+~1 min. If it rebuilds instead, that is a bug worth fixing before it costs 20 more minutes.
+Note that any edit to `server/` changes the hash and *correctly* forces a rebuild — so test
+the skip on an unmodified tree.
 
 ## Measured facts (do not re-derive)
 
 - L4 usable VRAM: **22.03 GiB** (23,659,151,360 B) — not 24 GiB.
-- Model resident after load: 6.57 GiB. Cold start **64 s**, model load 40 s.
-- Peak VRAM @ 504 px: 4f=10.12 · 8f=12.79 · 16f=12.79 · 24f=14.03 · 32f=14.03 GiB. No OOM at 32.
-- Inference: 2.2–6.4 s GPU for 4–32 frames.
+- Model resident after load: 6.57 GiB. Cold start **64 s**, model load **40.5 s**.
 - Upstream defaults: HF Space samples video at **10 fps with no frame cap**; `process_res=504`;
   use `ref_view_strategy="middle"` for ordered video.
+- Full 12 GB image build: **19 min 30 s**. Artifact Registry holds 9.8 GB.
+
+### The frame ladder (2026-08-01, per-run isolated — supersedes the 2026-07-31 numbers)
+
+| Frames | 504 px driver / allocator | 356 px | 252 px |
+|---|---|---|---|
+| 32 | 14.24 / 11.63 GiB · 12.2 s | | |
+| 64 | 16.94 / 13.87 GiB · 15.2 s | | |
+| 112 | 21.28 / 17.23 GiB · 30.2 s ← **the cap** | | |
+| 128 | 21.94 / 18.35 GiB · 37.7 s | | |
+| 144 | 21.88 / 19.47 GiB · 42.1 s ← **last good** | | |
+| 160 | **OOM** ← ceiling is in (144, 160) | | |
+| 192 | **OOM** | 19.39 / 15.01 GiB · 24.6 s | |
+| 256 | **OOM** | 21.54 / 17.51 GiB · 35.2 s | 15.89 / 12.69 GiB · 16.1 s |
+
+- **Allocator peak fits `0.0700 GiB/frame + 9.39 GiB`** across 32/64/128/144. That slope is
+  **half** what the old contaminated readings implied (0.14), which is why the true ceiling
+  landed at ~144 rather than the extrapolated ~110. Use the allocator number for modelling;
+  the driver number saturates near the device limit because it includes CUDA context and
+  allocator reserve.
+- **`max_frames` is 112, not 144, on purpose.** Both 128 and 144 completed at ~99% of the
+  device — that is a coin flip, not an operating point. 112 leaves ~15% headroom and its
+  predicted peak matched the measurement to within 0.25 GiB.
+- **10 fps sampling IS reachable** — just not at 504 px. 256 frames (9.62 fps on this clip)
+  runs at 356 px, and comfortably at 252 px. Whether the accuracy trade is worth it is M3's
+  call, and all three fixtures are already local so it costs no cloud time.
+- **DA3 writes NO npz of its own.** Export dir after a `npz-glb` run contained only
+  `scene.glb`, `scene.jpg` and our `verge-result.npz`; `diagnostics.native_npz` was `{}`.
+  The feared `result.npz` clobber **never actually happened** — the rename is defensive, and
+  this is now measured rather than assumed.
+- Our npz is large: **108 MB at 112f/504 px**, 114 MB at 256f/356 px. The GLB is ~16 MB.
 
 ## Gotchas that cost time (details in `docs/SOURCES.md`)
 
