@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import type { InferManifest } from "../lib/contract";
 import { resolveInput, useGraph } from "../graph/graph-store";
 import { VIEWER_2D_ID } from "../graph/nodes";
+import { artifactUrl } from "../lib/infer-client";
 import { parseNpz, percentile } from "../lib/npz";
 import { turbo } from "../lib/turbo";
 import { OutputRow, PaneControls } from "./pane-chrome";
@@ -41,7 +42,9 @@ export function Depth2D() {
     (async () => {
       try {
         setError(undefined);
-        const res = await fetch(npzUrl);
+        // Rebase onto the inference service — manifest URLs are relative to IT, not
+        // to the page, so a real cloud run would otherwise 404 against the dev server.
+        const res = await fetch(artifactUrl(npzUrl));
         if (!res.ok) throw new Error(`fetch ${res.status}`);
         const arrays = await parseNpz(await res.arrayBuffer());
         if (cancelled) return;

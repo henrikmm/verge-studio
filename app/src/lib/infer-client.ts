@@ -8,10 +8,47 @@
 
 import type { GpuSnapshot, InferManifest, InferParams } from "./contract";
 
-const BASE = import.meta.env.VITE_INFER_BASE ?? "/api";
+/**
+ * TWO bases, because the two halves of the pipeline live in different places.
+ *
+ * `LOCAL_BASE` is always the Vite dev middleware: probe, upload, extract, frame. That
+ * work is ffmpeg on this Mac and must never go to the cloud (local-first), and the
+ * deployed service has no such routes anyway.
+ *
+ * `INFER_BASE` is the GPU service: gpu, warmup, shutdown, infer. Point it at a deployed
+ * Cloud Run URL (or a `gcloud run services proxy` on localhost) to use real hardware;
+ * left unset it falls back to the fixture-backed mock on the same dev middleware.
+ *
+ * These were one constant until 2026-08-01. Overriding it sent ffmpeg's own routes to
+ * Cloud Run, where they 404 — the first real browser-to-cloud run would have failed on
+ * frame extraction before reaching the GPU at all.
+ */
+const LOCAL_BASE = "/api";
+const INFER_BASE = import.meta.env.VITE_INFER_BASE ?? "/api";
+
+/** True when INFER_BASE points off-origin, i.e. at a real service rather than the mock. */
+const INFER_IS_REMOTE = /^https?:\/\//i.test(INFER_BASE);
 
 /** Cloud Run requires an identity token; the mock ignores it. */
 const AUTH_TOKEN = import.meta.env.VITE_INFER_TOKEN ?? "";
+
+/**
+ * Resolve an artifact URL from a manifest into something the browser can fetch.
+ *
+ * The service returns service-relative paths (`/artifact/{run_id}/{name}`) which resolve
+ * against the *page* origin unless we rebase them — so with a remote service every GLB
+ * and npz would 404 against the Vite dev server. The mock's URLs (`/roadside/...`) are
+ * genuinely served by Vite, so they are left alone.
+ */
+export function artifactUrl(url: string): string {
+  if (/^https?:\/\//i.test(url)) return url;
+  if (url.startsWith("gs://")) {
+    throw new Error(
+      `artifact is in GCS (${url}) and needs a signed URL — the browser cannot fetch gs:// directly`,
+    );
+  }
+  return INFER_IS_REMOTE ? `${INFER_BASE.replace(/\/$/, "")}${url}` : url;
+}
 
 function headers(extra: Record<string, string> = {}): Record<string, string> {
   return AUTH_TOKEN ? { ...extra, authorization: `Bearer ${AUTH_TOKEN}` } : extra;
@@ -107,18 +144,18 @@ function toManifest(w: any): InferManifest {
 }
 
 export async function getGpu(): Promise<GpuSnapshot> {
-  return toGpu((await expectOk(await fetch(`${BASE}/gpu`, { headers: headers() }))) as WireGpu);
+  return toGpu((await expectOk(await fetch(`${INFER_BASE}/gpu`, { headers: headers() }))) as WireGpu);
 }
 
 export async function warmup(): Promise<GpuSnapshot> {
   const body = (await expectOk(
-    await fetch(`${BASE}/warmup`, { method: "POST", headers: headers() }),
+    await fetch(`${INFER_BASE}/warmup`, { method: "POST", headers: headers() }),
   )) as { gpu: WireGpu };
   return toGpu(body.gpu);
 }
 
 export async function shutdown(): Promise<void> {
-  await expectOk(await fetch(`${BASE}/shutdown`, { method: "POST", headers: headers() }));
+  await expectOk(await fetch(`${INFER_BASE}/shutdown`, { method: "POST", headers: headers() }));
 }
 
 export interface VideoProbe {
@@ -139,7 +176,7 @@ export interface VideoSource extends VideoProbe {
 /** Local ffmpeg — never the cloud. */
 export async function probeVideo(path: string): Promise<VideoSource> {
   return (await expectOk(
-    await fetch(`${BASE}/probe`, {
+    await fetch(`${LOCAL_BASE}/probe`, {
       method: "POST",
       headers: headers({ "content-type": "application/json" }),
       body: JSON.stringify({ path }),
@@ -153,7 +190,7 @@ export async function probeVideo(path: string): Promise<VideoSource> {
  */
 export async function uploadVideo(file: File): Promise<VideoSource> {
   return (await expectOk(
-    await fetch(`${BASE}/upload`, {
+    await fetch(`${LOCAL_BASE}/upload`, {
       method: "POST",
       headers: headers({ "x-filename": file.name, "content-type": "application/octet-stream" }),
       body: file,
@@ -174,7 +211,7 @@ export async function extractFrames(
   maxFrames: number,
 ): Promise<{ frames: string[]; plan: FramePlan; probe: VideoProbe; outDir: string }> {
   return (await expectOk(
-    await fetch(`${BASE}/extract`, {
+    await fetch(`${LOCAL_BASE}/extract`, {
       method: "POST",
       headers: headers({ "content-type": "application/json" }),
       body: JSON.stringify({ path, fps, maxFrames }),
@@ -184,7 +221,7 @@ export async function extractFrames(
 
 /** Extracted frames live on disk; the browser reads them back through the middleware. */
 export function frameUrl(path: string): string {
-  return `${BASE}/frame?path=${encodeURIComponent(path)}`;
+  return `${LOCAL_BASE}/frame?path=${encodeURIComponent(path)}`;
 }
 
 export async function fetchFrameBlob(path: string): Promise<Blob> {
@@ -204,7 +241,7 @@ export async function infer(
   if (!Array.isArray(frames)) {
     return toManifest(
       await expectOk(
-        await fetch(`${BASE}/infer`, {
+        await fetch(`${INFER_BASE}/infer`, {
           method: "POST",
           headers: headers({ "content-type": "application/json" }),
           body: JSON.stringify({
@@ -235,7 +272,7 @@ export async function infer(
   );
   return toManifest(
     await expectOk(
-      await fetch(`${BASE}/infer`, { method: "POST", headers: headers(), body: form }),
+      await fetch(`${INFER_BASE}/infer`, { method: "POST", headers: headers(), body: form }),
     ),
   );
 }

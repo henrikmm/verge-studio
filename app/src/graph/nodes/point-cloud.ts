@@ -11,6 +11,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { InferManifest } from "../../lib/contract";
+import { artifactUrl } from "../../lib/infer-client";
 import type { NodeSpec } from "../types";
 
 export interface PointCloudValue {
@@ -101,7 +102,8 @@ export const pointCloudSpec: NodeSpec = {
     if (!glb) throw new Error("manifest has no GLB artifact");
 
     const stride = Math.max(1, Math.floor(Number(params.stride) || 1));
-    const object = await loadGltf(glb.url);
+    // Manifest URLs are service-relative; rebase them or a real cloud run 404s here.
+    const object = await loadGltf(artifactUrl(glb.url));
 
     const bounds = new THREE.Box3().setFromObject(object);
     const extent = bounds.getSize(new THREE.Vector3()).length();
