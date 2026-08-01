@@ -1,0 +1,144 @@
+{
+  "_comment": "Golden vectors generated from donor/content-hash.js by scripts/gen-cache-key-vectors.mjs. Do not hand-edit. The donor is the reference implementation for cache keys.",
+  "contract_version": "mvl.schema-contracts/0.2.0",
+  "sha256": [
+    {
+      "input": "",
+      "digest": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "input": "abc",
+      "digest": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest": "9f4390f8d30c2dd92ec9f095b65e2b9ae9b0a925a5258e241c9f1e910f734318"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest": "b35439a4ac6f0948b6d6f9e3c6af0f5f590ce20f1bde7090ef7970686ec6738a"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "digest": "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb"
+    },
+    {
+      "input": "verge-studio ☕ é 日本語",
+      "digest": "caf5a97e7da1cb28b2a674b1a3ccf248f4a36ebe06cc88957b43c2ec89898a34"
+    }
+  ],
+  "canonical_json": [
+    {
+      "value": {
+        "b": 1,
+        "a": 2
+      },
+      "text": "{\"a\":2,\"b\":1}"
+    },
+    {
+      "value": [
+        1,
+        "two",
+        null,
+        true
+      ],
+      "text": "[1,\"two\",null,true]"
+    },
+    {
+      "value": {
+        "z": {
+          "y": 1,
+          "x": 2
+        }
+      },
+      "text": "{\"z\":{\"x\":2,\"y\":1}}"
+    }
+  ],
+  "cache_keys": [
+    {
+      "identity": {
+        "producer_node": "frame-source",
+        "producer_version": "0.1.0",
+        "input_content_sha256": {}
+      },
+      "digest": "2c7749846c06e7318f28e197d7d770085db5b7c21203963497ea64ed477af33d"
+    },
+    {
+      "identity": {
+        "producer_node": "frame-source",
+        "producer_version": "0.1.0",
+        "input_content_sha256": {},
+        "parameters": {}
+      },
+      "digest": "2c7749846c06e7318f28e197d7d770085db5b7c21203963497ea64ed477af33d"
+    },
+    {
+      "identity": {
+        "producer_node": "da3-depth",
+        "producer_version": "0.1.0",
+        "input_content_sha256": {
+          "frames": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "parameters": {
+          "fps": 10,
+          "process_res": 504,
+          "infer_gs": false
+        }
+      },
+      "digest": "6df4af8d88a36981d57d3ed961ba1b70bfa71fd6f3de9dd0a23c4ab499fe50a1"
+    },
+    {
+      "identity": {
+        "producer_node": "da3-depth",
+        "producer_version": "0.1.0",
+        "input_content_sha256": {
+          "frames": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "parameters": {
+          "infer_gs": false,
+          "process_res": 504,
+          "fps": 10
+        }
+      },
+      "digest": "6df4af8d88a36981d57d3ed961ba1b70bfa71fd6f3de9dd0a23c4ab499fe50a1"
+    },
+    {
+      "identity": {
+        "producer_node": "point-cloud",
+        "producer_version": "0.2.0",
+        "input_content_sha256": {
+          "depth": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "camera": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "parameters": {
+          "stride": 2,
+          "conf_percentile": 0.5,
+          "label": "café ☕",
+          "nested": {
+            "a": [
+              1,
+              2,
+              null
+            ]
+          }
+        }
+      },
+      "digest": "02d9a34e50a8b8ec02a93f7faa8993a56f661419c83b247f3e65282953b430a7"
+    },
+    {
+      "identity": {
+        "producer_node": "da3-depth",
+        "producer_version": "0.1.0",
+        "input_content_sha256": {
+          "frames": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "parameters": {
+          "fps": 10,
+          "negative_zero": 0,
+          "big": 1e+21
+        }
+      },
+      "digest": "22e13b7a4573f55f451c83934300cdd1f303d62c8b3d539823ea7d20a209e5c7"
+    }
+  ]
+}

@@ -1,0 +1,137 @@
+/**
+ * The node-graph data model.
+ *
+ * Ports are typed so a depth field can never be wired into a camera input, and the
+ * wire inherits its source port's color (docs/DESIGN.md). Every node declares a
+ * `version` that goes into its cache key, so fixing a node's code invalidates the
+ * results it produced before the fix.
+ */
+
+import type { JsonValue } from "./cache-key";
+
+export type PortType = "frames" | "depth_field" | "point_cloud" | "splat" | "camera" | "scalar";
+
+/** Straight from the port/wire color table in docs/DESIGN.md. */
+export const PORT_COLORS: Record<PortType, string> = {
+  frames: "#d8d8d8",
+  depth_field: "#5aa0e8",
+  point_cloud: "#4ade80",
+  splat: "#c084fc",
+  camera: "#e879a0",
+  scalar: "#f59e0b",
+};
+
+/**
+ * Node header hues, ~35% saturation per DESIGN.md's reading of the Sentinel
+ * reference: purple for sources/generators, teal for analysis, magenta for the
+ * geometry stage, muted blue for sinks.
+ */
+export type NodeCategory = "source" | "analysis" | "geometry" | "sink";
+
+export const CATEGORY_COLORS: Record<NodeCategory, string> = {
+  source: "#5b4a7d",
+  analysis: "#356b70",
+  geometry: "#7d4a63",
+  sink: "#454f70",
+};
+
+/**
+ * Whether a node may run without being asked.
+ *
+ * `manual` exists for one reason: `DA3Depth` costs money. An auto node re-runs as
+ * soon as its inputs change; a manual node goes stale and waits for an explicit Run,
+ * so dragging a slider can never trigger cloud inference. See docs/PROGRESS.md.
+ */
+export type ExecutionKind = "auto" | "manual";
+
+export interface PortSpec {
+  id: string;
+  /** Ports are labelled text rows in the card, not bare dots (DESIGN.md). */
+  label: string;
+  type: PortType;
+  /** An unconnected required input blocks the node instead of running it empty. */
+  required?: boolean;
+}
+
+export type Params = Record<string, JsonValue>;
+
+/** What flows along a wire. `value` is node-specific; the port type constrains it. */
+export interface NodeOutput {
+  type: PortType;
+  value: unknown;
+  /** Drawn in the node card's thumbnail slot when present. */
+  thumbnailUrl?: string;
+  /** Short mono line under the thumbnail, e.g. "351,232 pts". */
+  summary?: string;
+}
+
+export interface ExecuteContext {
+  params: Params;
+  /** Keyed by this node's input port id. Absent for unconnected optional inputs. */
+  inputs: Record<string, NodeOutput>;
+  signal: AbortSignal;
+}
+
+/** Resolves to the node's outputs, keyed by output port id. */
+export type Executor = (ctx: ExecuteContext) => Promise<Record<string, NodeOutput>>;
+
+export interface NodeSpec {
+  type: string;
+  label: string;
+  category: NodeCategory;
+  /** Bump on any behaviour change — it is part of every cache key this node produces. */
+  version: string;
+  execution: ExecutionKind;
+  inputs: PortSpec[];
+  outputs: PortSpec[];
+  defaults: Params;
+  execute: Executor;
+}
+
+export type NodeRegistry = Record<string, NodeSpec>;
+
+export function portColor(type: PortType): string {
+  return PORT_COLORS[type];
+}
+
+export interface GraphNode {
+  id: string;
+  /** Key into the registry. */
+  type: string;
+  params: Params;
+  position: { x: number; y: number };
+  /**
+   * The `A`/`P` badge. Seeded from the spec's `execution` but user-overridable in
+   * both directions: pin an auto node to stop it re-running, or opt a manual node
+   * into auto if you accept the cost.
+   */
+  auto: boolean;
+}
+
+export interface GraphEdge {
+  id: string;
+  source: string;
+  sourcePort: string;
+  target: string;
+  targetPort: string;
+}
+
+/**
+ * `stale` — parameters moved and the held result no longer matches.
+ * `blocked` — cannot run: a required input is unconnected, or an upstream node is
+ * itself stale/failed, so running would mix fresh output with old input.
+ */
+export type NodeStatus = "idle" | "stale" | "blocked" | "running" | "ok" | "error";
+
+export interface NodeRuntime {
+  status: NodeStatus;
+  /** Cache key of the result currently held. Null until the node has produced one. */
+  heldKey: string | null;
+  outputs: Record<string, NodeOutput> | null;
+  elapsedMs: number;
+  error: string | null;
+}
+
+export function emptyRuntime(): NodeRuntime {
+  return { status: "idle", heldKey: null, outputs: null, elapsedMs: 0, error: null };
+}
