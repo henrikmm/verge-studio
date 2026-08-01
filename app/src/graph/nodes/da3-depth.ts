@@ -1,0 +1,60 @@
+/**
+ * DA3Depth — the only node that costs money, and therefore the only `manual` one.
+ * It goes stale and waits for an explicit Run; nothing upstream can trigger it.
+ *
+ * It always sends real multipart frames, offline and in the cloud alike: the Vite
+ * dev middleware parses the same multipart body the FastAPI service does, so this
+ * path is exercised locally instead of being first tried against a billing GPU.
+ *
+ * `fps` is not a parameter here. Sampling already happened locally in FrameSource and
+ * the server never resamples, so the manifest reports the effective rate that produced
+ * the frames it actually received.
+ */
+
+import { fetchFrameBlob, infer } from "../../lib/infer-client";
+import type { InferManifest, ProcessResMethod, RefViewStrategy } from "../../lib/contract";
+import { DEFAULT_MAX_FRAMES } from "../../lib/contract";
+import type { NodeSpec } from "../types";
+import type { FramesValue } from "./frame-source";
+
+export const da3DepthSpec: NodeSpec = {
+  type: "da3-depth",
+  label: "DA3 Depth",
+  category: "analysis",
+  version: "0.1.0",
+  execution: "manual",
+  inputs: [{ id: "frames", label: "Frames", type: "frames", required: true }],
+  outputs: [{ id: "depth", label: "Depth Field", type: "depth_field" }],
+  defaults: {
+    processRes: 504,
+    processResMethod: "upper_bound_resize",
+    refViewStrategy: "middle",
+    inferGs: false,
+    maxFrames: DEFAULT_MAX_FRAMES,
+  },
+  execute: async ({ inputs, params }) => {
+    const frames = inputs.frames?.value as FramesValue | undefined;
+    if (!frames || frames.paths.length === 0) throw new Error("no frames on the input");
+
+    const blobs = await Promise.all(frames.paths.map(fetchFrameBlob));
+    const manifest: InferManifest = await infer(blobs, {
+      fps: frames.plan.effectiveFps,
+      sourceDurationS: frames.probe.durationS,
+      processRes: Number(params.processRes),
+      processResMethod: params.processResMethod as ProcessResMethod,
+      refViewStrategy: params.refViewStrategy as RefViewStrategy,
+      inferGs: Boolean(params.inferGs),
+      maxFrames: Number(params.maxFrames),
+    });
+
+    const preview = manifest.artifacts.find((a) => a.kind === "depth_preview");
+    return {
+      depth: {
+        type: "depth_field",
+        value: manifest,
+        thumbnailUrl: preview?.url,
+        summary: `${manifest.frames.count}f · ${manifest.timing.gpuSeconds.toFixed(1)}s GPU`,
+      },
+    };
+  },
+};

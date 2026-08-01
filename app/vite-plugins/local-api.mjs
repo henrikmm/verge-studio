@@ -4,13 +4,19 @@
 // can be built and reviewed offline at zero cost. Swapping to the real service is a
 // base-URL change, nothing more.
 
-import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { basename, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { extractFrames, probeVideo } from "../../scripts/extract-frames.mjs";
 
 const FIXTURE_DIR = new URL("../../fixtures/roadside/", import.meta.url);
+
+// Dropped videos and extracted frames both live under the OS temp dir. Nothing here
+// is ever uploaded anywhere by this middleware -- the cloud only ever receives the
+// JPEG frames, and only when the user runs the DA3 node.
+const UPLOAD_ROOT = join(tmpdir(), "verge-uploads");
+const FRAME_ROOT = join(tmpdir(), "verge-frames");
 
 /**
  * Measured on a real L4 by scripts/vram-sweep.sh (2026-07-31); raw data in
@@ -51,10 +57,27 @@ function json(res, status, body) {
   res.end(JSON.stringify(body));
 }
 
-async function readJsonBody(req) {
+async function readRawBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
-  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {};
+  return Buffer.concat(chunks);
+}
+
+async function readJsonBody(req) {
+  const body = await readRawBody(req);
+  return body.length ? JSON.parse(body.toString("utf8")) : {};
+}
+
+/**
+ * Identity of a source video: content digest, not path. A cache key built from the
+ * path alone would wrongly hit when a file is replaced in place.
+ */
+async function videoIdentity(path) {
+  const [bytes, stats] = await Promise.all([readFile(path), stat(path)]);
+  return {
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+    sizeBytes: stats.size,
+  };
 }
 
 // Mock GPU state, so warmup/busy/idle transitions are visible in the UI offline.
@@ -117,18 +140,85 @@ export function localApi() {
             // Real ffmpeg, running locally — this part is not mocked.
             case "POST /api/probe": {
               const { path } = await readJsonBody(req);
-              return json(res, 200, await probeVideo(path));
+              const [probe, identity] = await Promise.all([
+                probeVideo(path),
+                videoIdentity(path),
+              ]);
+              return json(res, 200, { ...probe, ...identity, path });
+            }
+
+            /**
+             * Drag-and-drop target. Browsers never expose a real filesystem path and
+             * ffmpeg needs one, so the file is written to a temp dir and the path is
+             * handed back. Dev middleware only; the cloud service has no such route.
+             */
+            case "POST /api/upload": {
+              const name = basename(String(req.headers["x-filename"] ?? "upload.mp4"));
+              const body = await readRawBody(req);
+              if (body.length === 0) return json(res, 400, { detail: "empty upload" });
+              await mkdir(UPLOAD_ROOT, { recursive: true });
+              const path = join(UPLOAD_ROOT, `${randomUUID().slice(0, 8)}-${name}`);
+              await writeFile(path, body);
+              const probe = await probeVideo(path);
+              return json(res, 200, {
+                path,
+                name,
+                sizeBytes: body.length,
+                sha256: createHash("sha256").update(body).digest("hex"),
+                ...probe,
+              });
             }
 
             case "POST /api/extract": {
               const { path, fps = 10, maxFrames = 32 } = await readJsonBody(req);
-              const outDir = join(tmpdir(), "verge-frames", randomUUID().slice(0, 8));
+              const outDir = join(FRAME_ROOT, randomUUID().slice(0, 8));
               const { frames, plan, probe } = await extractFrames(path, outDir, { fps, maxFrames });
               return json(res, 200, { frames, plan, probe, outDir });
             }
 
+            /** Serves extracted frames back to the browser for node thumbnails. */
+            case "GET /api/frame": {
+              const requested = resolve(url.searchParams.get("path") ?? "");
+              // Only ever serve frames this middleware extracted itself.
+              if (!requested.startsWith(resolve(FRAME_ROOT) + sep)) {
+                return json(res, 403, { detail: "path is outside the frame directory" });
+              }
+              const bytes = await readFile(requested);
+              res.statusCode = 200;
+              res.setHeader("content-type", "image/jpeg");
+              res.setHeader("cache-control", "no-store");
+              return res.end(bytes);
+            }
+
             case "POST /api/infer": {
-              const { frameCount = 4, processRes = 504, fps = 10 } = await readJsonBody(req);
+              // Two request shapes, both real. The browser sends multipart with the
+              // actual JPEGs -- the same bytes the deployed FastAPI service receives --
+              // so that path is exercised offline and swapping to the cloud is only a
+              // base-URL change. The JSON shape stays for scripted/no-frame callers.
+              const contentType = String(req.headers["content-type"] ?? "");
+              let frameCount;
+              let wireParams;
+              if (contentType.startsWith("multipart/form-data")) {
+                const form = await new Request("http://local/api/infer", {
+                  method: "POST",
+                  headers: { "content-type": contentType },
+                  body: await readRawBody(req),
+                }).formData();
+                const files = form.getAll("frames");
+                if (files.length === 0) return json(res, 400, { detail: "no frames uploaded" });
+                frameCount = files.length;
+                wireParams = JSON.parse(String(form.get("params") ?? "{}"));
+              } else {
+                const body = await readJsonBody(req);
+                frameCount = body.frameCount ?? 4;
+                wireParams = {
+                  fps: body.fps ?? 10,
+                  process_res: body.processRes ?? 504,
+                };
+              }
+
+              const fps = wireParams.fps ?? 10;
+              const processRes = wireParams.process_res ?? 504;
               const peak = estimateVramBytes(frameCount, processRes);
               // Rough: 7.67 GPU-seconds for 4 frames, scaled super-linearly.
               const gpuSeconds = 1.9 * frameCount ** 1.15 * (processRes / 504) ** 2;
@@ -152,11 +242,12 @@ export function localApi() {
                 linear_unit: "metre",
                 params: {
                   fps,
+                  source_duration_s: wireParams.source_duration_s ?? null,
                   process_res: processRes,
-                  process_res_method: "upper_bound_resize",
-                  ref_view_strategy: "middle",
-                  infer_gs: false,
-                  max_frames: 32,
+                  process_res_method: wireParams.process_res_method ?? "upper_bound_resize",
+                  ref_view_strategy: wireParams.ref_view_strategy ?? "middle",
+                  infer_gs: wireParams.infer_gs ?? false,
+                  max_frames: wireParams.max_frames ?? 32,
                 },
                 frames: {
                   count: frameCount,

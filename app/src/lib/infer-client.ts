@@ -119,29 +119,69 @@ export interface VideoProbe {
   height: number;
 }
 
+/** A probed video plus the content digest that makes its cache key honest. */
+export interface VideoSource extends VideoProbe {
+  path: string;
+  name: string;
+  sizeBytes: number;
+  sha256: string;
+}
+
 /** Local ffmpeg — never the cloud. */
-export async function probeVideo(path: string): Promise<VideoProbe> {
+export async function probeVideo(path: string): Promise<VideoSource> {
   return (await expectOk(
     await fetch(`${BASE}/probe`, {
       method: "POST",
       headers: headers({ "content-type": "application/json" }),
       body: JSON.stringify({ path }),
     }),
-  )) as VideoProbe;
+  )) as VideoSource;
+}
+
+/**
+ * Hand a dropped file to the dev middleware, which writes it somewhere ffmpeg can
+ * reach and returns the path. Browsers never expose the real one.
+ */
+export async function uploadVideo(file: File): Promise<VideoSource> {
+  return (await expectOk(
+    await fetch(`${BASE}/upload`, {
+      method: "POST",
+      headers: headers({ "x-filename": file.name, "content-type": "application/octet-stream" }),
+      body: file,
+    }),
+  )) as VideoSource;
+}
+
+export interface FramePlan {
+  count: number;
+  effectiveFps: number;
+  capped: boolean;
+  requestedCount: number;
 }
 
 export async function extractFrames(
   path: string,
   fps: number,
   maxFrames: number,
-): Promise<{ frames: string[]; plan: { count: number; effectiveFps: number; capped: boolean } }> {
+): Promise<{ frames: string[]; plan: FramePlan; probe: VideoProbe; outDir: string }> {
   return (await expectOk(
     await fetch(`${BASE}/extract`, {
       method: "POST",
       headers: headers({ "content-type": "application/json" }),
       body: JSON.stringify({ path, fps, maxFrames }),
     }),
-  )) as { frames: string[]; plan: { count: number; effectiveFps: number; capped: boolean } };
+  )) as { frames: string[]; plan: FramePlan; probe: VideoProbe; outDir: string };
+}
+
+/** Extracted frames live on disk; the browser reads them back through the middleware. */
+export function frameUrl(path: string): string {
+  return `${BASE}/frame?path=${encodeURIComponent(path)}`;
+}
+
+export async function fetchFrameBlob(path: string): Promise<Blob> {
+  const res = await fetch(frameUrl(path), { headers: headers() });
+  if (!res.ok) throw new Error(`frame ${path}: ${res.status}`);
+  return res.blob();
 }
 
 /**
