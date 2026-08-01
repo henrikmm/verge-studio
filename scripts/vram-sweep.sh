@@ -178,16 +178,28 @@ if os.path.exists(out_path):
             "runs": existing,
         })
 
-history["sweeps"] = [s for s in history["sweeps"] if s.get("label") != label]
-history["sweeps"].append({
-    "label": label,
-    "date": datetime.date.today().isoformat(),
-    "contaminated": False,
-    "method": "empty_cache() + reset_peak_memory_stats() before each run; driver peak and "
-              "torch.cuda.max_memory_allocated() both recorded, with the pre-run baseline",
-    "cold_start_seconds": int(cold),
-    "runs": runs,
-})
+# Merge at RUN level, not sweep level. Replacing the whole sweep meant a second
+# invocation with the same label silently erased the first one's rungs -- which is
+# exactly what a bisect does, one rung at a time. Key on (frames, process_res) so
+# re-running a rung updates just that rung and every other result survives.
+existing_sweep = next((s for s in history["sweeps"] if s.get("label") == label), None)
+if existing_sweep is None:
+    existing_sweep = {
+        "label": label,
+        "date": datetime.date.today().isoformat(),
+        "contaminated": False,
+        "method": "empty_cache() + reset_peak_memory_stats() before each run; driver peak "
+                  "and torch.cuda.max_memory_allocated() both recorded, with the pre-run "
+                  "baseline",
+        "cold_start_seconds": int(cold),
+        "runs": [],
+    }
+    history["sweeps"].append(existing_sweep)
+
+merged = {(r["frames"], r["process_res"]): r for r in existing_sweep["runs"]}
+for r in runs:
+    merged[(r["frames"], r["process_res"])] = r
+existing_sweep["runs"] = [merged[k] for k in sorted(merged)]
 json.dump(history, open(out_path, "w"), indent=2)
 print(f"\nwrote {out_path} ({len(history['sweeps'])} sweeps on record)")
 PY

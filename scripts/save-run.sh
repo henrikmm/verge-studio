@@ -38,6 +38,33 @@ fetch() {
   fi
 }
 
+# Cloud Run caps an HTTP/1 RESPONSE at 32 MiB, the same limit that applies to requests.
+# Over it the service returns 500 with zero bytes -- measured 2026-08-01: a 16.1 MB GLB
+# served fine, a 108.1 MB npz did not, both through the proxy and direct. Since a
+# 112-frame run's npz is always ~108 MB, whole-file GET can never bring one home.
+#
+# The service does honour Range (verified: HTTP 206, exact byte counts), so anything
+# large is pulled in sub-cap chunks and reassembled. 24 MiB leaves headroom under 32.
+CHUNK_BYTES=$(( 24 * 1024 * 1024 ))
+
+fetch_large() {
+  local url="$1" out="$2" size="$3"
+  local offset=0 end n=0
+  : > "${out}"
+  while (( offset < size )); do
+    end=$(( offset + CHUNK_BYTES - 1 ))
+    (( end >= size )) && end=$(( size - 1 ))
+    if ! fetch -H "Range: bytes=${offset}-${end}" "${url}" >> "${out}"; then
+      echo "   !! range ${offset}-${end} failed" >&2
+      return 1
+    fi
+    n=$(( n + 1 ))
+    printf "\r   chunk %d (%d/%d MiB)" "${n}" $(( (end + 1) / 1024 / 1024 )) $(( size / 1024 / 1024 ))
+    offset=$(( end + 1 ))
+  done
+  printf "\r   %d chunks, %d MiB          \n" "${n}" $(( size / 1024 / 1024 ))
+}
+
 mkdir -p "${DEST}"
 cp "${MANIFEST}" "${DEST}/manifest.json"
 
@@ -48,12 +75,12 @@ python3 - "${MANIFEST}" > "${DEST}/.artifacts.tsv" <<'PY'
 import json, sys
 manifest = json.load(open(sys.argv[1]))
 for a in manifest["artifacts"]:
-    print(f"{a['name']}\t{a['sha256']}\t{a['url']}\t{a['kind']}", flush=True)
+    print(f"{a['name']}\t{a['sha256']}\t{a['url']}\t{a['kind']}\t{a['size_bytes']}", flush=True)
 PY
 
 FAILED=0
 COUNT=0
-while IFS=$'\t' read -r NAME SHA URL KIND; do
+while IFS=$'\t' read -r NAME SHA URL KIND SIZE; do
   [[ -z "${NAME}" ]] && continue
   COUNT=$((COUNT + 1))
   OUT="${DEST}/${NAME}"
@@ -70,8 +97,13 @@ while IFS=$'\t' read -r NAME SHA URL KIND; do
       fetch -o "${OUT}" "${URL}"
       ;;
     /*)
-      echo "-- ${NAME} (${KIND}) from ${VERGE_URL}${URL}"
-      fetch -o "${OUT}" "${VERGE_URL}${URL}"
+      if [[ -n "${SIZE}" ]] && (( SIZE > CHUNK_BYTES )); then
+        echo "-- ${NAME} (${KIND}) $(( SIZE / 1024 / 1024 )) MiB — over Cloud Run's 32 MiB response cap, ranging"
+        fetch_large "${VERGE_URL}${URL}" "${OUT}" "${SIZE}" || { FAILED=$((FAILED+1)); continue; }
+      else
+        echo "-- ${NAME} (${KIND}) from ${VERGE_URL}${URL}"
+        fetch -o "${OUT}" "${VERGE_URL}${URL}"
+      fi
       ;;
     *)
       echo "   !! unrecognised artifact url: ${URL}" >&2

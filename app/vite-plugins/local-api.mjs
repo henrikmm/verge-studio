@@ -19,17 +19,17 @@ const UPLOAD_ROOT = join(tmpdir(), "verge-uploads");
 const FRAME_ROOT = join(tmpdir(), "verge-frames");
 
 /**
- * Measured on a real L4 by scripts/vram-sweep.sh (2026-07-31); raw data in
- * docs/vram-measurements.json. Keep in sync with app/src/lib/contract.ts.
+ * Measured on a real L4 by scripts/vram-sweep.sh (2026-08-01), per-run isolated with
+ * empty_cache(); raw data in docs/vram-measurements.json. Ceiling is between 144 frames
+ * (ran, 21.88 GiB) and 160 (OOM). Keep in sync with app/src/lib/contract.ts.
  */
 const VRAM_BASE_BYTES = 7_050_625_024; // resident after model load
 const TOTAL_VRAM_BYTES = 23_659_151_360; // 22.03 GiB usable, not 24
 const MEASUREMENTS = [
-  [4, 10_863_247_360],
-  [8, 13_732_151_296],
-  [16, 13_732_151_296],
-  [24, 15_065_939_968],
-  [32, 15_065_939_968],
+  [32, 15_294_529_536],
+  [64, 18_186_502_144],
+  [112, 22_848_471_040],
+  [128, 23_561_502_720],
 ];
 
 export function estimateVramBytes(frameCount, processRes) {

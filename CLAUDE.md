@@ -39,7 +39,7 @@ Predecessor repo `~/dev/Motiva_Challenge` is a **read-only parts donor** — nev
 | Param | Default | Range / notes |
 |---|---|---|
 | `fps` (frame sampling) | `10` | 1–50 in the UI. Matches the HF Space's own slider default. |
-| `max_frames` | `32` | Measured ceiling (14.03 GiB of 22.03 GiB). Never remove it. |
+| `max_frames` | `112` | Measured 2026-08-01: 144 ran (21.88 GiB), 160 OOMed. 112 keeps ~15% headroom. Never remove it. |
 | `process_res` | `504` | API/CLI/Space default alike. |
 | `process_res_method` | `upper_bound_resize` | The Space's `low_res` option. |
 | `ref_view_strategy` | `middle` | DA3 docs recommend this for temporally-ordered video. |
@@ -88,8 +88,13 @@ Your task list dies with your session; `docs/PROGRESS.md` is the only thing that
 - Dev server: `cd app && npm run dev` (Vite, port 5173). Use the browser-pane preview to verify visually.
 - GCP: project **`verge-lab`**, region `us-central1`, keyless ADC; identity tokens via `gcloud auth print-identity-token`. No `--immutable-tags` on Artifact Registry; push by digest; `objectCreator` + conditional prefix IAM; `if_generation_match=0` on uploads.
 - VRAM budget: L4 reports **22.03 GiB usable** (23,659,151,360 B) — not 24 GiB; the advertised
-  figure is decimal and some is reserved. Measured sweep in `docs/vram-measurements.json`:
-  model resident 6.57 GiB; peaks 10.12 / 12.79 / 12.79 / 14.03 / 14.03 GiB at 4/8/16/24/32 frames
-  @ 504 px. No OOM at 32 frames (~8 GiB headroom). Cold start 64 s, model load 40 s.
-  Those readings are warm-instance high-water marks that include allocator cache from earlier
-  runs, so they are safe upper bounds, not isolated per-run costs.
+  figure is decimal and some is reserved. Model resident 6.57 GiB; cold start 64 s, model load 40 s.
+  Measured ladder (2026-08-01, per-run isolated with `empty_cache()`) in
+  `docs/vram-measurements.json` — @ 504 px: 32f=14.24 · 64f=16.94 · 112f=21.28 · 128f=21.94 ·
+  144f=21.88 GiB driver peak; **160f, 192f and 256f OOM**. The allocator peak is the clean
+  signal and fits **0.0700 GiB/frame + 9.39 GiB** — half the slope the older contaminated
+  readings implied. Resolution buys frames as res²: 256f runs at 356 px (17.51 GiB allocator)
+  and comfortably at 252 px (12.69 GiB), so **10 fps sampling is reachable below 504 px**.
+- ⚠️ **Cloud Run caps HTTP/1 RESPONSES at 32 MiB too, not just requests.** A 108 MB npz returns
+  500 with zero bytes; a 16 MB GLB is fine. `save-run.sh` pulls anything larger in 24 MiB
+  Range chunks (the service does honour Range — verified 206 with exact byte counts).

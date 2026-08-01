@@ -54,7 +54,7 @@ export const da3DepthSpec: NodeSpec = {
         { value: "first", label: "first" },
       ],
     },
-    { kind: "slider", key: "maxFrames", label: "Max frames", min: 2, max: 96 },
+    { kind: "slider", key: "maxFrames", label: "Max frames", min: 2, max: 144 },
     { kind: "checkbox", key: "inferGs", label: "Splats (infer_gs)" },
   ],
   execute: async ({ inputs, params }) => {

@@ -29,13 +29,13 @@ export const frameSourceSpec: NodeSpec = {
     videoSha256: "",
     durationS: 0,
     fps: 10,
-    maxFrames: 32,
+    maxFrames: 112,
   },
   controls: [
     { kind: "readout", key: "videoName", label: "Clip" },
     { kind: "readout", key: "durationS", label: "Duration" },
     { kind: "slider", key: "fps", label: "Sampling FPS", min: 1, max: 50 },
-    { kind: "slider", key: "maxFrames", label: "Max frames", min: 2, max: 96 },
+    { kind: "slider", key: "maxFrames", label: "Max frames", min: 2, max: 144 },
   ],
   execute: async ({ params }) => {
     const videoPath = String(params.videoPath ?? "");

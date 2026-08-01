@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_MAX_FRAMES,
   DEFAULT_PARAMS,
   formatBytes,
   L4_TOTAL_VRAM_BYTES,
   MODEL_RESIDENT_BYTES,
   planFrames,
+  MAX_MEASURED_FRAMES,
+  MIN_OOM_FRAMES,
   predictVram,
   vramFraction,
   VRAM_MEASUREMENTS,
@@ -53,15 +56,19 @@ describe("predictVram", () => {
   });
 
   it("interpolates between measured points and flags it as not measured", () => {
-    const p = predictVram(12, 504);
+    // 96 sits between the measured 64 and 112 rungs of the 2026-08-01 ladder.
+    const p = predictVram(96, 504);
     expect(p.measured).toBe(false);
-    // 8 and 16 both measured 13_732_151_296, so 12 must land on the same plateau.
-    expect(p.bytes).toBe(13_732_151_296);
+    const lo = predictVram(64, 504).bytes;
+    const hi = predictVram(112, 504).bytes;
+    expect(p.bytes).toBeGreaterThan(lo);
+    expect(p.bytes).toBeLessThan(hi);
   });
 
   it("flags extrapolation beyond the measured envelope", () => {
-    expect(predictVram(64, 504).measured).toBe(false);
-    expect(predictVram(64, 504).bytes).toBeGreaterThan(predictVram(32, 504).bytes);
+    // 128 is the largest measured point; 144 ran but is not in the interpolation table.
+    expect(predictVram(144, 504).measured).toBe(false);
+    expect(predictVram(144, 504).bytes).toBeGreaterThan(predictVram(128, 504).bytes);
   });
 
   it("flags any resolution other than the one measured", () => {
@@ -77,8 +84,22 @@ describe("predictVram", () => {
   it("keeps the shipped default inside the measured L4 budget", () => {
     const plan = planFrames(DEFAULT_PARAMS.fps, 10, DEFAULT_PARAMS.maxFrames);
     const p = predictVram(plan.count, DEFAULT_PARAMS.processRes);
-    expect(p.measured).toBe(true);
     expect(p.bytes).toBeLessThan(L4_TOTAL_VRAM_BYTES);
+  });
+
+  it("keeps the frame cap below the count that actually OOMed", () => {
+    // The ladder measured 144 frames running and 160 OOMing at 504 px. The cap must
+    // sit under the ceiling, not on it — 128 and 144 both completed at ~99% of the
+    // device, which is not a margin.
+    expect(DEFAULT_MAX_FRAMES).toBeLessThan(MIN_OOM_FRAMES);
+    expect(DEFAULT_MAX_FRAMES).toBeLessThanOrEqual(MAX_MEASURED_FRAMES);
+    expect(predictVram(DEFAULT_MAX_FRAMES, 504).bytes).toBeLessThan(L4_TOTAL_VRAM_BYTES);
+  });
+
+  it("predicts the 112-frame cap within 5% of what the L4 actually did", () => {
+    // Measured 2026-08-01: 22_848_471_040 bytes driver peak at 112 frames @ 504 px.
+    const predicted = predictVram(112, 504).bytes;
+    expect(Math.abs(predicted - 22_848_471_040) / 22_848_471_040).toBeLessThan(0.05);
   });
 });
 

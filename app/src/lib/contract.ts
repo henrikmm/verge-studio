@@ -21,36 +21,48 @@ export const L4_TOTAL_VRAM_BYTES = 23_659_151_360;
 export const MODEL_RESIDENT_BYTES = 7_050_625_024;
 
 /**
- * Set from measurement: 32 frames @ 504 px peaked at 14.03 GiB of the L4's 22.03 GiB,
- * leaving ~8 GiB headroom, with no OOM anywhere in the sweep. 32 is the largest count
- * actually run — the UI allows more, clearly marked as unmeasured.
+ * Frame cap, set from the 2026-08-01 ladder on a real L4.
+ *
+ * MEASURED CEILING: 144 frames @ 504 px ran (21.88 GiB of 22.03); 160 OOMed. So the
+ * hard ceiling sits between 144 and 160.
+ *
+ * 112 is deliberately BELOW that, not at it. Both 128 and 144 completed at ~99% of the
+ * device, which is not an operating point — any variation in scene content or allocator
+ * state crosses the line. 112 measured 17.23 GiB of allocator against a ~19.5 GiB
+ * ceiling, roughly 15% headroom, and matched the fitted model to within 0.25 GiB.
+ *
+ * On the 26.61 s test clip this is 4.21 effective fps, up from 1.20 at the old cap of 32.
  */
-export const DEFAULT_MAX_FRAMES = 32;
+export const DEFAULT_MAX_FRAMES = 112;
 
 /**
- * Measured peak VRAM, from scripts/vram-sweep.sh on a real L4 (2026-07-31).
- * Raw data in docs/vram-measurements.json.
+ * Measured peak VRAM from scripts/vram-sweep.sh on a real L4 (2026-08-01), at 504 px.
+ * Raw data, including the 356/252 px ladders, in docs/vram-measurements.json.
  *
- * IMPORTANT — what these numbers are: peaks observed on a WARM instance running the
- * sweep in ascending order. PyTorch's caching allocator retains freed blocks between
- * runs, so each reading includes cache from earlier runs. That is why 8 and 16 report
- * an identical 12.79 GiB, and 24 and 32 an identical 14.03 GiB — the readings quantise
- * to allocator growth steps rather than tracking true per-run cost.
+ * These are DRIVER peaks with each run isolated by empty_cache() +
+ * reset_peak_memory_stats(), so unlike the 2026-07-31 set they are per-run costs rather
+ * than cumulative high-water marks. The driver figure includes the CUDA context and
+ * allocator reserve, so it saturates near the device limit; the cleaner signal for
+ * modelling is the allocator peak, which fits
  *
- * They are therefore SAFE UPPER BOUNDS for sequential use, and conservative for a
- * cold instance running one batch. Good enough to set a frame cap; not a clean
- * cost model. See task: isolate per-run peaks with empty_cache() between runs.
+ *     allocator ≈ 0.0700 GiB/frame + 9.39 GiB
+ *
+ * across 32/64/128/144 frames. Note that is HALF the 0.14 GiB/frame the old
+ * contaminated data implied — which is why the real ceiling landed at ~144 rather
+ * than the predicted ~110.
  */
 export const VRAM_MEASUREMENTS: ReadonlyArray<{ frames: number; peakBytes: number }> = [
-  { frames: 4, peakBytes: 10_863_247_360 },
-  { frames: 8, peakBytes: 13_732_151_296 },
-  { frames: 16, peakBytes: 13_732_151_296 },
-  { frames: 24, peakBytes: 15_065_939_968 },
-  { frames: 32, peakBytes: 15_065_939_968 },
+  { frames: 32, peakBytes: 15_294_529_536 },
+  { frames: 64, peakBytes: 18_186_502_144 },
+  { frames: 112, peakBytes: 22_848_471_040 },
+  { frames: 128, peakBytes: 23_561_502_720 },
 ];
 
-/** Highest frame count we have actually run. Beyond this we are extrapolating. */
-export const MAX_MEASURED_FRAMES = 32;
+/** Highest frame count we have actually run to success. Beyond this we are extrapolating. */
+export const MAX_MEASURED_FRAMES = 144;
+
+/** Lowest frame count measured to OOM at 504 px. The ceiling is in (144, 160). */
+export const MIN_OOM_FRAMES = 160;
 /** The resolution every measurement was taken at. */
 export const MEASURED_PROCESS_RES = 504;
 

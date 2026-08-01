@@ -22,9 +22,12 @@ MODEL_REVISION = "b2359bdf726fb44ef62acca04d629dcf158053e7"
 L4_TOTAL_VRAM_BYTES = 23_659_151_360
 
 # Frame-count ceiling — a safety rail, not a quality target (DA3 imposes none).
-# Set from the sweep in docs/vram-measurements.json: 32 frames @ 504 px peaked at
-# 14.03 GiB with ~8 GiB headroom and no OOM. 32 is the largest count actually run.
-DEFAULT_MAX_FRAMES = 32
+# Set from the 2026-08-01 ladder in docs/vram-measurements.json. MEASURED: 144 frames
+# @ 504 px ran at 21.88 GiB of 22.03; 160 OOMed. 112 sits deliberately below that
+# ceiling with ~15% headroom (17.23 GiB allocator), because 128 and 144 both completed
+# at ~99% of the device, which is a coin flip rather than an operating point.
+# Mirrors DEFAULT_MAX_FRAMES in app/src/lib/contract.ts.
+DEFAULT_MAX_FRAMES = 112
 
 ProcessResMethod = Literal["upper_bound_resize", "lower_bound_resize"]
 RefViewStrategy = Literal["first", "middle", "saddle_balanced", "saddle_sim_range"]

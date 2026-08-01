@@ -1,42 +1,254 @@
-[
+{
+  "schema": "verge.vram-measurements/0.2.0",
+  "sweeps": [
     {
-        "frames": 4,
-        "process_res": 504,
-        "peak_bytes": 10863247360,
-        "peak_gib": 10.12,
-        "gpu_seconds": 6.38,
-        "ok": true
+      "label": "m1-initial",
+      "date": "2026-07-31",
+      "contaminated": true,
+      "method": "driver mem_get_info peak only; warm instance, ascending order; PyTorch allocator cache NOT cleared between runs",
+      "caveat": "Cumulative high-water marks, not per-run costs. 8f and 16f both report 12.79 GiB and 24f/32f both 14.03 GiB because the readings quantise to allocator growth steps. Safe upper bounds only.",
+      "runs": [
+        {
+          "frames": 4,
+          "process_res": 504,
+          "peak_bytes": 10863247360,
+          "peak_gib": 10.12,
+          "gpu_seconds": 6.38,
+          "ok": true
+        },
+        {
+          "frames": 8,
+          "process_res": 504,
+          "peak_bytes": 13732151296,
+          "peak_gib": 12.79,
+          "gpu_seconds": 2.17,
+          "ok": true
+        },
+        {
+          "frames": 16,
+          "process_res": 504,
+          "peak_bytes": 13732151296,
+          "peak_gib": 12.79,
+          "gpu_seconds": 2.79,
+          "ok": true
+        },
+        {
+          "frames": 24,
+          "process_res": 504,
+          "peak_bytes": 15065939968,
+          "peak_gib": 14.03,
+          "gpu_seconds": 4.37,
+          "ok": true
+        },
+        {
+          "frames": 32,
+          "process_res": 504,
+          "peak_bytes": 15065939968,
+          "peak_gib": 14.03,
+          "gpu_seconds": 6.13,
+          "ok": true
+        }
+      ]
     },
     {
-        "frames": 8,
-        "process_res": 504,
-        "peak_bytes": 13732151296,
-        "peak_gib": 12.79,
-        "gpu_seconds": 2.17,
-        "ok": true
+      "label": "res504",
+      "date": "2026-08-01",
+      "contaminated": false,
+      "method": "empty_cache() + reset_peak_memory_stats() before each run; driver peak and torch.cuda.max_memory_allocated() both recorded, with the pre-run baseline",
+      "cold_start_seconds": 60,
+      "runs": [
+        {
+          "frames": 32,
+          "process_res": 504,
+          "effective_fps": 1.2026,
+          "wall_seconds": 15,
+          "http_code": 200,
+          "ok": true,
+          "run_id": "20260801-042257-2e24cc",
+          "peak_bytes": 15294529536,
+          "peak_gib": 14.24,
+          "torch_peak_bytes": 12483241472,
+          "torch_peak_gib": 11.63,
+          "baseline_bytes": 7050625024,
+          "baseline_gib": 6.57,
+          "activation_gib": 7.68,
+          "total_gib": 22.03,
+          "gpu_seconds": 12.17
+        },
+        {
+          "frames": 64,
+          "process_res": 504,
+          "effective_fps": 2.4051,
+          "wall_seconds": 21,
+          "http_code": 200,
+          "ok": true,
+          "run_id": "20260801-042313-6571dd",
+          "peak_bytes": 18186502144,
+          "peak_gib": 16.94,
+          "torch_peak_bytes": 14888275456,
+          "torch_peak_gib": 13.87,
+          "baseline_bytes": 7134511104,
+          "baseline_gib": 6.64,
+          "activation_gib": 10.29,
+          "total_gib": 22.03,
+          "gpu_seconds": 15.2
+        },
+        {
+          "frames": 128,
+          "process_res": 504,
+          "effective_fps": 4.8102,
+          "wall_seconds": 48,
+          "http_code": 200,
+          "ok": true,
+          "run_id": "20260801-042335-8bd2b9",
+          "peak_bytes": 23561502720,
+          "peak_gib": 21.94,
+          "torch_peak_bytes": 19707430912,
+          "torch_peak_gib": 18.35,
+          "baseline_bytes": 7134511104,
+          "baseline_gib": 6.64,
+          "activation_gib": 15.3,
+          "total_gib": 22.03,
+          "gpu_seconds": 37.67
+        },
+        {
+          "frames": 192,
+          "process_res": 504,
+          "effective_fps": 7.2153,
+          "wall_seconds": 31,
+          "http_code": 500,
+          "ok": false,
+          "detail": "inference failed: CUDA out of memory. Tried to allocate 812.00 MiB. GPU 0 has a total capacity of 22.03 GiB of which 123.12 MiB is free. Including non-PyTorch memory, this process has 21.91 GiB memory in use. Of the allocated memory 19.85 GiB is allocated by PyTorch, and 1.82 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF"
+        },
+        {
+          "frames": 256,
+          "process_res": 504,
+          "effective_fps": 9.6204,
+          "wall_seconds": 27,
+          "http_code": 500,
+          "ok": false,
+          "detail": "inference failed: CUDA out of memory. Tried to allocate 1.06 GiB. GPU 0 has a total capacity of 22.03 GiB of which 695.12 MiB is free. Including non-PyTorch memory, this process has 21.35 GiB memory in use. Of the allocated memory 19.53 GiB is allocated by PyTorch, and 1.58 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=e"
+        }
+      ]
     },
     {
-        "frames": 16,
-        "process_res": 504,
-        "peak_bytes": 13732151296,
-        "peak_gib": 12.79,
-        "gpu_seconds": 2.79,
-        "ok": true
+      "label": "res504-bisect",
+      "date": "2026-08-01",
+      "contaminated": false,
+      "method": "empty_cache() + reset_peak_memory_stats() before each run; driver peak and torch.cuda.max_memory_allocated() both recorded, with the pre-run baseline",
+      "cold_start_seconds": 0,
+      "runs": [
+        {
+          "frames": 112,
+          "process_res": 504,
+          "effective_fps": 4.2089,
+          "wall_seconds": 39,
+          "http_code": 200,
+          "ok": true,
+          "run_id": "20260801-042746-dd8dde",
+          "peak_bytes": 22848471040,
+          "peak_gib": 21.28,
+          "torch_peak_bytes": 18496720896,
+          "torch_peak_gib": 17.23,
+          "baseline_bytes": 7136608256,
+          "baseline_gib": 6.65,
+          "activation_gib": 14.63,
+          "total_gib": 22.03,
+          "gpu_seconds": 30.23
+        },
+        {
+          "frames": 144,
+          "process_res": 504,
+          "ok": true,
+          "peak_bytes": null,
+          "peak_gib": 21.88,
+          "torch_peak_bytes": null,
+          "torch_peak_gib": 19.47,
+          "activation_gib": 15.23,
+          "gpu_seconds": 42.05,
+          "recovered": true
+        },
+        {
+          "frames": 160,
+          "process_res": 504,
+          "ok": false,
+          "recovered": true,
+          "detail": "inference failed: CUDA out of memory. Tried to allocate 1.32 GiB. GPU 0 has a total capacity of 22.03 GiB of which 1.24 GiB is free."
+        }
+      ],
+      "recovery_note": "The 144f and 160f rungs were run and then overwritten by a merge bug that replaced a whole sweep when the label repeated (fixed 2026-08-01, now merges per rung). They are restored here from console output: GiB values are exact as printed, *_bytes are null because that precision was not recoverable."
     },
     {
-        "frames": 24,
-        "process_res": 504,
-        "peak_bytes": 15065939968,
-        "peak_gib": 14.03,
-        "gpu_seconds": 4.37,
-        "ok": true
+      "label": "res356",
+      "date": "2026-08-01",
+      "contaminated": false,
+      "method": "empty_cache() + reset_peak_memory_stats() before each run; driver peak and torch.cuda.max_memory_allocated() both recorded, with the pre-run baseline",
+      "cold_start_seconds": 0,
+      "runs": [
+        {
+          "frames": 192,
+          "process_res": 356,
+          "effective_fps": 7.2153,
+          "wall_seconds": 33,
+          "http_code": 200,
+          "ok": true,
+          "run_id": "20260801-042917-366ed2",
+          "peak_bytes": 20820525056,
+          "peak_gib": 19.39,
+          "torch_peak_bytes": 16122029568,
+          "torch_peak_gib": 15.01,
+          "baseline_bytes": 7136608256,
+          "baseline_gib": 6.65,
+          "activation_gib": 12.74,
+          "total_gib": 22.03,
+          "gpu_seconds": 24.57
+        },
+        {
+          "frames": 256,
+          "process_res": 356,
+          "effective_fps": 9.6204,
+          "wall_seconds": 45,
+          "http_code": 200,
+          "ok": true,
+          "run_id": "20260801-042950-e08c11",
+          "peak_bytes": 23123197952,
+          "peak_gib": 21.54,
+          "torch_peak_bytes": 18802558464,
+          "torch_peak_gib": 17.51,
+          "baseline_bytes": 7136608256,
+          "baseline_gib": 6.65,
+          "activation_gib": 14.89,
+          "total_gib": 22.03,
+          "gpu_seconds": 35.25
+        }
+      ]
     },
     {
-        "frames": 32,
-        "process_res": 504,
-        "peak_bytes": 15065939968,
-        "peak_gib": 14.03,
-        "gpu_seconds": 6.13,
-        "ok": true
+      "label": "res252",
+      "date": "2026-08-01",
+      "contaminated": false,
+      "method": "empty_cache() + reset_peak_memory_stats() before each run; driver peak and torch.cuda.max_memory_allocated() both recorded, with the pre-run baseline",
+      "cold_start_seconds": 0,
+      "runs": [
+        {
+          "frames": 256,
+          "process_res": 252,
+          "effective_fps": 9.6204,
+          "wall_seconds": 23,
+          "http_code": 200,
+          "ok": true,
+          "run_id": "20260801-043053-93949b",
+          "peak_bytes": 17060331520,
+          "peak_gib": 15.89,
+          "torch_peak_bytes": 13621749248,
+          "torch_peak_gib": 12.69,
+          "baseline_bytes": 7136608256,
+          "baseline_gib": 6.65,
+          "activation_gib": 9.24,
+          "total_gib": 22.03,
+          "gpu_seconds": 16.15
+        }
+      ]
     }
-]
+  ]
+}

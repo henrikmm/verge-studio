@@ -72,7 +72,8 @@ print("path traversal refused OK")
 # defaults track the verified upstream values
 p = main.InferParams()
 assert (p.process_res, p.ref_view_strategy, p.fps, p.infer_gs) == (504, "middle", 10.0, False)
-assert p.max_frames == 32
+# Cap set from the 2026-08-01 ladder: 144 ran, 160 OOMed, 112 leaves ~15% headroom.
+assert p.max_frames == 112
 print("defaults OK:", p.model_dump())
 
 # The frame ladder runs to 256, so the wire bound must not reject it before the GPU
