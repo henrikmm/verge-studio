@@ -6,7 +6,8 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-01 · M2b complete (one warm cloud session, torn down)
+Last updated: 2026-08-01 · M2b complete (one warm cloud session, torn down); M3 re-planned
+after a literature/repo survey — see "M3 — Height measurement" below.
 
 ---
 
@@ -18,7 +19,11 @@ Last updated: 2026-08-01 · M2b complete (one warm cloud session, torn down)
 | M1 — GPU service live | **done** (with carve-outs below) |
 | M2a — Node graph, local only | **done** (one carve-out: mock badge) |
 | M2b — One warm cloud session | **done** (fixture home, service deleted) |
-| M3 — Height measurement (the goal) | not started — **unblocked**, fixture is local |
+| M3.0 — Door-clip fixture (one warm session) | in progress |
+| M3a — Geometry core (offline) | not started |
+| M3b — Mask → measurement → grading | not started |
+| M3c — Automatic segmentation | not started |
+| M3d — Field/raster regime (vegetation) | deferred |
 | M4 — Splats + polish | not started |
 
 ---
@@ -48,40 +53,45 @@ Decisions made, do not relitigate without reason:
 4. **Keep the image, delete the service.** See the Cloud discipline section of `CLAUDE.md` —
    the rule was reversed on 2026-07-31 after we noticed the old one optimised the cheap axis.
 
-### The M3 test video
+### The test videos — two clips, and B is the one that matters
 
-`test_demo.mp4` in the repo root — the user's room, a **walk-through with real camera
-translation** (confirmed by the user, so cross-view attention has parallax to work with).
-Covered by `.gitignore`'s `*.mp4`; **never commit it.**
+Both are `.gitignore`d by `*.mp4`; **never commit either.** Ground truth for both lives in
+`MEASUREMENTS.md`.
 
-Measured with ffprobe on 2026-08-01:
+| | **Clip B — `test-demo-door.mp4`** (primary) | Clip A — `test_demo.mp4` |
+|---|---|---|
+| Duration | 35.57 s | 26.61 s |
+| Stored resolution | 1920×1080 | 3840×2160 |
+| **Displayed** resolution | **1080×1920 (portrait, `rotation=-90`)** | 3840×2160 (landscape) |
+| Codec / frames | HEVC · 1067 @ 30 fps | HEVC · 1579 @ 59.37 fps |
+| Size | 55.6 MB | 172 MB |
+| References in frame | door **2.10 m**, table 0.750 m, PC tower 0.45 m, monitor 0.534 m | table, monitor only |
 
-| | |
-|---|---|
-| Duration | 26.61 s |
-| Resolution | 3840×2160 (4K) |
-| Codec | HEVC |
-| Native fps | 59.37 (1579 frames) |
-| Size | 172 MB |
+**Clip B supersedes clip A for grading.** Same room, but it contains the door — and because
+metric scale does **not** transfer between clips (see the M3 section), every reference used to
+judge a reconstruction has to be visible *in that same reconstruction*. Clip A's longest
+reference is 0.750 m; clip B's is 2.10 m, ~2.8× less fractional error for the same absolute
+endpoint-location error.
 
-- Run it **at full length**, not a trimmed window.
-- 26.61 s against the current 32-frame cap is only **1.20 effective fps** (DA3's own default is
-  10). `max_frames=32` is a VRAM safety cap, NOT a quality decision, and NOT a measured ceiling —
-  it is simply the largest count ever run. Find the real ceiling with the frame ladder in M2b.
-  Note the cap never truncates the clip: `planFrames` lowers fps so the frames still span all
-  26.61 s.
-- ⚠️ **Frames must be downscaled before upload.** Measured JPEG sizes from this clip:
-  native 4K ≈ **432 KB/frame** (32 frames ≈ 13 MB, 96 frames ≈ **40 MB**); scaled to 1024 px on
-  the long edge ≈ **62 KB/frame** (96 frames ≈ 6 MB). Cloud Run's documented HTTP/1 request cap
-  is 32 MiB, so the top of the frame ladder would likely fail on native frames — and the bytes
-  are wasted regardless, because DA3 resizes to `process_res` (504) internally.
-  `scripts/extract-frames.mjs` has **no scaling option**; add one before the cloud session.
-- Still needed from the user: the tape-measure truths (object, dimension, metres) and which
-  object is the `ScaleCheck` calibration reference. That list becomes `MEASUREMENTS.md`.
-- Clip quality caveat: DA3 needs **camera translation, not rotation**. If the clip is a pan from
-  a fixed point there is no parallax, cross-view attention has nothing to work with, and the
-  geometry will be poor no matter what the downstream code does. Check this before spending a
-  session on it.
+Clip A keeps one job: it already has three fixtures at different `process_res`
+(`fixtures/room/`), so it can answer resolution-vs-frames offline at zero cloud cost.
+
+- ⚠️ **Clip B is portrait via rotation metadata.** `ffprobe stream=width,height` reports the
+  *stored* 1920×1080; ffmpeg autorotates on decode and hands the filter chain 1080×1920. Any
+  code that plans a scale filter from the stored dimensions will squash the frame. This bit
+  `scripts/extract-frames.mjs` — see "Bugs found and FIXED" below.
+- Run clips **at full length**, never a trimmed window.
+- Frames are downscaled to a 1024 px long edge before upload (done in M2b). Measured on clip A:
+  native 4K **460 KB/frame** vs **56.6 KB/frame** scaled. Cloud Run's HTTP/1 request cap is
+  32 MiB, and DA3 resizes to `process_res` internally anyway, so the bytes are pure waste.
+- Camera translation is **confirmed for clip A** — camera centres span 1.26 × 1.28 × 1.69 m
+  across the 112 frames, measured from the fixture's own extrinsics. DA3 needs translation, not
+  rotation: a pan from a fixed point has no parallax and cross-view attention has nothing to
+  work with. Re-check this for clip B once its fixture exists.
+- Clip B's room is **white, textureless walls + a glossy dark monitor + a tiled floor seen at a
+  grazing angle**. Those are the three canonical failure surfaces for every model in this
+  family. Expect the wall geometry to be the softest part of the reconstruction, and gate
+  geometry on DA3's confidence map rather than trusting all points equally.
 
 ---
 
@@ -132,9 +142,12 @@ These were in the M1 plan but are not implemented. Do not assume they work.
 - [x] ~~`result.npz` may clobber DA3's native npz~~ — measured in M2b: DA3 writes no npz at
       all, so there was nothing to clobber. Ours renamed to `verge-result.npz` defensively.
 - [ ] **`infer_gs` is broken: `gsplat` is missing from the image.** One real run returned
-      `name 'rasterization' is not defined`. Add `gsplat` to the pip install in
-      `server/Dockerfile` (line 17) — costs a ~20 min rebuild, so bundle it with other server
-      changes. Until then treat splats as unavailable, not merely untested. Blocks M4.
+      `name 'rasterization' is not defined`. ⚠️ **Corrected 2026-08-01: this is NOT a one-line
+      pip addition.** The base image is `pytorch/pytorch:2.5.1-cuda12.1-cudnn9-**runtime**`,
+      which has no `nvcc`; gsplat compiles CUDA extensions at install or JIT at first use, so it
+      needs a `-devel` base (bigger image, longer build) or a prebuilt wheel matching torch
+      2.5.1/cu121. Deliberately NOT bundled into the M3 rebuild: an unproven base-image swap
+      would have risked the M3 session on an M4 feature. Treat splats as unavailable. Blocks M4.
 - [ ] **Cloud Run's 32 MiB response cap makes `/artifact` unusable for the npz.** A 108 MB
       npz returns **HTTP 500 with zero bytes**, direct and through the proxy alike; the 16 MB
       GLB is fine. `save-run.sh` works around it with 24 MiB Range chunks, but **the browser
@@ -335,21 +348,176 @@ with only its `manifest.json` + checksums committed. It will not survive a fresh
 
 </details>
 
-## M3 — Height measurement ⬜
+## M3 — Height measurement ⬜ (re-planned 2026-08-01)
 
-**Unblocked.** Runs fully offline against `fixtures/room/` — three settings, already local.
-Read the npz **from disk**, not over HTTP (see the 32 MiB cap follow-up above).
+M3 was originally "fit a plane, click a point, report a height". A literature/repo survey plus
+direct measurement on the existing fixture changed the shape of it. **Read this whole section
+before touching `geometry/`** — three of the decisions below overturn the obvious approach.
 
-- [x] `MEASUREMENTS.md` seeded with the user's tape-measure truths (table 0.750 m, monitor
-      0.534 m, derived composite 1.284 m). **Two caveats recorded there, both need the user:**
-      (a) "table 75 cm" is *assumed* to be height — if it is width or depth, object 3 and the
-      scale factor are both wrong; (b) no door was available, so the largest reference is
-      0.750 m rather than ~2.03 m, making the calibration baseline proportionally noisier.
-- [ ] `geometry/` is still an **empty directory** — nothing implemented
-- [ ] `GroundPlane` (robust/RANSAC plane fit)
-- [ ] `ScaleCheck` (known-object calibration, seeded from donor `scale.js`)
-- [ ] `MeasureHeight` (height above ground ± uncertainty, 3D ruler overlay)
-- [ ] `MEASUREMENTS.md` with 3+ objects, predicted vs tape-measure truth
+### The two regimes (this is why the donor code looked wrong-shaped)
+
+There are **two different measurement problems**, sharing one foundation:
+
+- **Instance regime** — "how tall is that door?" A discrete object, a mask, a height above the
+  local floor, one number ± uncertainty. Doors, tables, monitors, signs, poles.
+- **Field regime** — "how tall is the vegetation along this corridor?" There are no objects and
+  nobody can interact per-blade-of-grass. The standard method is to grid the ground and report a
+  height *distribution* per cell (H50/H90/H95), i.e. a raster, not a list.
+
+The donor's `ground.js`/`height.js` (cells, segments, H50/H90/H95, per-cell validity) is the
+**field regime**, correctly implemented. It is not aerial-specific and it is not wrong — it
+answers a question M3 had not separated out. Both regimes share gravity, ground plane,
+backprojection and uncertainty; they differ only in the final step.
+
+### Decisions taken, with evidence — do not relitigate
+
+1. **Selection happens in 2D, not 3D.** Clicking individual points in a rotating cloud is
+   miserable UX and does not scale. DA3 gives per-frame depth + intrinsics + extrinsics, so a
+   mask painted on a *frame image* backprojects to an exact 3D point set. The depth map is the
+   bridge; selection is an image problem.
+   - Consequence: mask-driven selection must read the **npz**, not the GLB. The GLB's 1,000,000
+     points are a subsample with no pixel provenance, so a mask cannot be mapped onto them.
+     Backprojection also gives full-resolution points for the object instead of a thinned sample.
+   - Consequence: the **extracted frames are now a fixture artifact**. `save-run.sh` collects
+     GLB + npz only; without the frames there is nothing to paint on. ~6 MB at 1024 px.
+2. **Never use `max()` for the top of an object. Use a high percentile (P95–P99).** Two
+   independent literatures agree: mask silhouettes produce "flying pixels" (mixed
+   foreground/background depth) exactly at the top edge, and forestry canopy-height pipelines
+   moved to per-cell P95 for the same outlier-fragility reason. Pipeline before the percentile:
+   **erode the mask a few px → filter by DA3 confidence → statistical outlier removal**.
+3. **Plain RANSAC does not find the floor — it finds walls.** Measured on
+   `fixtures/room/504px-112f`: sequential RANSAC returns three tilted planes (17.1%, 20.8%,
+   9.6% inliers) whose normals sit 60°/34° off vertical. There is no widely-adopted
+   "ground-from-unstructured-SfM-cloud" library; everyone rolls RANSAC + an orientation prior +
+   a lowest-plane heuristic. So: **gate candidates by orientation against a gravity estimate
+   first, then break ties by lowest elevation, not by inlier count.**
+4. **Gravity comes from the camera extrinsics.** No IMU exists in a video-only pipeline, but
+   averaging the per-frame camera down-axis works: measured **0.925 coherence** across the 112
+   frames of the existing fixture. Cross-check it against the fitted plane's own normal and
+   report the disagreement rather than silently picking a winner.
+5. **The plane fit must be deterministic.** Open3D's `segment_plane` has shipped genuinely
+   non-deterministic results across versions. We write our own, so we do not inherit that bug —
+   but this app **caches by content hash**, and a node returning a different plane for identical
+   inputs would corrupt the cache model quietly. Explicit seed, plus a test asserting two runs
+   on the same fixture agree.
+6. **Scale is per-clip. `ScaleCheck` reports, it does not correct.** Metric scale from monocular
+   models drifts with scene, depth range and camera parameters (the classical "scale drift"
+   problem); a factor calibrated in one clip does not transfer to another. So DA3's metric output
+   is the primary estimate and the known object is a **per-clip QA gate** ("does the door read
+   2.10 m?"). Applying a correction stays opt-in and any corrected number is labelled.
+   Calibrating *within* a clip is legitimate and is standard photogrammetry practice — that is
+   what a scale bar in the scene is for.
+7. **Uncertainty is not decoration.** Report height ± NMAD (MAD × 1.4826) of the sampled patch,
+   plus a point-density gate that refuses to report at all below a minimum count. This follows
+   the M3C2 convention (local roughness + point density + registration error → a stated
+   confidence interval), which is the field standard for point-cloud measurement.
+8. **DA3's confidence map is currently used for nothing.** It is in the npz and ignored
+   downstream. The surfaces where DA3 is least confident — glossy screens, textureless walls,
+   grazing-angle floors — are precisely our failure surfaces, and clip B has all three. Gate
+   both the ground fit and the top-surface percentile on it.
+
+### What "good" looks like — set expectations before measuring
+
+DA3's own paper reports **AbsRel ≈ 0.104** for the metric variant on ETH3D. Naively that is
+±21 cm on a 2.10 m door. Three reasons the measurement error should be smaller than the
+per-pixel benchmark error, and one reason it might not be:
+
+- A height is a **difference** (top − ground). Error common to both endpoints partially cancels;
+  AbsRel counts the full absolute error including the part that cancels.
+- AbsRel averages over *every* pixel including the worst; we use a confidence-filtered patch of
+  thousands of selected points, and random error averages down ≈ √N.
+- The two endpoints of a vegetation height are at nearly the same range from the camera, so the
+  *relative* geometry is far better constrained than the absolute range is.
+- **But**: whatever is left after averaging is systematic, and only calibration removes that.
+
+So the real deliverable is not "the door measured 2.05 m" — it is the **error model**. Five
+truths spanning 0.45 → 2.10 m in one clip is enough to fit `predicted = a·truth + b`:
+`a` is scale bias (correctable), `b` is offset, e.g. a mis-placed ground plane (correctable),
+and the residual scatter is the noise floor (not correctable — this is the number that decides
+whether fine-grained vegetation work is viable). Table is in `MEASUREMENTS.md`.
+
+---
+
+### M3.0 — Door-clip fixture · ONE warm cloud session
+
+Prerequisites are local and must ALL be green before deploying — a warm instance is the meter.
+
+- [ ] Fix rotation handling in `scripts/extract-frames.mjs` (see M3 bugs below) — **blocking**
+- [ ] Extract clip B once, ladder-strided to the 256 and 112 rungs, 1024 px long edge
+- [ ] `verify.sh` green
+- [ ] Deploy — this also finally tests the **unverified build-skip branch** (`server/` unchanged
+      since the M2b image, so it must print "skipping build" and start in ~1 min)
+- [ ] Three runs back to back on the one instance:
+      **356 px / 256 f** (7.2 fps — the primary; allocator peak 17.51 GiB ≈ the sanctioned
+      112 f/504 px load), **504 px / 112 f** (3.15 fps), **252 px / 256 f** (comfortable)
+- [ ] `save-run.sh` all three, **plus the source frames**, sha256-verified
+- [ ] `teardown.sh` — service deleted, image kept
+
+### M3a — Geometry core (offline, no UI)
+
+Pure functions in `geometry/`, plain arrays in and numbers out, no Three.js — so they test
+headlessly against synthetic scenes with known answers.
+
+- [ ] `gravity` — up-axis from extrinsics + coherence score the UI can refuse to trust
+- [ ] `plane` — deterministic gravity-gated RANSAC, confidence-weighted, lowest-elevation
+      tie-break, least-squares refinement on inliers; `fitFromSeeds()` fallback for a
+      hand-picked floor
+- [ ] `backproject` — mask + depth + intrinsics + extrinsics → world points, with erosion,
+      confidence threshold and depth-discontinuity rejection
+- [ ] `measure` — P95–P99 height above plane, NMAD uncertainty, density gate; point-to-point
+      distance
+- [ ] Tests: synthetic floor + box at known height, tilted world frame, noise, outlier spray,
+      "no floor visible" must fail loudly rather than return a wrong plane, determinism
+
+### M3b — Mask → measurement → grading
+
+- [ ] Brush on the frame pane (canvas, brush size, erase, zoom) — no ML, ~100 lines
+- [ ] **Live 3D highlight of the selected points while painting**, so mask spill onto the wall
+      behind the object is visible immediately instead of silently inflating the height
+- [ ] `GroundPlane` / `MeasureHeight` / `ScaleCheck` nodes (all CPU, all `auto` — they can never
+      bill). New `plane` port type needs a colour added to `docs/DESIGN.md`.
+- [ ] Objects pane: one row per object — frame thumbnail, name, height ± uncertainty, point
+      count, truth + error. This is the evidence panel, not just a readout: every number can be
+      audited by looking at the crop it came from.
+      **Objects are rows in a pane, never nodes in the graph** — the graph is the pipeline, and
+      hundreds of vegetation cells would turn the canvas into confetti.
+- [ ] Fill `MEASUREMENTS.md` for all five clip-B objects, per setting
+- [ ] Fit the error model (`a`, `b`, residual RMS) and record the resolution-vs-frames verdict
+
+### M3c — Automatic segmentation (mask source swap only)
+
+Nothing downstream changes: a brush mask and a model mask are the same bytes. **No cloud cost —
+this runs in the browser.**
+
+- [ ] MobileSAM or EfficientSAM (both Apache-2.0, ~10 MB ONNX) via ONNX Runtime Web /
+      transformers.js: encode the frame once, decode a mask per click (~200 ms)
+- [ ] SAM 2 (Apache-2.0) mask propagation across frames — **but** its memory bank is documented
+      as uncorrectable once wrong: one bad mask poisons everything after it and quality degrades
+      with depth into the clip. Verify per clip; `SAM2Long`-style hypothesis search is the known
+      fix if drift shows up.
+- [ ] Licence trap to avoid: Ultralytics YOLO is AGPL-3.0 and YOLO-World is GPL-3.0. Grounded
+      SAM (Grounding DINO + SAM) is Apache-2.0 throughout and gives the same open-vocabulary
+      capability. Mask2Former's *weights* are CC-BY-NC-4.0 — same licence as DA3, no new
+      constraint.
+
+### M3d — Field/raster regime (deferred, for the roadside case)
+
+- [ ] Ground raster → per-cell height percentiles above the local ground, point-count QA gate
+- [ ] Output is a heat map, not a list; the donor's cell/segment code is the template
+- [ ] Do **not** try to instance-segment vegetation; reserve segmentation for large discrete
+      plants where identity actually matters
+
+### Bugs found during M3
+
+1. ⚠️ **`extract-frames.mjs` squashed rotated video.** `probeVideo` reads
+   `stream=width,height`, which is the **stored** size — 1920×1080 for clip B. ffmpeg
+   autorotates on decode (`rotation=-90`) and hands the filter chain 1080×1920, but `planScale`
+   had already computed `scale=1024:576` from the stored landscape dimensions, stretching a
+   portrait frame into landscape. Every frame would have reached the GPU with a wrong aspect
+   ratio, and the resulting intrinsics/geometry would have been silently wrong. Found by
+   `ffprobe`-ing the clip *before* deploying, which is exactly what the local-prerequisites rule
+   is for. Fix: parse `side_data` rotation and swap the planning dimensions when |rotation| is
+   90 or 270.
 
 ## M4 — Splats + polish ⬜
 
@@ -386,14 +554,24 @@ PURGE_IMAGE=1 ./scripts/teardown.sh  # ...and deletes the image, when the projec
 FORCE_BUILD=1 ./scripts/deploy.sh    # rebuild even when the source hash matches
 ```
 
-⚠️ **The build-skip logic is STILL UNVERIFIED.** M2b deployed exactly once, so only the
-"no image for this source, building" branch ran (correctly — it created the registry, tagged
-`src-d8977556a0573326`, built in 19m30s, deployed by digest). **The skip branch has never
-executed.** The next deploy is the test: with `server/` unchanged it must print
-*"image for this exact server/ source already in the registry, skipping build"* and start in
-~1 min. If it rebuilds instead, that is a bug worth fixing before it costs 20 more minutes.
-Note that any edit to `server/` changes the hash and *correctly* forces a rebuild — so test
-the skip on an unmodified tree.
+⚠️ **The build-skip branch has still never executed, and the M2b image is already stale.**
+Checked 2026-08-01 before the M3 deploy: the registry holds `src-d8977556a0573326`, but a clean
+tree now hashes to `src-3038078518c96bb0`. `server/` was edited *after* that image was built —
+commit `2020ec9` set the frame cap to 112 in `server/contract.py`. So the M2b claim that "the
+next deploy should skip the build and start in ~1 min" was **wrong**, and M3.0 paid a full
+rebuild.
+
+The hashing logic itself is behaving correctly (different source → different tag → rebuild);
+what was wrong was the assumption that the tree had not changed. **Before predicting a fast
+deploy, actually compare the tags:**
+
+```bash
+find server -type f -not -path '*/__pycache__/*' | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256 | cut -c1-16
+```
+
+Compare that against `gcloud artifacts docker tags list us-central1-docker.pkg.dev/verge-lab/verge/da3-service`.
+The skip branch is *still* unverified — the next deploy after M3.0, on an unmodified tree, is
+the real test.
 
 ## Measured facts (do not re-derive)
 

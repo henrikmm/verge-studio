@@ -23,6 +23,14 @@ fixtures/room/**
 !fixtures/room/**/manifest.json
 !fixtures/room/**/SHA256SUMS
 
+# M3 door fixture: same treatment as room/, plus the extracted SOURCE FRAMES. Masks are
+# painted on frames, so from M3 on the frames are part of the fixture, not a temp file —
+# without them a saved run cannot be re-measured.
+fixtures/door/**
+!fixtures/door/**/
+!fixtures/door/**/manifest.json
+!fixtures/door/**/SHA256SUMS
+
 # OS / editor
 .DS_Store
 .vscode/
