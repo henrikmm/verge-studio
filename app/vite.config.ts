@@ -9,5 +9,7 @@ export default defineConfig({
   plugins: [react(), localApi()],
   publicDir: fileURLToPath(new URL("../fixtures", import.meta.url)),
   server: { port: 5173, strictPort: true },
-  test: { environment: "node", include: ["src/**/*.test.ts"] },
+  // geometry/ lives outside app/ (it is the one piece with no browser dependency), but
+  // the app imports it and it must be typechecked and tested by the same loop.
+  test: { environment: "node", include: ["src/**/*.test.ts", "../geometry/**/*.test.ts"] },
 });

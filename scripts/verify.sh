@@ -14,10 +14,10 @@ if [ -f app/package.json ]; then
   (cd app && npm test --silent)
 fi
 
-if [ -d geometry ] && ls geometry/*.test.* >/dev/null 2>&1; then
-  echo "== geometry tests =="
-  (cd geometry && node --test)
-fi
+# geometry/ is TypeScript and is covered by the app's vitest run above (its test glob
+# includes ../geometry) and by the app's tsc (its tsconfig includes ../geometry). It used
+# to be run separately with `node --test`, which would now try to execute .ts files.
+# Keeping one runner also means geometry and the app can never drift apart on types.
 
 # Server contract smoke. Needs fastapi but NOT torch/DA3, so it runs on this Mac
 # whenever a venv with fastapi is on PATH (set VERGE_PY to point at one).

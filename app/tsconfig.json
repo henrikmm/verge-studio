@@ -13,7 +13,12 @@
     "isolatedModules": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    // geometry/ lives outside app/, so Node resolution walking up from it never reaches
+    // app/node_modules and tsc cannot find vitest for its test files. Vite resolves them
+    // fine at runtime; this only teaches the typechecker where to look.
+    "baseUrl": ".",
+    "paths": { "vitest": ["node_modules/vitest"] }
   },
-  "include": ["src"]
+  "include": ["src", "../geometry"]
 }
