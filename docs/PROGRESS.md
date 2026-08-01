@@ -50,12 +50,29 @@ Decisions made, do not relitigate without reason:
 
 ### The M3 test video
 
-`teste_demo.mp4` in the repo root — the user's room, ~28 s, containing objects whose real
-physical dimensions they know. Covered by `.gitignore`'s `*.mp4`; **never commit it.**
+`test_demo.mp4` in the repo root — the user's room, a **walk-through with real camera
+translation** (confirmed by the user, so cross-view attention has parallax to work with).
+Covered by `.gitignore`'s `*.mp4`; **never commit it.**
+
+Measured with ffprobe on 2026-08-01:
+
+| | |
+|---|---|
+| Duration | 26.61 s |
+| Resolution | 3840×2160 (4K) |
+| Codec | HEVC |
+| Native fps | 59.37 (1579 frames) |
+| Size | 172 MB |
 
 - Run it **at full length**, not a trimmed window.
-- 28 s against the current 32-frame cap is only **1.14 effective fps** (DA3's own default is 10).
-  Find the real ceiling with the frame ladder in M2b rather than accepting 1.14.
+- 26.61 s against the current 32-frame cap is only **1.20 effective fps** (DA3's own default is
+  10). Find the real ceiling with the frame ladder in M2b rather than accepting 1.20.
+- ⚠️ **Frames must be downscaled before upload.** Measured JPEG sizes from this clip:
+  native 4K ≈ **432 KB/frame** (32 frames ≈ 13 MB, 96 frames ≈ **40 MB**); scaled to 1024 px on
+  the long edge ≈ **62 KB/frame** (96 frames ≈ 6 MB). Cloud Run's documented HTTP/1 request cap
+  is 32 MiB, so the top of the frame ladder would likely fail on native frames — and the bytes
+  are wasted regardless, because DA3 resizes to `process_res` (504) internally.
+  `scripts/extract-frames.mjs` has **no scaling option**; add one before the cloud session.
 - Still needed from the user: the tape-measure truths (object, dimension, metres) and which
   object is the `ScaleCheck` calibration reference. That list becomes `MEASUREMENTS.md`.
 - Clip quality caveat: DA3 needs **camera translation, not rotation**. If the clip is a pan from
@@ -173,6 +190,10 @@ Deliberately excluded from M2a: any real cloud run, the splat node, the cost tic
 
 Blocked on M2a. Plan the whole batch before deploying; do not deploy to do one of these.
 
+- [ ] **Add frame downscaling to `scripts/extract-frames.mjs` BEFORE deploying** (long edge
+      ~1024 px). Without it the ladder's upper rungs push a ~40 MB multipart body at Cloud Run's
+      32 MiB cap. Local-only change, verifiable with `verify.sh` — do not spend a warm instance
+      discovering this.
 - [ ] Fix `VramSampler` **first** (see open follow-ups) so the ladder below measures something real
 - [ ] Frame-count ladder on the room clip: 32 → 48 → 64 → 96. Each run is seconds and an OOM costs
       only an error, so find the true ceiling instead of extrapolating from 32.
