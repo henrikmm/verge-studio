@@ -106,7 +106,18 @@ export function predictVram(frameCount: number, processRes: number): VramPredict
 
 export type ProcessResMethod = "upper_bound_resize" | "lower_bound_resize";
 export type RefViewStrategy = "first" | "middle" | "saddle_balanced" | "saddle_sim_range";
-export type ArtifactKind = "glb" | "npz" | "depth_preview" | "gs_ply" | "gs_video";
+/**
+ * "npz" is the bundle the service writes with the key names `npz.ts` reads.
+ * "npz_native" is DA3's own export — kept and served, but distinguished so a
+ * lookup by kind can never pick it up by accident.
+ */
+export type ArtifactKind =
+  | "glb"
+  | "npz"
+  | "npz_native"
+  | "depth_preview"
+  | "gs_ply"
+  | "gs_video";
 
 export interface InferParams {
   /** Sampling rate the local ffmpeg pass used. The server never resamples. */
@@ -141,11 +152,29 @@ export interface Artifact {
   url: string;
 }
 
+/**
+ * Two peaks, because they answer different questions and routinely disagree.
+ * `peakBytes` is the driver high-water mark — use it to decide whether a
+ * configuration fits. `torchPeakBytes` is the caching allocator's, isolated to this
+ * run by an `empty_cache()` at entry — use it, with `baselineBytes`, to model what an
+ * extra frame costs. See server/vram.py for why the driver number alone was misleading.
+ *
+ * Both new fields are 0 on manifests written before 2026-08-01.
+ */
 export interface VramStats {
   peakBytes: number;
   currentBytes: number;
   totalBytes: number;
   deviceName: string;
+  torchPeakBytes: number;
+  baselineBytes: number;
+}
+
+/** Observations recorded during a run so open questions need no extra cloud session. */
+export interface Diagnostics {
+  /** Each npz DA3 itself wrote, mapped to its array key names. */
+  nativeNpz: Record<string, string[]>;
+  exportDirListing: string[];
 }
 
 export interface Timing {
@@ -176,6 +205,7 @@ export interface InferManifest {
   timing: Timing;
   vram: VramStats;
   artifacts: Artifact[];
+  diagnostics?: Diagnostics;
   transient: boolean;
   expiresAfterDays: number;
 }

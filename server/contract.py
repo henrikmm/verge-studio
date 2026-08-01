@@ -45,11 +45,18 @@ class InferParams(BaseModel):
     ref_view_strategy: RefViewStrategy = "middle"
     infer_gs: bool = False
 
-    max_frames: int = Field(default=DEFAULT_MAX_FRAMES, ge=2, le=200)
+    # Upper bound raised 200 -> 512 on 2026-08-01: the frame ladder runs to 256, and at
+    # 200 pydantic rejected the request before it could reach the GPU and OOM, which is
+    # the datapoint the ladder exists to collect. This bound is a wire sanity check, not
+    # the safety rail — that is max_frames itself, defaulting to DEFAULT_MAX_FRAMES.
+    max_frames: int = Field(default=DEFAULT_MAX_FRAMES, ge=2, le=512)
 
 
 class Artifact(BaseModel):
-    kind: Literal["glb", "npz", "depth_preview", "gs_ply", "gs_video"]
+    # "npz" is OUR array bundle, with the key names app/src/lib/npz.ts reads.
+    # "npz_native" is whatever DA3's own exporter wrote — kept, served, but never
+    # mistaken for ours by a client looking artifacts up by kind.
+    kind: Literal["glb", "npz", "npz_native", "depth_preview", "gs_ply", "gs_video"]
     name: str
     size_bytes: int
     sha256: str
@@ -59,16 +66,33 @@ class Artifact(BaseModel):
 
 class VramStats(BaseModel):
     """Peak is what matters for capacity planning; current is what the live
-    telemetry poll reports mid-run."""
+    telemetry poll reports mid-run.
+
+    `peak_bytes` (driver) and `torch_peak_bytes` (caching allocator) answer different
+    questions and routinely disagree — see the module docstring in server/vram.py.
+    Use the driver peak to decide whether a configuration fits; use the allocator peak
+    and `baseline_bytes` to model what an extra frame costs.
+
+    The two new fields default to 0 so manifests written before 2026-08-01 still parse.
+    """
 
     peak_bytes: int
     current_bytes: int
     total_bytes: int
     device_name: str
+    # Allocator high-water mark, isolated to this run by empty_cache() at entry.
+    torch_peak_bytes: int = 0
+    # Driver usage at run start, after the cache was dropped: model + CUDA context.
+    baseline_bytes: int = 0
 
     @property
     def peak_fraction(self) -> float:
         return self.peak_bytes / self.total_bytes if self.total_bytes else 0.0
+
+    @property
+    def activation_bytes(self) -> int:
+        """Marginal cost of this run's frames, above the resident model."""
+        return max(0, self.peak_bytes - self.baseline_bytes)
 
 
 class Timing(BaseModel):
@@ -87,6 +111,18 @@ class FrameInfo(BaseModel):
     effective_fps: float | None = None
 
 
+class Diagnostics(BaseModel):
+    """Facts observed during a run that answer open questions without spending
+    another cloud session on them. Purely additive — nothing downstream requires it.
+
+    `native_npz` maps each npz DA3 wrote to its key names, which is how we confirm
+    what DA3 calls its own arrays rather than guessing from the fixture.
+    """
+
+    native_npz: dict[str, list[str]] = Field(default_factory=dict)
+    export_dir_listing: list[str] = Field(default_factory=list)
+
+
 class InferManifest(BaseModel):
     schema_version: str = SCHEMA_VERSION
     run_id: str
@@ -100,6 +136,7 @@ class InferManifest(BaseModel):
     timing: Timing
     vram: VramStats
     artifacts: list[Artifact]
+    diagnostics: Diagnostics | None = None
 
     # Transient by policy — the client must call Save explicitly to retain.
     transient: bool = True

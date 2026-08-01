@@ -32,6 +32,7 @@ from fastapi.responses import FileResponse
 
 from contract import (
     Artifact,
+    Diagnostics,
     FrameInfo,
     GpuSnapshot,
     HealthResponse,
@@ -155,21 +156,50 @@ def _run_inference(frame_paths: list[str], params: InferParams, export_dir: Path
 
     import numpy as np
 
+    # Written as verge-result.npz, NOT result.npz. DA3's own `npz` exporter writes into
+    # this same export_dir, and if it picks the name result.npz ours silently overwrites
+    # it -- taking DA3's embedded images and any keys we do not re-emit with it. A
+    # distinct filename makes the two coexist whatever DA3 chooses to call its own.
+    # The keys below are the ones app/src/lib/npz.ts reads; see native_npz in the
+    # manifest for what DA3 emitted alongside.
+    ours = export_dir / VERGE_NPZ_NAME
     np.savez_compressed(
-        export_dir / "result.npz",
+        ours,
         depth=prediction.depth,
         confidence=prediction.conf,
         extrinsics=prediction.extrinsics,
         intrinsics=prediction.intrinsics,
     )
+
+    # Record what DA3 itself produced, so the npz key names stop being a guess. This is
+    # cheap (a directory listing plus one npz header read) and answers the open question
+    # without another cloud session.
+    native_npz: dict[str, list[str]] = {}
+    for path in sorted(export_dir.glob("*.npz")):
+        if path.name == ours.name:
+            continue
+        try:
+            with np.load(path, allow_pickle=False) as handle:
+                native_npz[path.name] = list(handle.files)
+        except Exception as exc:  # a listing must never fail the run
+            native_npz[path.name] = [f"<unreadable: {exc}>"]
+
     depth = np.asarray(prediction.depth)
     return {
         "gpu_seconds": gpu_seconds,
         "peak_bytes": sampler.peak_bytes,
+        "torch_peak_bytes": sampler.torch_peak_bytes,
+        "baseline_bytes": sampler.baseline_bytes,
         "total_bytes": sampler.total_bytes,
         "height": int(depth.shape[-2]),
         "width": int(depth.shape[-1]),
+        "native_npz": native_npz,
+        "export_dir_listing": sorted(p.name for p in export_dir.iterdir() if p.is_file()),
     }
+
+
+#: Our own npz, written by _run_inference. Deliberately not "result.npz" — see there.
+VERGE_NPZ_NAME = "verge-result.npz"
 
 
 def _collect_artifacts(export_dir: Path, run_id: str) -> list[Artifact]:
@@ -187,6 +217,12 @@ def _collect_artifacts(export_dir: Path, run_id: str) -> list[Artifact]:
         kind = kinds.get(path.suffix.lower())
         if kind is None:
             continue
+        # Exactly one artifact may carry kind "npz": the client looks it up by kind and
+        # expects OUR key names (depth/confidence/extrinsics/intrinsics). DA3's own npz
+        # is kept and served, but under a distinct kind, so an alphabetically earlier
+        # filename can never shadow ours in the client's `find`.
+        if kind == "npz" and path.name != VERGE_NPZ_NAME:
+            kind = "npz_native"
         artifacts.append(
             Artifact(
                 kind=kind,  # type: ignore[arg-type]
@@ -285,8 +321,14 @@ async def infer(
             current_bytes=int(vram.current_snapshot()["current_bytes"]),
             total_bytes=result["total_bytes"],
             device_name=vram.device_name(),
+            torch_peak_bytes=result["torch_peak_bytes"],
+            baseline_bytes=result["baseline_bytes"],
         ),
         artifacts=_collect_artifacts(export_dir, run_id),
+        diagnostics=Diagnostics(
+            native_npz=result["native_npz"],
+            export_dir_listing=result["export_dir_listing"],
+        ),
     )
     (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
     return manifest

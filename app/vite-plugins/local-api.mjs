@@ -270,6 +270,10 @@ export function localApi() {
                   current_bytes: Math.round(VRAM_BASE_BYTES),
                   total_bytes: TOTAL_VRAM_BYTES,
                   device_name: "NVIDIA L4 (mock)",
+                  // The allocator peak excludes the CUDA context the driver number
+                  // includes, so it is always the smaller of the two on real hardware.
+                  torch_peak_bytes: Math.round(peak - 1.1 * 1024 ** 3),
+                  baseline_bytes: Math.round(VRAM_BASE_BYTES),
                 },
                 artifacts: [
                   {
@@ -287,6 +291,12 @@ export function localApi() {
                     url: "/roadside/result.npz",
                   },
                 ],
+                // The fixture predates the split, so it has one npz under the "npz"
+                // kind and no native export to sit beside it.
+                diagnostics: {
+                  native_npz: {},
+                  export_dir_listing: ["scene.glb", "result.npz"],
+                },
                 transient: true,
                 expires_after_days: 3,
                 mock: true,

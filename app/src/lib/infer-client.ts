@@ -84,6 +84,9 @@ function toManifest(w: any): InferManifest {
       currentBytes: w.vram.current_bytes,
       totalBytes: w.vram.total_bytes,
       deviceName: w.vram.device_name,
+      // 0 on manifests written before the per-run isolation fix (2026-08-01).
+      torchPeakBytes: w.vram.torch_peak_bytes ?? 0,
+      baselineBytes: w.vram.baseline_bytes ?? 0,
     },
     artifacts: (w.artifacts ?? []).map((a: any) => ({
       kind: a.kind,
@@ -92,6 +95,12 @@ function toManifest(w: any): InferManifest {
       sha256: a.sha256,
       url: a.url,
     })),
+    diagnostics: w.diagnostics
+      ? {
+          nativeNpz: w.diagnostics.native_npz ?? {},
+          exportDirListing: w.diagnostics.export_dir_listing ?? [],
+        }
+      : undefined,
     transient: w.transient,
     expiresAfterDays: w.expires_after_days,
   };
