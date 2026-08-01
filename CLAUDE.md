@@ -58,7 +58,13 @@ not just the seconds of actual inference.
   instance. Four runs in one warm session cost roughly one cold start; four separate sessions cost
   four. Plan the whole sweep before deploying.
 - Always deploy with `--no-gpu-zonal-redundancy` (there is no zonal-redundant L4 quota on this project).
-- Always tear down what you start. Leaving a service or a 12 GB image alive bills silently.
+- **Always delete the service** at the end of a session — the instance is the real meter.
+- **Keep the image.** Artifact Registry storage is ~$0.10/GB/month (~$1/month for our 12 GB);
+  rebuilding costs 15–20 min of wall clock every session. `deploy.sh` tags the image with a hash
+  of `server/` and skips the build when that exact source is already in the registry, so a stale
+  image can never be deployed silently. `teardown.sh` keeps it by default; `PURGE_IMAGE=1` deletes
+  it when the project is finished for good. (Reversed 2026-07-31 — the old rule optimised the
+  cheap axis.)
 
 ## Handoff — non-negotiable
 

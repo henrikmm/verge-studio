@@ -6,7 +6,7 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-07-31 · commit `bc7f73b`
+Last updated: 2026-07-31 · commit `5649284`
 
 ---
 
@@ -16,9 +16,52 @@ Last updated: 2026-07-31 · commit `bc7f73b`
 |---|---|
 | M0 — Bootstrap + offline viewer | **done** |
 | M1 — GPU service live | **done** (with carve-outs below) |
-| M2 — Node graph wired to cloud | not started |
-| M3 — Height measurement (the goal) | not started |
+| M2a — Node graph, local only | not started |
+| M2b — One warm cloud session | not started (blocked on M2a) |
+| M3 — Height measurement (the goal) | not started (blocked on M2b's fixture) |
 | M4 — Splats + polish | not started |
+
+---
+
+## Agreed direction (2026-07-31) — read before planning anything
+
+M2 was split in two, because the expensive thing about cloud work is the *session*, not the run.
+
+- **M2a is entirely local.** Graph engine, node cards, inspector binding, panes reading from a
+  manifest instead of a hardcoded fixture path. Verified on the mock + fixture at zero cloud cost.
+  It stands alone: if M2b never happens, M2a is still a complete, committed unit.
+- **M2b is exactly one warm cloud session**, batching every outstanding GPU-dependent item at
+  once: the room video end-to-end through the browser, the two open bugs below, the frame-count
+  ladder, and one `infer_gs=true` run. One cold start closes five items.
+- **M3 is then fully offline** against the fixture M2b brings home.
+
+Decisions made, do not relitigate without reason:
+
+1. **Execution model: CPU nodes auto-run, the GPU node never does.** `DA3Depth` goes amber-stale
+   and waits for an explicit Run, so dragging a slider can never bill. Per-node `A`/`P` badges
+   override either way.
+2. **Video input: drag-and-drop via a dev-only `POST /api/upload`** in the Vite middleware
+   (writes to a temp dir, returns the path, localhost only, never part of the cloud service).
+   ffmpeg needs a real path and browsers do not expose one.
+3. **Session cost ticker: deferred to M2b**, where real billing exists. It stays `$0.00` and
+   unlabelled until then rather than showing an invented number.
+4. **Keep the image, delete the service.** See the Cloud discipline section of `CLAUDE.md` —
+   the rule was reversed on 2026-07-31 after we noticed the old one optimised the cheap axis.
+
+### The M3 test video
+
+`teste_demo.mp4` in the repo root — the user's room, ~28 s, containing objects whose real
+physical dimensions they know. Covered by `.gitignore`'s `*.mp4`; **never commit it.**
+
+- Run it **at full length**, not a trimmed window.
+- 28 s against the current 32-frame cap is only **1.14 effective fps** (DA3's own default is 10).
+  Find the real ceiling with the frame ladder in M2b rather than accepting 1.14.
+- Still needed from the user: the tape-measure truths (object, dimension, metres) and which
+  object is the `ScaleCheck` calibration reference. That list becomes `MEASUREMENTS.md`.
+- Clip quality caveat: DA3 needs **camera translation, not rotation**. If the clip is a pan from
+  a fixed point there is no parallax, cross-view attention has nothing to work with, and the
+  geometry will be poor no matter what the downstream code does. Check this before spending a
+  session on it.
 
 ---
 
@@ -77,19 +120,57 @@ These were in the M1 plan but are not implemented. Do not assume they work.
       `npz` exporter writes to. If DA3 emits the same filename, ours overwrites it and the
       embedded images are lost. Rename ours and confirm DA3's native key names from a real run.
 
-## M2 — Node graph wired to cloud ⬜
+## M2a — Node graph, local only ⬜
 
-- [ ] React Flow graph + typed colored wires on a content-addressed cache-key engine
-- [ ] Node cards per `docs/DESIGN.md` (colored header, A/P badges, labelled ports, thumbnail, ms footer)
+Zero cloud cost. Everything below is verifiable against the mock + `fixtures/roadside/`.
+
+- [ ] `@xyflow/react` 12.x added (React Flow; React 19 compatible, MIT)
+- [ ] `app/src/graph/cache-key.ts` — TS port of donor `content-hash.js`, with a **parity test
+      producing byte-identical digests to the donor file** (the donor is the reference impl)
+- [ ] `app/src/graph/types.ts` — `PortType` union bound to the DESIGN.md port colors; `NodeSpec`
+- [ ] `app/src/graph/graph-store.ts` — nodes/edges/params/results, same `useSyncExternalStore`
+      pattern as `session-store.ts` (no new state library)
+- [ ] `app/src/graph/evaluate.ts` — topological walk; cache key = f(producer, version, params,
+      upstream output hashes); changed key stales that node **and everything downstream only**
 - [ ] Nodes: `FrameSource`, `DA3Depth`, `PointCloud`, `Viewer3D` / `Viewer2D`
+- [ ] `POST /api/upload` in the Vite dev middleware (drag-drop → temp path for ffmpeg)
+- [ ] Node cards per `docs/DESIGN.md` (colored header, A/P badges, labelled ports, thumbnail, ms footer)
 - [ ] Inspector bound to node selection; stale nodes dim until re-run
-- [ ] Wire the viewport to cloud artifacts instead of the fixture
-- [ ] Session cost ticker (currently hardcoded `$0.00`)
+- [ ] **Panes read from a manifest, not a hardcoded path.** `viewport-3d.tsx` currently hardcodes
+      `loader.load("/roadside/scene.glb")`; it must load the GLB artifact URL its upstream node
+      emits. The mock already returns fixture URLs, so this changes nothing visually while making
+      the cloud seam real — pointing at the deployed service becomes a base-URL change.
+- [ ] Mock-vs-real badge on `DA3Depth` (the mock already returns `mock: true`) — honesty rule 3
 - [ ] Design-review fix-list from 2026-07-31 (pane control row with Remove/Pause, OUTPUT toggle
       chips, warm-toned graph canvas, graph banner) — see `docs/design-review-log.md`
 
+Deliberately excluded from M2a: any real cloud run, the splat node, the cost ticker.
+
+## M2b — One warm cloud session ⬜
+
+Blocked on M2a. Plan the whole batch before deploying; do not deploy to do one of these.
+
+- [ ] Fix `VramSampler` **first** (see open follow-ups) so the ladder below measures something real
+- [ ] Frame-count ladder on the room clip: 32 → 48 → 64 → 96. Each run is seconds and an OOM costs
+      only an error, so find the true ceiling instead of extrapolating from 32.
+- [ ] Room video end-to-end **through the browser** — this is the first real exercise of
+      `infer-client.ts::infer()`'s multipart path. Expect bugs.
+- [ ] `scripts/save-run.sh` — download the manifest's artifacts **before teardown**. Artifacts live
+      on the container's local disk (no GCS bucket exists) and **die with the instance**.
+- [ ] Confirm DA3's native npz key names and fix the `result.npz` clobber (see open follow-ups)
+- [ ] One `infer_gs=true` run to find out whether it works at all
+- [ ] Session cost ticker, driven by instance lifetime (not inference seconds)
+- [ ] `scripts/teardown.sh` (keeps the image now — that is intended)
+
+Known consequence: a 64–96 frame run's GLB will be far over the 5 MB commit limit (the 4-frame
+roadside GLB is already 5.6 MB). `fixtures/room/` will therefore be **local-only and gitignored**,
+with only its `manifest.json` + checksums committed. It will not survive a fresh clone.
+
 ## M3 — Height measurement ⬜
 
+Runs fully offline against `fixtures/room/` once M2b brings it home.
+
+- [ ] `MEASUREMENTS.md` seeded with the user's tape-measure truths (needed *before* M2b films)
 - [ ] `geometry/` is still an **empty directory** — nothing implemented
 - [ ] `GroundPlane` (robust/RANSAC plane fit)
 - [ ] `ScaleCheck` (known-object calibration, seeded from donor `scale.js`)
@@ -114,8 +195,22 @@ cd app && npm install && npm run dev     # localhost:5173, fully offline (mock +
 `verify.sh` skips the server-contract test unless a Python with `fastapi` is on `PATH`;
 pass `VERGE_PY=/path/to/venv/bin/python` to include it.
 
-Cloud is **fully torn down**. To bring it back: `./scripts/deploy.sh` (~15–18 min build),
-then `./scripts/teardown.sh` when finished — the image bills for storage while it exists.
+Cloud is **fully torn down**, including the image (the repository was deleted under the old
+policy), so the *next* deploy still pays the full 15–20 min build once. Every deploy after that
+should skip it.
+
+```bash
+./scripts/deploy.sh                  # builds only if server/ changed since the stored image
+./scripts/teardown.sh                # deletes the service, KEEPS the image
+PURGE_IMAGE=1 ./scripts/teardown.sh  # ...and deletes the image, when the project is done
+FORCE_BUILD=1 ./scripts/deploy.sh    # rebuild even when the source hash matches
+```
+
+⚠️ **The build-skip logic is UNVERIFIED.** `deploy.sh` now tags the image `src-<hash of server/>`
+and skips the build when that tag already exists in Artifact Registry. Locally the hash computes
+(`73e73d76427701b9` at time of writing) and both scripts pass `bash -n`, but the registry
+describe/skip branch has never run against real GCP. Watch it on the first two M2b deploys: the
+first should build, the second should print "already in the registry, skipping build".
 
 ## Measured facts (do not re-derive)
 
