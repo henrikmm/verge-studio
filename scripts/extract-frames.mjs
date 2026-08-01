@@ -56,12 +56,47 @@ async function requireFfmpeg() {
   }
 }
 
-/** Duration in seconds, plus native fps and pixel dimensions. */
+/**
+ * Rotation from a probed stream, normalised to [0, 360).
+ *
+ * Phones record landscape sensor data plus a display-rotation flag rather than
+ * rotating the pixels, so a portrait clip reports a LANDSCAPE stored size. Modern
+ * ffmpeg exposes the flag as `side_data_list[].rotation`; older files carry it as the
+ * `rotate` tag. Both are read, because a mixed-vintage library will contain both.
+ */
+export function readRotation(stream) {
+  const side = stream?.side_data_list?.find((entry) => entry?.rotation !== undefined);
+  const raw = side?.rotation ?? stream?.tags?.rotate;
+  const degrees = Number(raw);
+  return Number.isFinite(degrees) ? ((degrees % 360) + 360) % 360 : 0;
+}
+
+/**
+ * Stored dimensions -> the dimensions ffmpeg actually hands the filter chain.
+ *
+ * ffmpeg autorotates on decode, so a quarter-turned clip arrives at the filters with
+ * its axes swapped. Planning a scale filter from the STORED size squashes such a clip:
+ * `test-demo-door.mp4` stores 1920x1080 with rotation=-90, decodes to 1080x1920, and a
+ * scale filter computed from the stored size would have stretched every portrait frame
+ * into landscape -- reaching the GPU with a wrong aspect ratio and silently wrong
+ * geometry. Found before the M3 cloud session; see docs/PROGRESS.md.
+ */
+export function displayDimensions(width, height, rotation) {
+  return rotation % 180 === 90 ? { width: height, height: width } : { width, height };
+}
+
+/**
+ * Duration in seconds, native fps, and the dimensions frames will actually have.
+ *
+ * `width`/`height` are the DISPLAY size (post-autorotation) because that is what every
+ * caller means; the stored size is reported alongside for diagnostics only.
+ */
 export async function probeVideo(videoPath) {
   const { stdout } = await run("ffprobe", [
     "-v", "error",
     "-select_streams", "v:0",
-    "-show_entries", "stream=width,height,avg_frame_rate:format=duration",
+    "-show_entries",
+    "stream=width,height,avg_frame_rate:stream_side_data=rotation:stream_tags=rotate:format=duration",
     "-of", "json",
     videoPath,
   ]);
@@ -76,11 +111,18 @@ export async function probeVideo(videoPath) {
   if (!Number.isFinite(duration) || duration <= 0) {
     throw new Error(`could not determine duration of ${videoPath}`);
   }
+  const storedWidth = Number(stream.width);
+  const storedHeight = Number(stream.height);
+  const rotation = readRotation(stream);
+  const display = displayDimensions(storedWidth, storedHeight, rotation);
   return {
     durationS: duration,
     nativeFps,
-    width: Number(stream.width),
-    height: Number(stream.height),
+    width: display.width,
+    height: display.height,
+    rotation,
+    storedWidth,
+    storedHeight,
   };
 }
 
@@ -280,7 +322,9 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop()
   const { plan, probe, scale, frames, usedHwaccel } = result;
   console.log(
     `${plan.count} frames @ ${plan.effectiveFps.toFixed(2)} fps ` +
-      `(${probe.durationS.toFixed(2)}s source, ${probe.width}x${probe.height})` +
+      `(${probe.durationS.toFixed(2)}s source, ${probe.width}x${probe.height}` +
+      (probe.rotation ? `, rotated ${probe.rotation}° from ${probe.storedWidth}x${probe.storedHeight}` : "") +
+      `)` +
       (plan.capped ? ` — capped from ${plan.requestedCount}` : "") +
       (scale.scaled ? ` — scaled to ${scale.width}x${scale.height}` : " — not scaled") +
       ` — ${usedHwaccel ? "hwaccel" : "software"} decode, ${((Date.now() - started) / 1000).toFixed(1)}s`,

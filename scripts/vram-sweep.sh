@@ -61,13 +61,24 @@ if [[ -z "${LADDER_ROOT:-}" ]]; then
     --fps 60 --ladder "$(IFS=,; echo "${COUNTS[*]}")"
 fi
 
-DURATION="$(python3 -c "
+# Clip duration drives the effective fps and `source_duration_s` recorded in every
+# manifest. With --ladder-dir there is no video to probe, and the old 26.61 fallback
+# (clip A's length) would silently stamp clip B's fixtures with the wrong clip length
+# and fps. DURATION_S is therefore REQUIRED when probing is impossible.
+if [[ -n "${DURATION_S:-}" ]]; then
+  DURATION="${DURATION_S}"
+elif [[ -n "${VIDEO:-}" ]]; then
+  DURATION="$(python3 -c "
 import json,subprocess
 o=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration','-of','json',
-                  '${VIDEO:-}'],capture_output=True,text=True).stdout
-try: print(json.loads(o)['format']['duration'])
-except Exception: print(26.61)
-" 2>/dev/null || echo 26.61)"
+                  '${VIDEO}'],capture_output=True,text=True).stdout
+print(json.loads(o)['format']['duration'])
+")"
+else
+  echo "error: --ladder-dir has no video to probe; set DURATION_S to the clip length in seconds" >&2
+  exit 2
+fi
+echo "clip duration: ${DURATION}s"
 
 api() {
   if [[ -n "${VERGE_TOKEN}" ]]; then

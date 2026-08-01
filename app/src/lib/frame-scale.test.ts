@@ -7,8 +7,14 @@
  */
 
 import { describe, expect, it } from "vitest";
-// @ts-expect-error - plain ESM module, no type declarations
-import { DEFAULT_LONG_EDGE, pickEvenly, planScale } from "../../../scripts/extract-frames.mjs";
+import {
+  DEFAULT_LONG_EDGE,
+  displayDimensions,
+  pickEvenly,
+  planScale,
+  readRotation,
+  // @ts-expect-error - plain ESM module, no type declarations
+} from "../../../scripts/extract-frames.mjs";
 
 type Scale = { width: number; height: number; scaled: boolean };
 const scaleOf = (w: number, h: number, edge?: number): Scale =>
@@ -63,6 +69,64 @@ describe("planScale", () => {
     expect(scaled.scaled).toBe(true);
     const budgetBytes = 256 * 62 * 1024;
     expect(budgetBytes).toBeLessThan(32 * 1024 * 1024);
+  });
+});
+
+/**
+ * Rotation metadata is the trap that nearly poisoned the M3 cloud session.
+ *
+ * `test-demo-door.mp4` STORES 1920x1080 and carries `rotation=-90`; ffmpeg autorotates
+ * on decode, so the filter chain receives 1080x1920. Planning a scale filter from the
+ * stored size emits `scale=1024:576` and stretches every portrait frame into landscape
+ * — reaching the GPU with a wrong aspect ratio, and wrong geometry downstream of that.
+ */
+describe("rotation handling", () => {
+  const rotationOf = (stream: unknown): number => readRotation(stream) as number;
+  const displayOf = (w: number, h: number, r: number) =>
+    displayDimensions(w, h, r) as { width: number; height: number };
+
+  it("reads modern side_data rotation", () => {
+    expect(rotationOf({ side_data_list: [{ rotation: -90 }] })).toBe(270);
+  });
+
+  it("falls back to the legacy rotate tag", () => {
+    expect(rotationOf({ tags: { rotate: "90" } })).toBe(90);
+  });
+
+  it("prefers side_data over the legacy tag when a file carries both", () => {
+    expect(rotationOf({ side_data_list: [{ rotation: 180 }], tags: { rotate: "90" } })).toBe(180);
+  });
+
+  it("reports no rotation for an unrotated stream", () => {
+    expect(rotationOf({ width: 3840, height: 2160 })).toBe(0);
+    expect(rotationOf({ side_data_list: [{ displaymatrix: "..." }] })).toBe(0);
+    expect(rotationOf(undefined)).toBe(0);
+  });
+
+  it("swaps axes for a quarter turn in either direction", () => {
+    expect(displayOf(1920, 1080, 270)).toEqual({ width: 1080, height: 1920 });
+    expect(displayOf(1920, 1080, 90)).toEqual({ width: 1080, height: 1920 });
+  });
+
+  it("leaves axes alone for 0 and 180 degrees", () => {
+    expect(displayOf(1920, 1080, 0)).toEqual({ width: 1920, height: 1080 });
+    expect(displayOf(1920, 1080, 180)).toEqual({ width: 1920, height: 1080 });
+  });
+
+  it("plans the real door clip as portrait, not squashed landscape", () => {
+    // The bug: planScale(1920, 1080) -> 1024x576, applied to a 1080x1920 decode.
+    const display = displayOf(1920, 1080, rotationOf({ side_data_list: [{ rotation: -90 }] }));
+    expect(scaleOf(display.width, display.height)).toEqual({
+      width: 576,
+      height: 1024,
+      scaled: true,
+    });
+  });
+
+  it("keeps the door clip's aspect ratio through the whole plan", () => {
+    const display = displayOf(1920, 1080, 270);
+    const { width, height } = scaleOf(display.width, display.height);
+    expect(width / height).toBeCloseTo(display.width / display.height, 6);
   });
 });
 
