@@ -75,6 +75,25 @@ export interface ExecuteContext {
 /** Resolves to the node's outputs, keyed by output port id. */
 export type Executor = (ctx: ExecuteContext) => Promise<Record<string, NodeOutput>>;
 
+/**
+ * How the inspector renders a parameter. Declared on the node so the inspector stays
+ * generic — adding a node adds its controls, with no inspector change. DESIGN.md asks
+ * for mixed control types, not sliders only.
+ */
+export type ControlSpec =
+  | {
+      kind: "slider";
+      key: string;
+      label: string;
+      min: number;
+      max: number;
+      step?: number;
+      suffix?: string;
+    }
+  | { kind: "select"; key: string; label: string; options: { value: string; label: string }[] }
+  | { kind: "checkbox"; key: string; label: string }
+  | { kind: "readout"; key: string; label: string };
+
 export interface NodeSpec {
   type: string;
   label: string;
@@ -85,6 +104,8 @@ export interface NodeSpec {
   inputs: PortSpec[];
   outputs: PortSpec[];
   defaults: Params;
+  /** Inspector rows, in the order they should appear. */
+  controls?: ControlSpec[];
   execute: Executor;
 }
 

@@ -108,19 +108,322 @@ body {
   overflow: hidden;
 }
 
-/* Graph placeholder dot grid */
-.graph-grid {
-  width: 100%;
-  height: 100%;
-  background-image: radial-gradient(circle, #232327 1px, transparent 1px);
-  background-size: 22px 22px;
-  display: grid;
-  place-items: center;
+/* Control row: status + elapsed left, Remove/Pause right (DESIGN.md) */
+.pane-controls {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
 }
 
-.graph-grid span {
+.pane-controls .running {
+  color: var(--accent-run);
+}
+
+.pane-controls .paused {
+  color: var(--accent-busy);
+}
+
+.pane-controls .spacer {
+  margin-left: auto;
+}
+
+.pane-controls .pane-note {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pane-btn {
+  background: transparent;
   color: var(--text-dim);
-  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  padding: 0 6px;
+  cursor: pointer;
+}
+
+.pane-btn:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+/* OUTPUT row: label, toggle chips, dim hint in parentheses */
+.output-row {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.output-label {
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.chip-toggle {
+  background: var(--bg-node);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  padding: 0 7px;
+  cursor: pointer;
+}
+
+.chip-toggle.on {
+  background: var(--bg-header);
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.output-hint {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 10px;
+  opacity: 0.75;
+}
+
+.pane-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0 16px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+/* Graph canvas — warm brown-grey, so it reads as its own surface next to the
+   neutral pane bodies (DESIGN.md, and fix-list item 2 from the 2026-07-31 review). */
+.graph-canvas {
+  background: #171512;
+}
+
+.graph-canvas .react-flow__pane {
+  background: transparent;
+}
+
+.graph-banner {
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 5;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 8px;
+  background: linear-gradient(#17151299, #17151200);
+  pointer-events: none;
+}
+
+.graph-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.graph-sub {
+  font-size: 10px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-fit {
+  margin-left: auto;
+  pointer-events: auto;
+  background: var(--bg-node);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.graph-fit:hover {
+  border-color: var(--text-dim);
+}
+
+/* Node card — anatomy per DESIGN.md */
+.node-card {
+  width: 180px;
+  background: var(--bg-node);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  overflow: hidden;
+}
+
+.node-card.selected {
+  outline: 1px solid var(--accent-run);
+  outline-offset: -1px;
+}
+
+/* Stale nodes dim until they are re-run. */
+.node-card.stale {
+  opacity: 0.62;
+}
+
+.node-card.dropping {
+  outline: 1px dashed var(--accent-busy);
+  outline-offset: -1px;
+}
+
+.node-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px;
+  color: #f2f2f4;
+  font-size: 11px;
+}
+
+.node-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-badge,
+.node-run {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: #0000004d;
+  color: #f2f2f4;
+  border: 1px solid #ffffff26;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.node-badge.on {
+  color: var(--accent-run);
+}
+
+.node-run {
+  color: var(--accent-busy);
+}
+
+.node-ports {
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.port-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 6px;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.port-row.out {
+  justify-content: flex-end;
+}
+
+.port-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.port-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* React Flow's handle is the real hit target; the dot is the visible mark. */
+.react-flow__handle.port-handle {
+  width: 7px;
+  height: 7px;
+  border: 1px solid #00000080;
+  min-width: 0;
+  min-height: 0;
+}
+
+.node-thumb {
+  height: 74px;
+  display: grid;
+  place-items: center;
+  background: #0a0a0c;
+  overflow: hidden;
+}
+
+.node-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.node-thumb-empty {
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.node-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+}
+
+.node-sum {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-err {
+  margin-left: auto;
+  color: var(--accent-err);
+}
+
+.node-err-line {
+  padding: 2px 6px 4px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.35;
+  color: var(--accent-err);
 }
 
 /* Inspector */

@@ -1,37 +1,40 @@
-import { useEffect, useRef, useState } from "react";
+/**
+ * Viewport 3D — a tap on the wire feeding the Viewport 3D node.
+ *
+ * It no longer loads a fixture path of its own: it renders whatever PointCloud
+ * output arrives on its input. Offline that is the fixture (the mock's manifest
+ * points at it); against a deployed service it is the run's GLB. Same code path,
+ * which is what makes swapping to the cloud a base-URL change.
+ */
+
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { resolveInput, useGraph } from "../graph/graph-store";
+import { VIEWER_3D_ID, type PointCloudValue } from "../graph/nodes";
+import { OutputRow, PaneControls } from "./pane-chrome";
 
 const GIZMO_PX = 72;
 
-// Fallback for colorless clouds: turbo-ish ramp along world height (z-up in DA3 world frame).
-function colorByHeight(geometry: THREE.BufferGeometry) {
-  const pos = geometry.getAttribute("position");
-  const colors = new Float32Array(pos.count * 3);
-  let min = Infinity;
-  let max = -Infinity;
-  for (let i = 0; i < pos.count; i++) {
-    const z = pos.getZ(i);
-    if (z < min) min = z;
-    if (z > max) max = z;
-  }
-  const c = new THREE.Color();
-  for (let i = 0; i < pos.count; i++) {
-    const t = (pos.getZ(i) - min) / (max - min || 1);
-    c.setHSL(0.66 - 0.66 * t, 0.85, 0.55);
-    colors[i * 3] = c.r;
-    colors[i * 3 + 1] = c.g;
-    colors[i * 3 + 2] = c.b;
-  }
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-}
+const OUTPUTS = [
+  { id: "points", label: "Points" },
+  { id: "cameras", label: "+ Cameras" },
+];
 
 export function Viewport3D() {
   const hostRef = useRef<HTMLDivElement>(null);
-  const [points, setPoints] = useState(0);
+  const sceneRef = useRef<THREE.Scene>(null);
+  const controlsRef = useRef<OrbitControls>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera>(null);
+  const mountedRef = useRef<THREE.Object3D>(null);
+
   const [frameMs, setFrameMs] = useState(0);
-  const [error, setError] = useState<string>();
+  const [paused, setPaused] = useState(false);
+  const [output, setOutput] = useState("points");
+
+  const graph = useGraph();
+  const incoming = resolveInput(graph, VIEWER_3D_ID, "points");
+  const cloud = incoming?.value as PointCloudValue | undefined;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -43,50 +46,21 @@ export function Viewport3D() {
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#0a0a0c");
+    sceneRef.current = scene;
+
     const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 5000);
     camera.position.set(0, 0, 10);
+    cameraRef.current = camera;
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
+    controlsRef.current = controls;
 
     // Corner axes gizmo: separate scene, camera mirrors the main orbit rotation.
     const gizmoScene = new THREE.Scene();
     gizmoScene.add(new THREE.AxesHelper(1));
     const gizmoCam = new THREE.PerspectiveCamera(40, 1, 0.1, 10);
-
-    // DA3-native export: colored point cloud + camera frustums (see docs/SOURCES.md).
-    const loader = new GLTFLoader();
-    loader.load(
-      "/roadside/scene.glb",
-      (gltf) => {
-        const bbox = new THREE.Box3().setFromObject(gltf.scene);
-        const center = bbox.getCenter(new THREE.Vector3());
-        const size = bbox.getSize(new THREE.Vector3()).length();
-        let count = 0;
-        gltf.scene.traverse((obj) => {
-          if (obj instanceof THREE.Points) {
-            const geometry = obj.geometry;
-            count += geometry.getAttribute("position").count;
-            if (!geometry.hasAttribute("color")) colorByHeight(geometry);
-            obj.material = new THREE.PointsMaterial({
-              size: size / 800,
-              vertexColors: true,
-              sizeAttenuation: true,
-            });
-          }
-        });
-        scene.add(gltf.scene);
-        controls.target.copy(center);
-        camera.position.copy(center).add(new THREE.Vector3(0, -size * 0.15, -size * 0.6));
-        camera.near = size / 1000;
-        camera.far = size * 10;
-        camera.updateProjectionMatrix();
-        setPoints(count);
-      },
-      undefined,
-      (err) => setError(err instanceof Error ? err.message : "GLB load failed"),
-    );
 
     let raf = 0;
     let last = performance.now();
@@ -106,7 +80,6 @@ export function Viewport3D() {
       renderer.setScissorTest(false);
       renderer.render(scene, camera);
 
-      // gizmo overlay bottom-right
       gizmoCam.position.copy(camera.position).sub(controls.target).setLength(3);
       gizmoCam.lookAt(0, 0, 0);
       renderer.setViewport(w - GIZMO_PX, 0, GIZMO_PX, GIZMO_PX);
@@ -137,20 +110,74 @@ export function Viewport3D() {
     };
   }, []);
 
+  // Swap in whatever the wire is carrying. The PointCloud node already did the
+  // loading, decimation and coloring, so this is a scene-graph swap, not a parse.
+  useEffect(() => {
+    const scene = sceneRef.current;
+    const controls = controlsRef.current;
+    const camera = cameraRef.current;
+    if (!scene || !controls || !camera) return;
+
+    if (mountedRef.current) {
+      scene.remove(mountedRef.current);
+      mountedRef.current = null;
+    }
+    if (!cloud) return;
+
+    scene.add(cloud.object);
+    mountedRef.current = cloud.object;
+
+    const center = new THREE.Vector3(
+      (cloud.bbox.min[0] + cloud.bbox.max[0]) / 2,
+      (cloud.bbox.min[1] + cloud.bbox.max[1]) / 2,
+      (cloud.bbox.min[2] + cloud.bbox.max[2]) / 2,
+    );
+    controls.target.copy(center);
+    camera.position.copy(center).add(new THREE.Vector3(0, -cloud.extent * 0.15, -cloud.extent * 0.6));
+    camera.near = cloud.extent / 1000;
+    camera.far = cloud.extent * 10;
+    camera.updateProjectionMatrix();
+  }, [cloud]);
+
+  // DA3's GLB carries camera frustums alongside the points; the chip toggles them.
+  // Only the frustum geometry itself may be hidden — toggling every non-Points object
+  // would also hide the groups the points hang off, blanking the whole scene.
+  useEffect(() => {
+    if (!cloud) return;
+    cloud.object.traverse((child) => {
+      if (child instanceof THREE.Line || child instanceof THREE.Mesh) {
+        child.visible = output === "cameras";
+      }
+    });
+  }, [cloud, output]);
+
+  const status = useMemo(() => {
+    if (!cloud) return "no input";
+    return `${cloud.pointCount.toLocaleString()} pts`;
+  }, [cloud]);
+
   return (
     <div className="pane">
-      <div className="pane-status">
-        {error ? (
-          <span style={{ color: "var(--accent-err)" }}>{error}</span>
-        ) : (
-          <>
-            <span className="ok">{points.toLocaleString()} pts</span>
-            <span>{frameMs.toFixed(1)} ms</span>
-          </>
+      <PaneControls
+        status={cloud ? "Running" : "Idle"}
+        elapsedMs={frameMs}
+        paused={paused}
+        onPause={() => setPaused((p) => !p)}
+        extra={<span className="pane-note">{status}</span>}
+      />
+      <OutputRow
+        choices={OUTPUTS}
+        active={output}
+        onSelect={setOutput}
+        hint="Left-drag=orbit, wheel=zoom, right-drag=pan"
+      />
+      <div className="pane-body" ref={hostRef}>
+        {!cloud && (
+          <div className="pane-empty">
+            Nothing on the wire yet — drop a clip on Frame Source, then run DA3 Depth.
+          </div>
         )}
-        <span className="hint">Left-drag orbit · wheel zoom · right-drag pan</span>
       </div>
-      <div className="pane-body" ref={hostRef} />
     </div>
   );
 }

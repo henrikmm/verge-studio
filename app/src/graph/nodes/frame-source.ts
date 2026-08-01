@@ -31,6 +31,12 @@ export const frameSourceSpec: NodeSpec = {
     fps: 10,
     maxFrames: 32,
   },
+  controls: [
+    { kind: "readout", key: "videoName", label: "Clip" },
+    { kind: "readout", key: "durationS", label: "Duration" },
+    { kind: "slider", key: "fps", label: "Sampling FPS", min: 1, max: 50 },
+    { kind: "slider", key: "maxFrames", label: "Max frames", min: 2, max: 96 },
+  ],
   execute: async ({ params }) => {
     const videoPath = String(params.videoPath ?? "");
     if (!videoPath) throw new Error("no video — drop a clip onto this node");

@@ -91,6 +91,10 @@ export const pointCloudSpec: NodeSpec = {
   inputs: [{ id: "depth", label: "Depth Field", type: "depth_field", required: true }],
   outputs: [{ id: "points", label: "Points", type: "point_cloud" }],
   defaults: { stride: 1, pointSize: 1 },
+  controls: [
+    { kind: "slider", key: "stride", label: "Stride", min: 1, max: 16, suffix: "×" },
+    { kind: "slider", key: "pointSize", label: "Point size", min: 0.25, max: 4, step: 0.25 },
+  ],
   execute: async ({ inputs, params }) => {
     const manifest = inputs.depth?.value as InferManifest | undefined;
     const glb = manifest?.artifacts.find((a) => a.kind === "glb");

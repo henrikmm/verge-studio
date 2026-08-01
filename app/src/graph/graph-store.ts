@@ -116,6 +116,10 @@ export function setNodeAuto(nodeId: string, auto: boolean) {
 }
 
 export function selectNode(nodeId: string | null) {
+  // Idempotent on purpose. React Flow reports the selection on every render pass,
+  // including an empty one at mount; committing unconditionally re-renders the
+  // canvas, which reports again, which is an infinite loop.
+  if (state.selectedId === nodeId) return;
   state.selectedId = nodeId;
   commit();
 }
@@ -179,9 +183,15 @@ export async function run(request: RunRequest = {}): Promise<RunReport> {
   }
 }
 
-/** Run the node the user asked for, clearing it (and only it) to spend GPU time. */
+/**
+ * Run the node the user asked for, clearing it — and only it — to spend GPU time.
+ *
+ * Deliberately not scoped with `target`: the whole graph is evaluated so the free
+ * CPU nodes downstream refresh in the same pass. Restricting to ancestors would run
+ * the expensive node and then leave the views showing stale results.
+ */
 export function runNode(nodeId: string): Promise<RunReport> {
-  return run({ target: nodeId, allowManual: new Set([nodeId]) });
+  return run({ allowManual: new Set([nodeId]) });
 }
 
 /** Re-evaluate everything that can run for free. Manual nodes stay stale. */

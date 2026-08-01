@@ -1,5 +1,46 @@
 # Design review log
 
+## 2026-08-01 — M2a node graph (commit pending)
+
+In-browser at the default dock layout, mock-backed, driven end to end (drop → Run).
+
+- **Fix-list item 1 (pane control row) — DONE.** All panes now carry `Running`/`Paused` +
+  elapsed ms on the left and a `Pause` button on the right, plus a separate `OUTPUT` row with
+  toggle chips (`Depth`|`Confidence`, `Points`|`+ Cameras`) and a dim parenthesised hint.
+- **Fix-list item 2 (graph canvas tone) — DONE.** Canvas is `#171512`, warm against the neutral
+  `#151517` pane bodies.
+- **Fix-list item 3 (node cards) — DONE.** Colored category header, `A`/`P` badge, labelled
+  port rows with type-colored dots, thumbnail, mono ms footer. Verified live: Frame Source
+  showed the extracted first frame, Point Cloud reported `351,232 pts`.
+- **Fix-list item 4 (graph banner) — DONE.** `VERGE STUDIO / METRIC DEPTH PIPELINE` plus a
+  one-line prose description, with `Fit` top-right.
+
+Measured this pass:
+
+- Drop → Frame Source ran alone (76.6 ms, `30f · 10.00 fps` from a 3 s clip) and **every
+  downstream node stayed stale** — the GPU node did not auto-fire. This is the cost guard working.
+- Explicit Run → DA3 Depth 6066 ms (mock) → Point Cloud 122 ms → both viewers, all reading
+  `all current` afterwards.
+- `Last run · Frames 30` proves the browser sent 30 real JPEGs as **multipart** and the
+  middleware parsed them — the seam PROGRESS listed as never exercised.
+- Viewport renders the cloud through the graph rather than a hardcoded fixture path.
+
+Not measured this pass:
+
+- **Orbit interaction was not re-verified.** `readPixels` returns a cleared buffer outside the
+  render frame, and rAF is paused whenever the browser pane is hidden — which it is while the
+  JS tool runs — so the M0 checksum technique could not be repeated here. The OrbitControls code
+  is unchanged from the pass where it *was* measured; only the data source changed.
+- Full acceptance-checklist re-grade (items 1–14) has not been redone since the layout changed.
+
+### New fix-list
+
+1. Panes have no `Remove` button — `PaneControls` supports one but Dockview owns pane lifecycle,
+   so it is not wired.
+2. `Pause` on a pane stops the depth pane re-fetching but does not stop the 3D render loop.
+3. React Flow logs a `nodeTypes` recreation warning under HMR; harmless, but check it is absent
+   on a cold load before treating the console as clean.
+
 ## 2026-07-31 — inference controls + VRAM telemetry (commit c1d3765)
 
 Graded against the revised checklist in docs/DESIGN.md, in-browser at 1280×800.

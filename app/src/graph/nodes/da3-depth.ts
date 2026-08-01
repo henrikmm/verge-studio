@@ -32,6 +32,31 @@ export const da3DepthSpec: NodeSpec = {
     inferGs: false,
     maxFrames: DEFAULT_MAX_FRAMES,
   },
+  controls: [
+    { kind: "slider", key: "processRes", label: "Process res", min: 252, max: 1024, step: 14 },
+    {
+      kind: "select",
+      key: "processResMethod",
+      label: "Res method",
+      options: [
+        { value: "upper_bound_resize", label: "upper_bound_resize" },
+        { value: "lower_bound_resize", label: "lower_bound_resize" },
+      ],
+    },
+    {
+      kind: "select",
+      key: "refViewStrategy",
+      label: "Ref view",
+      options: [
+        { value: "middle", label: "middle" },
+        { value: "saddle_balanced", label: "saddle_balanced" },
+        { value: "saddle_sim_range", label: "saddle_sim_range" },
+        { value: "first", label: "first" },
+      ],
+    },
+    { kind: "slider", key: "maxFrames", label: "Max frames", min: 2, max: 96 },
+    { kind: "checkbox", key: "inferGs", label: "Splats (infer_gs)" },
+  ],
   execute: async ({ inputs, params }) => {
     const frames = inputs.frames?.value as FramesValue | undefined;
     if (!frames || frames.paths.length === 0) throw new Error("no frames on the input");

@@ -6,7 +6,7 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-07-31 · commit `5649284`
+Last updated: 2026-08-01 · M2a complete
 
 ---
 
@@ -16,7 +16,7 @@ Last updated: 2026-07-31 · commit `5649284`
 |---|---|
 | M0 — Bootstrap + offline viewer | **done** |
 | M1 — GPU service live | **done** (with carve-outs below) |
-| M2a — Node graph, local only | not started |
+| M2a — Node graph, local only | **done** (one carve-out: mock badge) |
 | M2b — One warm cloud session | not started (blocked on M2a) |
 | M3 — Height measurement (the goal) | not started (blocked on M2b's fixture) |
 | M4 — Splats + polish | not started |
@@ -120,31 +120,54 @@ These were in the M1 plan but are not implemented. Do not assume they work.
       `npz` exporter writes to. If DA3 emits the same filename, ours overwrites it and the
       embedded images are lost. Rename ours and confirm DA3's native key names from a real run.
 
-## M2a — Node graph, local only ⬜
+## M2a — Node graph, local only ✅ (mostly)
 
-Zero cloud cost. Everything below is verifiable against the mock + `fixtures/roadside/`.
+Zero cloud cost. Ticked items were exercised in the browser, not merely written.
 
-- [ ] `@xyflow/react` 12.x added (React Flow; React 19 compatible, MIT)
-- [ ] `app/src/graph/cache-key.ts` — TS port of donor `content-hash.js`, with a **parity test
-      producing byte-identical digests to the donor file** (the donor is the reference impl)
-- [ ] `app/src/graph/types.ts` — `PortType` union bound to the DESIGN.md port colors; `NodeSpec`
-- [ ] `app/src/graph/graph-store.ts` — nodes/edges/params/results, same `useSyncExternalStore`
-      pattern as `session-store.ts` (no new state library)
-- [ ] `app/src/graph/evaluate.ts` — topological walk; cache key = f(producer, version, params,
-      upstream output hashes); changed key stales that node **and everything downstream only**
-- [ ] Nodes: `FrameSource`, `DA3Depth`, `PointCloud`, `Viewer3D` / `Viewer2D`
-- [ ] `POST /api/upload` in the Vite dev middleware (drag-drop → temp path for ffmpeg)
-- [ ] Node cards per `docs/DESIGN.md` (colored header, A/P badges, labelled ports, thumbnail, ms footer)
-- [ ] Inspector bound to node selection; stale nodes dim until re-run
-- [ ] **Panes read from a manifest, not a hardcoded path.** `viewport-3d.tsx` currently hardcodes
-      `loader.load("/roadside/scene.glb")`; it must load the GLB artifact URL its upstream node
-      emits. The mock already returns fixture URLs, so this changes nothing visually while making
-      the cloud seam real — pointing at the deployed service becomes a base-URL change.
-- [ ] Mock-vs-real badge on `DA3Depth` (the mock already returns `mock: true`) — honesty rule 3
-- [ ] Design-review fix-list from 2026-07-31 (pane control row with Remove/Pause, OUTPUT toggle
-      chips, warm-toned graph canvas, graph banner) — see `docs/design-review-log.md`
+- [x] `@xyflow/react` 12.11.2 added (React Flow; React 19 compatible, MIT)
+- [x] `app/src/graph/cache-key.ts` — TS port of donor `content-hash.js`, with a parity test
+      against golden vectors generated **from the donor file** by
+      `scripts/gen-cache-key-vectors.mjs`. App code never imports `donor/`.
+- [x] `app/src/graph/types.ts` — `PortType` union bound to the DESIGN.md port colors; `NodeSpec`
+      with a `controls` schema so the inspector is generic
+- [x] `app/src/graph/graph-store.ts` — same `useSyncExternalStore` pattern as `session-store.ts`
+- [x] `app/src/graph/evaluate.ts` — topological walk; changed key stales that node **and
+      everything downstream only**. 21 unit tests, incl. the real pipeline's behaviour.
+- [x] Nodes: `FrameSource`, `DA3Depth`, `PointCloud`, `Viewer3D` / `Viewer2D`
+- [x] `POST /api/upload` + `GET /api/frame` in the Vite dev middleware (drag-drop → temp path
+      for ffmpeg; frame serving has a path-traversal guard, verified 403 on `/etc/passwd`)
+- [x] Node cards per `docs/DESIGN.md` (colored header, A/P badge, labelled ports, thumbnail, ms footer)
+- [x] Inspector bound to node selection; stale nodes dim until re-run
+- [x] **Panes read from a manifest, not a hardcoded path.** Verified: the viewport renders
+      351,232 pts arriving through the graph. Pointing at the cloud is now a base-URL change.
+- [x] Design-review fix-list from 2026-07-31 — all four items done, see `docs/design-review-log.md`
+- [x] **The mock now parses real multipart**, so the browser's upload path is identical offline
+      and in the cloud. `Last run · Frames 30` confirmed the server counted 30 uploaded JPEGs.
+- [ ] **Mock-vs-real badge on `DA3Depth`.** NOT done — the mock returns `mock: true` but nothing
+      surfaces it on the card. Honesty rule 3 is currently unmet for the node graph; a screenshot
+      of a fixture-driven run is not distinguishable from a real one except via the status bar's
+      `NVIDIA L4 (mock)`.
 
 Deliberately excluded from M2a: any real cloud run, the splat node, the cost ticker.
+
+### Verified behaviours (driven in-browser, 2026-08-01)
+
+- Dropping a clip runs **only** Frame Source; DA3 Depth and everything downstream stay stale.
+  A slider drag cannot bill. This is the central safety property of the execution model.
+- An explicit Run walks the whole chain and leaves the graph reading `all current`.
+- Changing a downstream CPU param does not restamp DA3 Depth (unit-tested on the real pipeline).
+
+### NOT verified in M2a
+
+- **Orbit/pan interaction was not re-measured.** `readPixels` returns a cleared buffer outside
+  the render frame, and rAF is paused while the browser pane is hidden — which it is whenever
+  the JS tool runs — so the M0 checksum technique could not be repeated. The OrbitControls code
+  is unchanged; only its data source changed. Re-measure before claiming the viewport is good.
+- Node deletion, edge deletion and rewiring by drag are implemented but were never exercised.
+- `PaneControls` supports a `Remove` button that is not wired (Dockview owns pane lifecycle).
+- Pausing a pane stops the depth pane re-fetching but not the 3D render loop.
+- The acceptance checklist in `docs/DESIGN.md` has not been re-graded end to end since the
+  layout gained the control/OUTPUT rows.
 
 ## M2b — One warm cloud session ⬜
 
@@ -153,8 +176,10 @@ Blocked on M2a. Plan the whole batch before deploying; do not deploy to do one o
 - [ ] Fix `VramSampler` **first** (see open follow-ups) so the ladder below measures something real
 - [ ] Frame-count ladder on the room clip: 32 → 48 → 64 → 96. Each run is seconds and an OOM costs
       only an error, so find the true ceiling instead of extrapolating from 32.
-- [ ] Room video end-to-end **through the browser** — this is the first real exercise of
-      `infer-client.ts::infer()`'s multipart path. Expect bugs.
+- [ ] Room video end-to-end **through the browser**. The multipart path is no longer untested —
+      M2a exercised it against the dev middleware, which parses the same body FastAPI does — but
+      it has still never crossed a network to the real service (auth headers, CORS, request size
+      limits, timeouts are all unexercised).
 - [ ] `scripts/save-run.sh` — download the manifest's artifacts **before teardown**. Artifacts live
       on the container's local disk (no GCS bucket exists) and **die with the instance**.
 - [ ] Confirm DA3's native npz key names and fix the `result.npz` clobber (see open follow-ups)
