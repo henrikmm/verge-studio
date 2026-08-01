@@ -302,3 +302,19 @@ first should build, the second should print "already in the registry, skipping b
 3. Dropping `ffmpeg` from the image drops OpenCV's libs, which DA3 needs (`libglib2.0-0`, `libgl1`).
 4. Coordinate-based clicks in the Claude browser pane are mis-scaled (~7.8×). Use `ref`-based
    input, and verify canvas changes with a WebGL `readPixels` checksum, not screenshots.
+5. ⚠️ **Never extract a frame ladder one rung at a time — it froze the Mac (2026-08-01).**
+   Sampling by FPS spreads frames across the clip, so ffmpeg decodes the **entire** video for
+   *any* frame count: 1579 frames of 3840×2160 HEVC whether you asked for 32 or 256. Running
+   five rungs meant five full 4K decodes. This machine has **6 cores, only 2 of them
+   performance**, and software HEVC decode saturated all of them until the system locked up and
+   needed a restart. The tell was in the numbers: 32 frames took 116 s and 64 frames took 319 s
+   despite decoding *identical* work — that 2.75× gap was thermal/contention degradation, not
+   frame count.
+   Fixed three ways in `scripts/extract-frames.mjs`, all verified:
+   - `--ladder 32,64,128,192,256` decodes **once** at the largest rung and hardlinks the
+     smaller ones as strided subsets (`pickEvenly`). Every rung still spans the whole clip.
+   - `-hwaccel videotoolbox` on darwin (measured 2.7× faster: 4.8 s → 1.8 s on a 3 s window),
+     with automatic fallback to software if hardware decode refuses the codec.
+   - `-threads 2`, so a long pass leaves the machine usable.
+   Result: **the whole ladder now takes 13 s**, versus 435 s for two rungs before.
+   Do not "optimise" this back into a per-rung loop.

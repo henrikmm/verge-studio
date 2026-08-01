@@ -16,11 +16,30 @@
 //                                                         [--long-edge 1024]
 
 import { execFile } from "node:child_process";
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { copyFile, link, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
+
+/**
+ * Hardware decode. Sampling by FPS spreads frames across the whole clip, so ffmpeg
+ * must decode the ENTIRE video for any frame count -- 1579 frames of 3840x2160 HEVC
+ * for `test_demo.mp4`, whether you asked for 32 frames or 256.
+ *
+ * On this Mac (6 cores, only 2 of them performance) software HEVC decode saturates
+ * every core for the whole pass. Measured 2026-08-01 on a 3 s window: software 4.8 s,
+ * videotoolbox 1.8 s -- 2.7x faster, on the dedicated media engine instead of the CPU.
+ * Sustained software decode froze the machine outright; this is the fix for that.
+ */
+const HWACCEL = process.platform === "darwin" ? ["-hwaccel", "videotoolbox"] : [];
+
+/**
+ * Cap decode threads. The wall-clock cost is small next to hardware decode, and it
+ * leaves the machine usable while a long extraction runs -- which matters more than
+ * shaving seconds off a pass that happens once.
+ */
+const THREAD_ARGS = ["-threads", "2"];
 
 export class FfmpegMissingError extends Error {
   constructor() {
@@ -130,15 +149,30 @@ export async function extractFrames(
   const filters = [`fps=${plan.effectiveFps.toFixed(9)}`];
   if (scale.scaled) filters.push(`scale=${scale.width}:${scale.height}`);
 
-  await run("ffmpeg", [
+  const ffmpegArgs = (accel) => [
     "-nostdin",
     "-v", "error",
+    ...accel,
+    ...THREAD_ARGS,
     "-i", videoPath,
     "-vf", filters.join(","),
     "-frames:v", String(plan.count),
     "-q:v", "2",
     join(outDir, "frame-%04d.jpg"),
-  ]);
+  ];
+
+  // Hardware decode does not support every codec or profile, and a hard failure here
+  // would be a confusing dead end. Fall back to software rather than refusing to run.
+  let usedHwaccel = HWACCEL.length > 0;
+  try {
+    await run("ffmpeg", ffmpegArgs(HWACCEL));
+  } catch (err) {
+    if (!usedHwaccel) throw err;
+    usedHwaccel = false;
+    await rm(outDir, { recursive: true, force: true });
+    await mkdir(outDir, { recursive: true });
+    await run("ffmpeg", ffmpegArgs([]));
+  }
 
   const names = (await readdir(outDir)).filter((n) => n.endsWith(".jpg")).sort();
   if (names.length < 2) {
@@ -152,7 +186,65 @@ export async function extractFrames(
     plan: { ...plan, count: names.length },
     probe,
     scale,
+    usedHwaccel,
   };
+}
+
+/**
+ * Pick `count` items spanning the whole list, endpoints always included.
+ *
+ * This is what makes a frame ladder cost ONE decode instead of one per rung. A
+ * 256-frame extraction sampled across the clip already contains the 128-frame set
+ * (every 2nd), the 64-frame set (every 4th) and the 32-frame set (every 8th) -- and
+ * each subset still spans the entire video, which is the only property that matters
+ * for DA3's cross-view attention.
+ *
+ * Re-extracting per rung decoded the same 4K stream five times over and froze the
+ * machine on 2026-08-01. Never do that again: extract the largest rung, then stride.
+ */
+export function pickEvenly(items, count) {
+  if (count >= items.length) return [...items];
+  if (count <= 0) return [];
+  if (count === 1) return [items[0]];
+  const picked = [];
+  for (let i = 0; i < count; i++) {
+    picked.push(items[Math.round((i * (items.length - 1)) / (count - 1))]);
+  }
+  return picked;
+}
+
+/**
+ * Build ladder subsets from one extraction, as hardlinks -- no copying, no re-decode.
+ * Returns one entry per rung, largest first, each with its own effective fps.
+ */
+export async function buildLadder(frames, counts, outRoot, durationS) {
+  const rungs = [];
+  for (const count of [...counts].sort((a, b) => b - a)) {
+    if (count > frames.length) continue;
+    const dir = join(outRoot, `f-${count}`);
+    await rm(dir, { recursive: true, force: true });
+    await mkdir(dir, { recursive: true });
+
+    const picked = pickEvenly(frames, count);
+    const linked = [];
+    for (const [i, src] of picked.entries()) {
+      const dest = join(dir, `frame-${String(i + 1).padStart(4, "0")}.jpg`);
+      // Hardlink, so N rungs cost one copy of the bytes on disk.
+      try {
+        await link(src, dest);
+      } catch {
+        await copyFile(src, dest); // different filesystem
+      }
+      linked.push(dest);
+    }
+    rungs.push({
+      count,
+      dir,
+      frames: linked,
+      effectiveFps: durationS > 0 ? count / durationS : 0,
+    });
+  }
+  return rungs;
 }
 
 // CLI
@@ -169,16 +261,40 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop()
     const i = process.argv.indexOf(`--${name}`);
     return i === -1 ? fallback : Number(process.argv[i + 1]);
   };
+  // --ladder 32,64,128,192,256 decodes ONCE at the largest rung and strides the rest.
+  const ladderIndex = process.argv.indexOf("--ladder");
+  const ladderCounts =
+    ladderIndex === -1
+      ? null
+      : String(process.argv[ladderIndex + 1])
+          .split(",")
+          .map(Number)
+          .filter((n) => Number.isFinite(n) && n > 0);
+
+  const started = Date.now();
   const result = await extractFrames(video, outDir, {
     fps: flag("fps", 10),
-    maxFrames: flag("max-frames", 32),
+    maxFrames: ladderCounts ? Math.max(...ladderCounts) : flag("max-frames", 32),
     longEdge: flag("long-edge", DEFAULT_LONG_EDGE),
   });
-  const { plan, probe, scale } = result;
+  const { plan, probe, scale, frames, usedHwaccel } = result;
   console.log(
     `${plan.count} frames @ ${plan.effectiveFps.toFixed(2)} fps ` +
       `(${probe.durationS.toFixed(2)}s source, ${probe.width}x${probe.height})` +
       (plan.capped ? ` — capped from ${plan.requestedCount}` : "") +
-      (scale.scaled ? ` — scaled to ${scale.width}x${scale.height}` : " — not scaled"),
+      (scale.scaled ? ` — scaled to ${scale.width}x${scale.height}` : " — not scaled") +
+      ` — ${usedHwaccel ? "hwaccel" : "software"} decode, ${((Date.now() - started) / 1000).toFixed(1)}s`,
   );
+
+  if (ladderCounts) {
+    const rungs = await buildLadder(frames, ladderCounts, outDir, probe.durationS);
+    console.log(`\nladder from ONE decode (hardlinked, no re-extraction):`);
+    for (const r of rungs) {
+      console.log(`  ${String(r.count).padStart(4)} frames @ ${r.effectiveFps.toFixed(2)} fps  ${r.dir}`);
+    }
+    const skipped = ladderCounts.filter((c) => c > frames.length);
+    if (skipped.length) {
+      console.log(`  (skipped ${skipped.join(", ")} — more than the ${frames.length} extracted)`);
+    }
+  }
 }

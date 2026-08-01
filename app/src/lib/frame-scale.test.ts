@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 // @ts-expect-error - plain ESM module, no type declarations
-import { DEFAULT_LONG_EDGE, planScale } from "../../../scripts/extract-frames.mjs";
+import { DEFAULT_LONG_EDGE, pickEvenly, planScale } from "../../../scripts/extract-frames.mjs";
 
 type Scale = { width: number; height: number; scaled: boolean };
 const scaleOf = (w: number, h: number, edge?: number): Scale =>
@@ -58,6 +58,69 @@ describe("planScale", () => {
   });
 
   it("keeps a 256-frame upload well inside Cloud Run's 32 MiB cap", () => {
+    // Measured from this clip: ~62 KB/frame at 1024 px vs ~432 KB at native 4K.
+    const scaled = scaleOf(3840, 2160);
+    expect(scaled.scaled).toBe(true);
+    const budgetBytes = 256 * 62 * 1024;
+    expect(budgetBytes).toBeLessThan(32 * 1024 * 1024);
+  });
+});
+
+/**
+ * Sampling by FPS forces ffmpeg to decode the WHOLE clip whatever the frame count, so
+ * a five-rung ladder used to mean five full 4K HEVC decodes. That froze the machine on
+ * 2026-08-01. These cases pin the property that makes one decode enough: the largest
+ * rung contains every smaller rung, and every rung still spans the entire clip.
+ */
+describe("pickEvenly", () => {
+  const seq = (n: number) => Array.from({ length: n }, (_, i) => i);
+  const pick = (items: number[], n: number): number[] => pickEvenly(items, n) as number[];
+
+  it("returns exactly the requested count", () => {
+    for (const n of [2, 32, 64, 128, 192]) {
+      expect(pick(seq(256), n)).toHaveLength(n);
+    }
+  });
+
+  it("always includes both endpoints, so subsets span the whole clip", () => {
+    for (const n of [2, 32, 64, 128, 192]) {
+      const got = pick(seq(256), n);
+      expect(got[0]).toBe(0);
+      expect(got[got.length - 1]).toBe(255);
+    }
+  });
+
+  it("returns strictly increasing frames — never a duplicate or a reorder", () => {
+    const got = pick(seq(256), 192);
+    for (let i = 1; i < got.length; i++) expect(got[i]).toBeGreaterThan(got[i - 1]!);
+  });
+
+  it("strides exactly for power-of-two divisors of the 256-frame superset", () => {
+    // This is the ladder's core claim: 128 is every 2nd frame, 64 every 4th, 32 every 8th.
+    expect(pick(seq(257), 129)).toEqual(seq(129).map((i) => i * 2));
+    expect(pick(seq(257), 65)).toEqual(seq(65).map((i) => i * 4));
+    expect(pick(seq(257), 33)).toEqual(seq(33).map((i) => i * 8));
+  });
+
+  it("passes the list through when asked for at least as many as exist", () => {
+    expect(pick(seq(32), 32)).toEqual(seq(32));
+    expect(pick(seq(32), 99)).toEqual(seq(32));
+  });
+
+  it("handles the degenerate counts without throwing", () => {
+    expect(pick(seq(10), 0)).toEqual([]);
+    expect(pick(seq(10), 1)).toEqual([0]);
+  });
+
+  it("does not mutate the source list", () => {
+    const source = seq(64);
+    pick(source, 8);
+    expect(source).toEqual(seq(64));
+  });
+});
+
+describe("upload budget", () => {
+  it("keeps the largest ladder rung inside the request cap", () => {
     // Measured from this clip: ~62 KB/frame at 1024 px vs ~432 KB at native 4K.
     const scaled = scaleOf(3840, 2160);
     expect(scaled.scaled).toBe(true);
