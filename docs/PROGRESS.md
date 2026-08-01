@@ -66,7 +66,10 @@ Measured with ffprobe on 2026-08-01:
 
 - Run it **at full length**, not a trimmed window.
 - 26.61 s against the current 32-frame cap is only **1.20 effective fps** (DA3's own default is
-  10). Find the real ceiling with the frame ladder in M2b rather than accepting 1.20.
+  10). `max_frames=32` is a VRAM safety cap, NOT a quality decision, and NOT a measured ceiling —
+  it is simply the largest count ever run. Find the real ceiling with the frame ladder in M2b.
+  Note the cap never truncates the clip: `planFrames` lowers fps so the frames still span all
+  26.61 s.
 - ⚠️ **Frames must be downscaled before upload.** Measured JPEG sizes from this clip:
   native 4K ≈ **432 KB/frame** (32 frames ≈ 13 MB, 96 frames ≈ **40 MB**); scaled to 1024 px on
   the long edge ≈ **62 KB/frame** (96 frames ≈ 6 MB). Cloud Run's documented HTTP/1 request cap
@@ -191,12 +194,35 @@ Deliberately excluded from M2a: any real cloud run, the splat node, the cost tic
 Blocked on M2a. Plan the whole batch before deploying; do not deploy to do one of these.
 
 - [ ] **Add frame downscaling to `scripts/extract-frames.mjs` BEFORE deploying** (long edge
-      ~1024 px). Without it the ladder's upper rungs push a ~40 MB multipart body at Cloud Run's
-      32 MiB cap. Local-only change, verifiable with `verify.sh` — do not spend a warm instance
+      ~1024 px). This is now a hard prerequisite for the ladder below, not a nicety: at native
+      4K (432 KB/frame) a 128-frame run is ~55 MB and a 256-frame run ~110 MB, both far over
+      Cloud Run's documented 32 MiB HTTP/1 request cap. At 1024 px (62 KB/frame) even 256 frames
+      is ~16 MB and fits. The bytes are wasted regardless — DA3 resizes to `process_res` (504)
+      internally. Local-only change, verifiable with `verify.sh`; do not spend a warm instance
       discovering this.
 - [ ] Fix `VramSampler` **first** (see open follow-ups) so the ladder below measures something real
-- [ ] Frame-count ladder on the room clip: 32 → 48 → 64 → 96. Each run is seconds and an OOM costs
-      only an error, so find the true ceiling instead of extrapolating from 32.
+- [ ] **Frame-count ladder — double until it breaks: 32 → 64 → 128 → 192 → 256.** Each run is
+      seconds and an OOM costs only an error message, so push to actual failure rather than
+      stopping at a comfortable number. Then bisect the last good interval.
+
+      Why this matters: `max_frames=32` is a *hardware* cap, not a quality choice, and it is
+      only "the highest count anyone has measured", not a known ceiling. At 26.61 s it forces
+      **1.20 effective fps** against DA3's own 10 fps default. The clip is still fully spanned
+      (`planFrames` lowers fps rather than truncating), but the sampling is sparse.
+
+      What the measured slope predicts: activations grow ≈0.14 GiB/frame (3.55 GiB at 4 frames
+      → 7.46 GiB at 32), so `(22.03 − 6.57) / 0.14 ≈ **110 frames** at 504 px` ≈ 4.1 fps.
+      260 frames would need ≈46 GiB and will certainly OOM. Treat both numbers as linear
+      extrapolation across an 8× gap from allocator-contaminated readings — the ladder is what
+      replaces them with fact.
+
+- [ ] **Second ladder at reduced `process_res`, if 10 fps is wanted.** VRAM scales ≈ res², so
+      resolution is the lever that buys frames: 504→356 roughly doubles the frame budget
+      (~220 frames), 504→252 roughly quadruples it (~440), at which point the 266 frames a
+      10 fps sampling of this clip wants would fit. Whether that trade is worth it is a
+      MEASUREMENT-ACCURACY question, not a VRAM one — defer the verdict to M3's tape-measure
+      comparison, and save artifacts from more than one setting so M3 can compare offline
+      without another cloud session.
 - [ ] Room video end-to-end **through the browser**. The multipart path is no longer untested —
       M2a exercised it against the dev middleware, which parses the same body FastAPI does — but
       it has still never crossed a network to the real service (auth headers, CORS, request size
