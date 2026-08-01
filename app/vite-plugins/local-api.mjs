@@ -170,10 +170,17 @@ export function localApi() {
             }
 
             case "POST /api/extract": {
-              const { path, fps = 10, maxFrames = 32 } = await readJsonBody(req);
+              const { path, fps = 10, maxFrames = 32, longEdge } = await readJsonBody(req);
               const outDir = join(FRAME_ROOT, randomUUID().slice(0, 8));
-              const { frames, plan, probe } = await extractFrames(path, outDir, { fps, maxFrames });
-              return json(res, 200, { frames, plan, probe, outDir });
+              // longEdge is left undefined unless the caller asks, so extractFrames'
+              // own 1024 px default applies -- the browser upload path must downscale
+              // or a large frame count exceeds Cloud Run's 32 MiB request cap.
+              const { frames, plan, probe, scale } = await extractFrames(path, outDir, {
+                fps,
+                maxFrames,
+                ...(longEdge === undefined ? {} : { longEdge }),
+              });
+              return json(res, 200, { frames, plan, probe, scale, outDir });
             }
 
             /** Serves extracted frames back to the browser for node thumbnails. */

@@ -7,7 +7,13 @@
 // When fps x duration exceeds the cap we LOWER THE FPS rather than truncating the
 // clip, so the frames still span the whole video. Callers are told the effective fps.
 //
+// Frames are also downscaled to a long edge of 1024 px by default. This is a transport
+// constraint, not a quality choice: Cloud Run's documented HTTP/1 request cap is 32 MiB,
+// and 4K JPEGs measure ~432 KB each, so a 128-frame run would be ~55 MB and fail. The
+// pixels are wasted anyway -- DA3 resizes to process_res (504) internally.
+//
 // Usage: node scripts/extract-frames.mjs <video> <outDir> [--fps 10] [--max-frames 32]
+//                                                         [--long-edge 1024]
 
 import { execFile } from "node:child_process";
 import { mkdir, readdir, rm, stat } from "node:fs/promises";
@@ -76,25 +82,59 @@ export function planSampling(fps, durationS, maxFrames) {
   };
 }
 
+/** Long edge, in pixels, that frames are downscaled to before upload. */
+export const DEFAULT_LONG_EDGE = 1024;
+
+/**
+ * Target frame dimensions for a given source size.
+ *
+ * Downscale only -- a source already under the limit is passed through untouched,
+ * because upscaling would inflate the upload for no information gain. Both axes are
+ * rounded to even numbers, which is what ffmpeg's own `-2` does and what JPEG's
+ * chroma subsampling wants.
+ *
+ * The arithmetic is done here rather than in an ffmpeg `scale` expression so the
+ * caller can report exact output dimensions without parsing ffmpeg's output, and so
+ * the filter string stays free of the commas that would otherwise need escaping in a
+ * filtergraph.
+ */
+export function planScale(width, height, longEdge = DEFAULT_LONG_EDGE) {
+  const longest = Math.max(width, height);
+  if (!(longEdge > 0) || !(longest > longEdge)) {
+    return { width, height, scaled: false };
+  }
+  const factor = longEdge / longest;
+  const even = (n) => Math.max(2, Math.round((n * factor) / 2) * 2);
+  return { width: even(width), height: even(height), scaled: true };
+}
+
 /**
  * Extract JPEG frames to `outDir`. Returns absolute paths plus the sampling plan
  * that produced them.
  */
-export async function extractFrames(videoPath, outDir, { fps = 10, maxFrames = 32 } = {}) {
+export async function extractFrames(
+  videoPath,
+  outDir,
+  { fps = 10, maxFrames = 32, longEdge = DEFAULT_LONG_EDGE } = {},
+) {
   await requireFfmpeg();
   await stat(videoPath); // throws a clear ENOENT if the video is missing
 
   const probe = await probeVideo(videoPath);
   const plan = planSampling(fps, probe.durationS, maxFrames);
+  const scale = planScale(probe.width, probe.height, longEdge);
 
   await rm(outDir, { recursive: true, force: true });
   await mkdir(outDir, { recursive: true });
+
+  const filters = [`fps=${plan.effectiveFps.toFixed(9)}`];
+  if (scale.scaled) filters.push(`scale=${scale.width}:${scale.height}`);
 
   await run("ffmpeg", [
     "-nostdin",
     "-v", "error",
     "-i", videoPath,
-    "-vf", `fps=${plan.effectiveFps.toFixed(9)}`,
+    "-vf", filters.join(","),
     "-frames:v", String(plan.count),
     "-q:v", "2",
     join(outDir, "frame-%04d.jpg"),
@@ -111,6 +151,7 @@ export async function extractFrames(videoPath, outDir, { fps = 10, maxFrames = 3
     frames: names.map((n) => join(outDir, n)),
     plan: { ...plan, count: names.length },
     probe,
+    scale,
   };
 }
 
@@ -118,7 +159,10 @@ export async function extractFrames(videoPath, outDir, { fps = 10, maxFrames = 3
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop())) {
   const [video, outDir] = process.argv.slice(2).filter((a) => !a.startsWith("--"));
   if (!video || !outDir) {
-    console.error("usage: node scripts/extract-frames.mjs <video> <outDir> [--fps 10] [--max-frames 32]");
+    console.error(
+      "usage: node scripts/extract-frames.mjs <video> <outDir> " +
+        "[--fps 10] [--max-frames 32] [--long-edge 1024]",
+    );
     process.exit(2);
   }
   const flag = (name, fallback) => {
@@ -128,11 +172,13 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].split("/").pop()
   const result = await extractFrames(video, outDir, {
     fps: flag("fps", 10),
     maxFrames: flag("max-frames", 32),
+    longEdge: flag("long-edge", DEFAULT_LONG_EDGE),
   });
-  const { plan, probe } = result;
+  const { plan, probe, scale } = result;
   console.log(
     `${plan.count} frames @ ${plan.effectiveFps.toFixed(2)} fps ` +
       `(${probe.durationS.toFixed(2)}s source, ${probe.width}x${probe.height})` +
-      (plan.capped ? ` — capped from ${plan.requestedCount}` : ""),
+      (plan.capped ? ` — capped from ${plan.requestedCount}` : "") +
+      (scale.scaled ? ` — scaled to ${scale.width}x${scale.height}` : " — not scaled"),
   );
 }
