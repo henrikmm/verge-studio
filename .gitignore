@@ -13,6 +13,16 @@ __pycache__/
 *.mp4
 *.mov
 
+# M2b room fixture: real DA3 output from test_demo.mp4. A 128-frame GLB runs to tens
+# of MB — far past the 5 MB commit limit — so the payloads are LOCAL-ONLY and a fresh
+# clone will not have them. Regenerate with a cloud run + scripts/save-run.sh.
+# manifest.json and SHA256SUMS ARE committed, so M3's numbers stay traceable to the
+# exact artifacts that produced them.
+fixtures/room/**
+!fixtures/room/**/
+!fixtures/room/**/manifest.json
+!fixtures/room/**/SHA256SUMS
+
 # OS / editor
 .DS_Store
 .vscode/
