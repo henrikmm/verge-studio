@@ -208,6 +208,13 @@ export interface InferManifest {
   diagnostics?: Diagnostics;
   transient: boolean;
   expiresAfterDays: number;
+  /**
+   * True when this manifest came from the fixture-backed dev mock rather than a GPU.
+   * The real service never sets it. Surfaced on the node card because a screenshot of
+   * a mock run is otherwise indistinguishable from a real one — see docs/DESIGN.md's
+   * honesty rules.
+   */
+  mock?: boolean;
 }
 
 export interface GpuSnapshot {

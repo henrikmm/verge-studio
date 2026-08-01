@@ -11,7 +11,7 @@
  * the frames it actually received.
  */
 
-import { fetchFrameBlob, infer } from "../../lib/infer-client";
+import { artifactUrl, fetchFrameBlob, infer } from "../../lib/infer-client";
 import type { InferManifest, ProcessResMethod, RefViewStrategy } from "../../lib/contract";
 import { DEFAULT_MAX_FRAMES } from "../../lib/contract";
 import type { NodeSpec } from "../types";
@@ -73,12 +73,15 @@ export const da3DepthSpec: NodeSpec = {
     });
 
     const preview = manifest.artifacts.find((a) => a.kind === "depth_preview");
+    // Honesty: a mock run must never be mistakable for a real one on the card. The
+    // device name carries it too, but the summary is what shows without selecting.
+    const provenance = manifest.mock ? " · MOCK" : "";
     return {
       depth: {
         type: "depth_field",
         value: manifest,
-        thumbnailUrl: preview?.url,
-        summary: `${manifest.frames.count}f · ${manifest.timing.gpuSeconds.toFixed(1)}s GPU`,
+        thumbnailUrl: preview?.url ? artifactUrl(preview.url) : undefined,
+        summary: `${manifest.frames.count}f · ${manifest.timing.gpuSeconds.toFixed(1)}s GPU${provenance}`,
       },
     };
   },

@@ -140,6 +140,8 @@ function toManifest(w: any): InferManifest {
       : undefined,
     transient: w.transient,
     expiresAfterDays: w.expires_after_days,
+    // Only the dev mock sets this. Absent from every real service response.
+    mock: w.mock === true,
   };
 }
 
