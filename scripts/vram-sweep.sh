@@ -1,86 +1,189 @@
 #!/usr/bin/env bash
 # Measure peak VRAM vs frame count against ONE warm instance.
 #
-# This is the batching discipline from CLAUDE.md made concrete. Cloud Run GPU bills
-# for instance lifetime, so N runs back-to-back on a warm instance cost roughly one
-# cold start; N separate sessions cost N cold starts. Warm up once, sweep, tear down.
+# Two batching disciplines, both learned the hard way:
 #
-# Output: docs/vram-measurements.json — the numbers that replace the guessed bracket
-# in app/src/lib/contract.ts and the DEFAULT_MAX_FRAMES caps.
+# 1. CLOUD. Cloud Run GPU bills for instance lifetime, so N runs back-to-back on a warm
+#    instance cost roughly one cold start; N separate sessions cost N. Warm up once,
+#    sweep, tear down.
+# 2. LOCAL. Frames for every rung come from ONE ffmpeg decode. Sampling by FPS spreads
+#    frames across the clip, so ffmpeg decodes the entire 4K stream for ANY frame count
+#    -- extracting per rung meant five full decodes and froze the Mac on 2026-08-01.
+#    scripts/extract-frames.mjs --ladder decodes once and hardlinks strided subsets.
 #
-# Usage: VERGE_URL=... VERGE_TOKEN=... ./scripts/vram-sweep.sh <video> [counts...]
+# Output: docs/vram-measurements.json, which keeps every sweep ever run rather than
+# overwriting -- the 2026-07-31 numbers are allocator-contaminated and superseded, but
+# throwing them away would erase the evidence of *why* they were wrong.
+#
+# Usage:
+#   VERGE_URL=... ./scripts/vram-sweep.sh <video> [counts...]
+#   VERGE_URL=... ./scripts/vram-sweep.sh --ladder-dir <root> [counts...]
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-VIDEO="${1:?usage: vram-sweep.sh <video> [frame counts...]}"
-shift || true
-COUNTS=("${@:-}")
-[[ -z "${COUNTS[0]:-}" ]] && COUNTS=(4 8 16 24 32)
-
-: "${VERGE_URL:?set VERGE_URL to the deployed service URL}"
-# Token is optional: when going through `gcloud run services proxy` the proxy supplies
-# auth itself, and a user-account identity token has the wrong audience for Cloud Run
-# anyway (it authenticates to the gcloud OAuth client, not the service).
+: "${VERGE_URL:?set VERGE_URL to the deployed service URL (or the proxy)}"
+VERGE_URL="${VERGE_URL%/}"
+# Optional: going through `gcloud run services proxy` the proxy supplies auth itself,
+# and a user-account identity token has the wrong audience for Cloud Run anyway.
 VERGE_TOKEN="${VERGE_TOKEN:-}"
 
 PROCESS_RES="${PROCESS_RES:-504}"
-WORK="$(mktemp -d)"
+LABEL="${LABEL:-res${PROCESS_RES}}"
 OUT="docs/vram-measurements.json"
+
+if [[ "${1:-}" == "--ladder-dir" ]]; then
+  LADDER_ROOT="${2:?--ladder-dir needs a path}"
+  shift 2
+else
+  VIDEO="${1:?usage: vram-sweep.sh <video>|--ladder-dir <root> [counts...]}"
+  shift || true
+fi
+
+COUNTS=("$@")
+[[ ${#COUNTS[@]} -eq 0 ]] && COUNTS=(32 64 128 192 256)
+
+WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
+
+# One decode for the whole ladder.
+if [[ -z "${LADDER_ROOT:-}" ]]; then
+  echo "== extracting the ladder locally (ONE decode, hardlinked subsets) =="
+  LADDER_ROOT="${WORK}/ladder"
+  mkdir -p "${LADDER_ROOT}"
+  node scripts/extract-frames.mjs "${VIDEO}" "${LADDER_ROOT}" \
+    --fps 60 --ladder "$(IFS=,; echo "${COUNTS[*]}")"
+fi
+
+DURATION="$(python3 -c "
+import json,subprocess
+o=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration','-of','json',
+                  '${VIDEO:-}'],capture_output=True,text=True).stdout
+try: print(json.loads(o)['format']['duration'])
+except Exception: print(26.61)
+" 2>/dev/null || echo 26.61)"
 
 api() {
   if [[ -n "${VERGE_TOKEN}" ]]; then
-    curl -sS -f -H "Authorization: Bearer ${VERGE_TOKEN}" "$@"
+    curl -sS -H "Authorization: Bearer ${VERGE_TOKEN}" "$@"
   else
-    curl -sS -f "$@"
+    curl -sS "$@"
   fi
 }
 
+echo
 echo "== warmup (one cold start for the whole sweep) =="
 WARM_START=$(date +%s)
 api -X POST "${VERGE_URL}/warmup" | tee "${WORK}/warmup.json"
+COLD_S=$(( $(date +%s) - WARM_START ))
 echo
-echo "cold start: $(( $(date +%s) - WARM_START ))s"
+echo "cold start + model load: ${COLD_S}s"
 
 echo "[" > "${WORK}/results.json"
 FIRST=1
 
 for COUNT in "${COUNTS[@]}"; do
+  FRAME_DIR="${LADDER_ROOT}/f-${COUNT}"
+  if [[ ! -d "${FRAME_DIR}" ]]; then
+    echo "  (no ${FRAME_DIR}, skipping ${COUNT})"
+    continue
+  fi
   echo
   echo "== ${COUNT} frames @ ${PROCESS_RES}px =="
 
-  # Local ffmpeg. Ask for exactly COUNT frames spread across the whole clip by
-  # setting the cap to COUNT and the fps high enough to be capped down to it.
-  FRAME_DIR="${WORK}/frames-${COUNT}"
-  node scripts/extract-frames.mjs "${VIDEO}" "${FRAME_DIR}" --fps 60 --max-frames "${COUNT}"
-
+  EFF_FPS="$(python3 -c "print(round(${COUNT}/${DURATION}, 4))")"
   ARGS=()
   for f in "${FRAME_DIR}"/*.jpg; do ARGS+=(-F "frames=@${f}"); done
-  ARGS+=(-F "params={\"fps\":60,\"process_res\":${PROCESS_RES},\"ref_view_strategy\":\"middle\",\"max_frames\":${COUNT}}")
+  ARGS+=(-F "params={\"fps\":${EFF_FPS},\"source_duration_s\":${DURATION},\"process_res\":${PROCESS_RES},\"ref_view_strategy\":\"middle\",\"max_frames\":${COUNT}}")
 
-  # A failure here is a datapoint too: an OOM tells us the ceiling was crossed.
-  if RESPONSE=$(api -X POST "${VERGE_URL}/infer" "${ARGS[@]}" 2>"${WORK}/err-${COUNT}.txt"); then
-    PEAK=$(echo "${RESPONSE}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["vram"]["peak_bytes"])')
-    SECS=$(echo "${RESPONSE}" | python3 -c 'import json,sys; print(round(json.load(sys.stdin)["timing"]["gpu_seconds"],2))')
-    GIB=$(python3 -c "print(round(${PEAK}/1024**3, 2))")
-    echo "  peak ${GIB} GiB · ${SECS}s GPU"
-    ENTRY="{\"frames\":${COUNT},\"process_res\":${PROCESS_RES},\"peak_bytes\":${PEAK},\"peak_gib\":${GIB},\"gpu_seconds\":${SECS},\"ok\":true}"
-  else
-    echo "  FAILED (likely OOM) — see ${WORK}/err-${COUNT}.txt"
-    ENTRY="{\"frames\":${COUNT},\"process_res\":${PROCESS_RES},\"ok\":false}"
-  fi
+  # A failure here is a datapoint, not an error: an OOM is what the ladder is hunting.
+  # No -f, so the response body survives a 500 and the real CUDA message is recorded.
+  START=$(date +%s)
+  CODE=$(api -o "${WORK}/resp-${COUNT}.json" -w '%{http_code}' \
+    -X POST "${VERGE_URL}/infer" "${ARGS[@]}" || echo "000")
+  WALL=$(( $(date +%s) - START ))
 
+  ENTRY=$(python3 - "${WORK}/resp-${COUNT}.json" "${CODE}" "${COUNT}" "${PROCESS_RES}" "${WALL}" "${EFF_FPS}" <<'PY'
+import json, sys
+path, code, count, res, wall, eff = sys.argv[1:7]
+out = {"frames": int(count), "process_res": int(res), "effective_fps": float(eff),
+       "wall_seconds": int(wall), "http_code": int(code)}
+try:
+    body = json.load(open(path))
+except Exception:
+    body = {}
+if code == "200" and "vram" in body:
+    v, t = body["vram"], body["timing"]
+    gib = lambda b: round(b / 1024 ** 3, 2)
+    out.update(ok=True, run_id=body.get("run_id"),
+               peak_bytes=v["peak_bytes"], peak_gib=gib(v["peak_bytes"]),
+               torch_peak_bytes=v.get("torch_peak_bytes", 0),
+               torch_peak_gib=gib(v.get("torch_peak_bytes", 0)),
+               baseline_bytes=v.get("baseline_bytes", 0),
+               baseline_gib=gib(v.get("baseline_bytes", 0)),
+               activation_gib=gib(max(0, v["peak_bytes"] - v.get("baseline_bytes", 0))),
+               total_gib=gib(v["total_bytes"]),
+               gpu_seconds=round(t["gpu_seconds"], 2))
+    d = body.get("diagnostics") or {}
+    if d.get("native_npz"):
+        out["native_npz"] = d["native_npz"]
+    print(f"  peak {out['peak_gib']} GiB driver / {out['torch_peak_gib']} GiB allocator "
+          f"· activation {out['activation_gib']} GiB · {out['gpu_seconds']}s GPU",
+          file=sys.stderr)
+else:
+    detail = str(body.get("detail", ""))[:400] or f"HTTP {code}"
+    out.update(ok=False, detail=detail)
+    print(f"  FAILED ({code}): {detail[:160]}", file=sys.stderr)
+print(json.dumps(out))
+PY
+)
   [[ ${FIRST} -eq 0 ]] && echo "," >> "${WORK}/results.json"
   echo "${ENTRY}" >> "${WORK}/results.json"
   FIRST=0
 done
 
 echo "]" >> "${WORK}/results.json"
-python3 -m json.tool "${WORK}/results.json" > "${OUT}"
+
+# Merge into the historical record rather than clobbering it.
+python3 - "${OUT}" "${WORK}/results.json" "${LABEL}" "${COLD_S}" <<'PY'
+import json, os, sys, datetime
+out_path, results_path, label, cold = sys.argv[1:5]
+runs = json.load(open(results_path))
+
+history = {"schema": "verge.vram-measurements/0.2.0", "sweeps": []}
+if os.path.exists(out_path):
+    try:
+        existing = json.load(open(out_path))
+    except Exception:
+        existing = None
+    if isinstance(existing, dict) and "sweeps" in existing:
+        history = existing
+    elif isinstance(existing, list):
+        # Migrate the original flat 2026-07-31 array, preserving why it is untrustworthy.
+        history["sweeps"].append({
+            "label": "m1-initial", "date": "2026-07-31", "contaminated": True,
+            "method": "driver mem_get_info peak only; warm instance, ascending order; "
+                      "PyTorch allocator cache NOT cleared between runs",
+            "caveat": "Cumulative high-water marks, not per-run costs. 8f and 16f both "
+                      "report 12.79 GiB and 24f/32f both 14.03 GiB because the readings "
+                      "quantise to allocator growth steps. Safe upper bounds only.",
+            "runs": existing,
+        })
+
+history["sweeps"] = [s for s in history["sweeps"] if s.get("label") != label]
+history["sweeps"].append({
+    "label": label,
+    "date": datetime.date.today().isoformat(),
+    "contaminated": False,
+    "method": "empty_cache() + reset_peak_memory_stats() before each run; driver peak and "
+              "torch.cuda.max_memory_allocated() both recorded, with the pre-run baseline",
+    "cold_start_seconds": int(cold),
+    "runs": runs,
+})
+json.dump(history, open(out_path, "w"), indent=2)
+print(f"\nwrote {out_path} ({len(history['sweeps'])} sweeps on record)")
+PY
 
 echo
-echo "== releasing model =="
-api -X POST "${VERGE_URL}/shutdown" || true
-echo
-echo "wrote ${OUT}"
-echo "Now run scripts/teardown.sh — the instance is still warm and still billing."
+echo "Instance is STILL WARM and STILL BILLING."
+echo "Save artifacts with scripts/save-run.sh BEFORE scripts/teardown.sh — they live on"
+echo "the container's local disk and die with it."
