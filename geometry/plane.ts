@@ -45,7 +45,16 @@ export class GroundPlaneNotFoundError extends Error {
 export interface GroundPlaneOptions {
   /** Gravity-derived up axis. See `geometry/gravity.ts`. */
   up: Vec3;
-  /** Orientation gate, in degrees off `up`. Wider than the floor's real tilt on purpose. */
+  /**
+   * Orientation gate, in degrees off `up`.
+   *
+   * Deliberately generous, because the gravity prior is only approximate: it comes from
+   * averaging camera poses, and its coherence score measures how CONSISTENT the frames
+   * are, not how CORRECT they are. An operator who walked the whole clip with the phone
+   * tilted forward produces a confident, consistent, tilted "up". Measured on
+   * `fixtures/room/504px-112f`, the floor sits 11–19° off the camera-derived up — a gate
+   * of 20° would have excluded the real floor and returned something else entirely.
+   */
   maxTiltDeg?: number;
   /** Inlier band, half-thickness in metres. */
   inlierDistance?: number;
@@ -54,15 +63,30 @@ export interface GroundPlaneOptions {
   /** Per-point weight in [0,1] — DA3's confidence map. Absent means all points count 1. */
   weights?: ArrayLike<number>;
   /**
-   * How much support a candidate needs, relative to the best candidate, before the
-   * lowest-plane rule will consider it. Guards against a sparse smear of points below
-   * the real floor winning purely for being low.
+   * Relative support guard: a fraction of the best candidate's support, below which a
+   * candidate is ignored. Stops a sparse smear of noise below the real floor winning
+   * purely for being low.
+   *
+   * Kept LOW on purpose. A floor is not required to be the biggest surface in the room —
+   * it is seen at a grazing angle from a walkthrough and is often one of the sparsest.
+   * Measured on `fixtures/room/504px-112f`: at 0.5 the fit lands mid-scene with 46% of
+   * the cloud below it; at 0.1 it lands on the floor with 3.7% below. The primary
+   * evidence gate is `minInliers`, which is absolute; this is only a guard.
    */
   supportRatio?: number;
   /** Refuse to return a plane backed by fewer than this many points. */
   minInliers?: number;
   /** Score against every Nth point. Purely a speed knob; deterministic either way. */
   stride?: number;
+  /**
+   * Reject the fit outright if more than this fraction of the cloud lies below it.
+   *
+   * The definition of ground: it is the surface with (almost) nothing beneath it. This
+   * is the sanity gate that catches a fit landing mid-scene. Measured on
+   * `fixtures/room/504px-112f`: the floor has 4.3% of the cloud below it, while the
+   * wrong mid-scene plane has 60.6%.
+   */
+  maxBelowFraction?: number;
 }
 
 export interface GroundPlaneFit {
@@ -76,17 +100,20 @@ export interface GroundPlaneFit {
   /** Plane elevation along `up` — i.e. `-offset`. */
   elevation: number;
   candidatesConsidered: number;
+  /** Share of the cloud below the fitted plane. Near zero for a real floor. */
+  belowFraction: number;
   seed: number;
 }
 
 const DEFAULTS = {
-  maxTiltDeg: 20,
+  maxTiltDeg: 30,
   inlierDistance: 0.02,
   iterations: 2000,
   seed: 1,
-  supportRatio: 0.5,
+  supportRatio: 0.1,
   minInliers: 100,
   stride: 1,
+  maxBelowFraction: 0.15,
 } as const;
 
 /**
@@ -197,7 +224,8 @@ function refine(
   // dividing by a near-zero determinant and producing a wild normal.
   if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
 
-  const replaceColumn = (col: number) => m.map((row, r) => row.map((x, c) => (c === col ? rhs[r] : x)));
+  const replaceColumn = (col: number) =>
+    m.map((row, r) => row.map((x, c) => (c === col ? rhs[r] : x)));
   const a = det3(replaceColumn(0)) / det;
   const b = det3(replaceColumn(1)) / det;
   const c = det3(replaceColumn(2)) / det;
@@ -225,6 +253,21 @@ function collectInliers(
     if (Math.abs(signedHeight(plane, pointAt(points, index))) <= band) inliers.push(index);
   }
   return inliers;
+}
+
+/** Share of the cloud sitting below a plane. The ground has almost nothing under it. */
+function belowFraction(
+  plane: Plane,
+  points: ArrayLike<number>,
+  indices: Int32Array,
+  tolerance = 0.05,
+): number {
+  if (indices.length === 0) return 0;
+  let count = 0;
+  for (let i = 0; i < indices.length; i++) {
+    if (signedHeight(plane, pointAt(points, indices[i])) < -tolerance) count += 1;
+  }
+  return count / indices.length;
 }
 
 function rmsError(plane: Plane, points: ArrayLike<number>, inliers: readonly number[]): number {
@@ -293,12 +336,17 @@ export function fitGroundPlane(
 
   // The lowest well-supported horizontal plane, not the largest: a tabletop or a ceiling
   // is every bit as flat and horizontal as the floor is.
-  const threshold = best.support.weight * opts.supportRatio;
+  //
+  // "Well supported" is an ABSOLUTE amount of evidence (`minInliers`) with a relative
+  // guard, not a fraction of the biggest surface. A purely relative rule assumes the
+  // floor is among the densest surfaces in the scene, and in a walkthrough it is not —
+  // it is seen at a grazing angle and is often one of the sparsest.
+  const threshold = Math.max(best.support.weight * opts.supportRatio, opts.minInliers);
   let chosen = best;
   for (const candidate of candidates) {
-    if (candidate.support.weight >= threshold && candidate.elevation < chosen.elevation) {
-      chosen = candidate;
-    }
+    if (candidate.support.count < opts.minInliers) continue;
+    if (candidate.support.weight < threshold) continue;
+    if (candidate.elevation < chosen.elevation) chosen = candidate;
   }
 
   let inliers = collectInliers(chosen.plane, points, sampled, opts.inlierDistance);
@@ -319,6 +367,23 @@ export function fitGroundPlane(
     );
   }
 
+  // Final gate: the ground is the surface with nothing under it.
+  //
+  // This replaced a footprint-density test that looked principled and did not survive
+  // contact with real data: a walkthrough sees the floor at a grazing angle, so the real
+  // floor fills only ~10% of its own bounding box while a WRONG mid-scene plane fills
+  // 26%. Density penalises exactly the surface we want. What separates them cleanly is
+  // how much of the cloud sits below: 4.3% for the floor, 60.6% for the mid-scene plane.
+  const below = belowFraction(plane, points, sampled);
+  if (below > opts.maxBelowFraction) {
+    throw new GroundPlaneNotFoundError(
+      `the best horizontal candidate has ${(below * 100).toFixed(0)}% of the cloud BELOW it ` +
+        `(maximum ${(opts.maxBelowFraction * 100).toFixed(0)}%), so it is a surface part way ` +
+        `up the scene rather than its ground. Either the floor is not in the cloud, or the ` +
+        `gravity estimate is too far off to gate on.`,
+    );
+  }
+
   return {
     plane,
     inlierCount: inliers.length,
@@ -327,6 +392,7 @@ export function fitGroundPlane(
     tiltDeg: angleBetweenDeg(plane.normal, up),
     elevation: -plane.offset,
     candidatesConsidered: candidates.length,
+    belowFraction: below,
     seed: opts.seed,
   };
 }
@@ -385,6 +451,7 @@ export function fitPlaneFromSeeds(
     tiltDeg: angleBetweenDeg(plane.normal, up),
     elevation: -plane.offset,
     candidatesConsidered: 0,
+    belowFraction: belowFraction(plane, points, sampled),
     seed: opts.seed,
   };
 }

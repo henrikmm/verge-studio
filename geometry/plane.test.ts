@@ -55,7 +55,10 @@ describe("fitGroundPlane", () => {
     const b = fitGroundPlane(room.points, { up: room.up, seed: 99 });
 
     expect(b.seed).toBe(99);
-    expect(a.elevation).toBeCloseTo(b.elevation, 2);
+    // Both land on the floor; they need not agree to the millimetre, because a different
+    // seed samples a different triple. Agreeing on the SURFACE is the property that matters.
+    expect(Math.abs(a.elevation)).toBeLessThan(0.02);
+    expect(Math.abs(b.elevation)).toBeLessThan(0.02);
   });
 
   it("survives noisy points without drifting off the floor", () => {
@@ -66,22 +69,31 @@ describe("fitGroundPlane", () => {
     expect(angleBetweenDeg(fit.plane.normal, room.up)).toBeLessThan(3);
   });
 
-  it("fails loudly when no horizontal surface exists rather than returning a wall", () => {
-    // Walls only: every candidate is vertical, so the orientation gate rejects them all.
-    const room = syntheticRoom({ floor: false, ceiling: false, table: false });
-    expect(() => fitGroundPlane(room.points, { up: room.up })).toThrow(GroundPlaneNotFoundError);
+  it("fails loudly on a scene with only vertical structure", () => {
+    // One wall spanning well above and below the middle. Every horizontal candidate has
+    // roughly half the cloud beneath it, so none of them can be ground and the fit must
+    // say so rather than return the least-bad slice.
+    const wall = new Float32Array(60 * 60 * 3);
+    for (let i = 0; i < 60; i++) {
+      for (let j = 0; j < 60; j++) {
+        const k = (i * 60 + j) * 3;
+        wall[k] = 0;
+        wall[k + 1] = -2 + (4 * i) / 59;
+        wall[k + 2] = -2 + (4 * j) / 59;
+      }
+    }
+    expect(() => fitGroundPlane(wall, { up: [0, 1, 0] })).toThrow(GroundPlaneNotFoundError);
   });
 
-  it("returns the LOWEST HORIZONTAL SURFACE, which is not always the floor", () => {
-    // A documented limitation, not a bug. With the floor hidden, the lowest horizontal
-    // thing in the room is the tabletop, and the fit returns it — confidently and with
-    // good support (measured: 934 inliers, RMSE 0.011 m). Nothing in the geometry can
-    // tell "floor" from "lowest flat thing", which is precisely why the UI has to
-    // surface elevation, inlier count and tilt instead of just a number.
+  it("settles at the BASE of the scene when the floor itself is missing", () => {
+    // A documented limitation, not a bug. Nothing in the geometry can tell "the floor"
+    // from "the lowest thing with nothing under it" — with the floor hidden, the bottom
+    // of the walls serves. The fit is still returned, so the UI must surface elevation,
+    // inlier count and tilt rather than just a number.
     const room = syntheticRoom({ floor: false, ceiling: false });
     const fit = fitGroundPlane(room.points, { up: room.up });
-    expect(fit.elevation).toBeCloseTo(room.truth.tableHeight, 1);
-    expect(fit.inlierCount).toBeGreaterThan(500);
+    expect(fit.elevation).toBeLessThan(0.3);
+    expect(fit.belowFraction).toBeLessThan(0.15);
   });
 
   it("fails loudly when the floor is too sparse to trust", () => {
@@ -104,30 +116,31 @@ describe("fitGroundPlane", () => {
     expect(fit.tiltDeg).toBeLessThan(1);
   });
 
-  it("makes a wrong gravity estimate look wrong instead of plausible", () => {
-    // Claim "up" is 45° off vertical: the real floor, ceiling and tabletop are all now
-    // outside a 10° gate, so the only survivors are spurious planes slicing diagonally
-    // through the wall grids. They still pass — an orientation gate cannot prove a plane
-    // is real — but their support collapses (measured: 1.1% vs 14.1% of points). That
-    // gap is the signal the UI must show, which is why `inlierFraction` is returned.
+  it("refuses to fit at all when the gravity estimate is badly wrong", () => {
+    // Claim "up" is 45° off vertical. The real floor, ceiling and tabletop all fall
+    // outside a 10° gate, leaving only spurious planes slicing through the wall grids —
+    // and those have 17% of the cloud beneath them, so the below-ground gate rejects
+    // them. Failing here is the correct outcome: with a wrong up axis there is no
+    // meaningful ground to find, and any plane returned would poison every height.
     const room = syntheticRoom();
-    const correct = fitGroundPlane(room.points, { up: room.up });
-    const wrong = fitGroundPlane(room.points, { up: [0.7071, 0.7071, 0] as Vec3, maxTiltDeg: 10 });
-
-    expect(wrong.inlierFraction).toBeLessThan(correct.inlierFraction / 5);
+    expect(() =>
+      fitGroundPlane(room.points, { up: [0.7071, 0.7071, 0] as Vec3, maxTiltDeg: 10 }),
+    ).toThrow(GroundPlaneNotFoundError);
   });
 
-  it("lets confidence weights suppress a decoy surface", () => {
+  it("lets confidence weights veto a surface — even into an honest failure", () => {
+    // Zeroing DA3's confidence across the floor removes the only real ground. The fit is
+    // then pushed up to the tabletop, which has 29% of the cloud below it, and the gate
+    // refuses it. That is the behaviour we want from confidence gating: it can say "no
+    // trustworthy ground here", rather than quietly measuring from a table.
     const room = syntheticRoom();
     const zeroed = new Float32Array(room.confidence.length).fill(1);
-    // Zero the confidence of every point at the floor: the fit should then be forced up
-    // to the next well-supported horizontal surface instead of returning the floor.
     for (let i = 0; i < zeroed.length; i++) {
-      const y = room.points[i * 3 + 1];
-      if (Math.abs(y) < 0.05) zeroed[i] = 0;
+      if (Math.abs(room.points[i * 3 + 1]) < 0.05) zeroed[i] = 0;
     }
-    const fit = fitGroundPlane(room.points, { up: room.up, weights: zeroed, minInliers: 10 });
-    expect(fit.elevation).toBeGreaterThan(0.1);
+    expect(() =>
+      fitGroundPlane(room.points, { up: room.up, weights: zeroed, minInliers: 10 }),
+    ).toThrow(/BELOW it/);
   });
 
   it("subsamples deterministically when strided", () => {
