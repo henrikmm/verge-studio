@@ -28,7 +28,10 @@ VERGE_URL="${VERGE_URL%/}"
 
 RUN_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_id"])' "${MANIFEST}")"
 LABEL="${2:-${RUN_ID}}"
-DEST="fixtures/room/${LABEL}"
+# One fixture directory per source clip: scale does not transfer between clips, so runs
+# from different videos must never be compared as though they shared a calibration.
+FIXTURE_ROOT="${FIXTURE_ROOT:-fixtures/room}"
+DEST="${FIXTURE_ROOT}/${LABEL}"
 
 fetch() {
   if [[ -n "${VERGE_TOKEN}" ]]; then

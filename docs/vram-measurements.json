@@ -249,6 +249,87 @@
           "gpu_seconds": 16.15
         }
       ]
+    },
+    {
+      "label": "door-res356",
+      "date": "2026-08-01",
+      "contaminated": false,
+      "method": "empty_cache() + reset_peak_memory_stats() before each run; driver peak and torch.cuda.max_memory_allocated() both recorded, with the pre-run baseline",
+      "cold_start_seconds": 58,
+      "runs": [
+        {
+          "frames": 256,
+          "process_res": 356,
+          "effective_fps": 7.1944,
+          "wall_seconds": 53,
+          "http_code": 200,
+          "ok": true,
+          "run_id": "20260801-193354-6eced2",
+          "peak_bytes": 22905094144,
+          "peak_gib": 21.33,
+          "torch_peak_bytes": 18802012160,
+          "torch_peak_gib": 17.51,
+          "baseline_bytes": 7050625024,
+          "baseline_gib": 6.57,
+          "activation_gib": 14.77,
+          "total_gib": 22.03,
+          "gpu_seconds": 40.83
+        }
+      ]
+    },
+    {
+      "label": "door-res504",
+      "date": "2026-08-01",
+      "contaminated": false,
+      "method": "empty_cache() + reset_peak_memory_stats() before each run; driver peak and torch.cuda.max_memory_allocated() both recorded, with the pre-run baseline",
+      "cold_start_seconds": 0,
+      "runs": [
+        {
+          "frames": 112,
+          "process_res": 504,
+          "effective_fps": 3.1475,
+          "wall_seconds": 41,
+          "http_code": 200,
+          "ok": true,
+          "run_id": "20260801-193446-e53e7d",
+          "peak_bytes": 22760390656,
+          "peak_gib": 21.2,
+          "torch_peak_bytes": 18495531520,
+          "torch_peak_gib": 17.23,
+          "baseline_bytes": 7671382016,
+          "baseline_gib": 7.14,
+          "activation_gib": 14.05,
+          "total_gib": 22.03,
+          "gpu_seconds": 31.27
+        }
+      ]
+    },
+    {
+      "label": "door-res252",
+      "date": "2026-08-01",
+      "contaminated": false,
+      "method": "empty_cache() + reset_peak_memory_stats() before each run; driver peak and torch.cuda.max_memory_allocated() both recorded, with the pre-run baseline",
+      "cold_start_seconds": 0,
+      "runs": [
+        {
+          "frames": 256,
+          "process_res": 252,
+          "effective_fps": 7.1944,
+          "wall_seconds": 24,
+          "http_code": 200,
+          "ok": true,
+          "run_id": "20260801-193527-a47cea",
+          "peak_bytes": 17572036608,
+          "peak_gib": 16.37,
+          "torch_peak_bytes": 13620553216,
+          "torch_peak_gib": 12.69,
+          "baseline_bytes": 7671382016,
+          "baseline_gib": 7.14,
+          "activation_gib": 9.22,
+          "total_gib": 22.03,
+          "gpu_seconds": 16.47
+        }
+      ]
     }
   ]
 }

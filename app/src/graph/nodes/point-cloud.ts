@@ -21,6 +21,15 @@ export interface PointCloudValue {
   /** Diagonal of the bounding box — the viewport frames the camera off this. */
   extent: number;
   url: string;
+  /**
+   * Flat xyz positions of every point, in world space.
+   *
+   * Kept alongside the Three.js group because `geometry/` takes plain arrays and knows
+   * nothing about Three.js — that independence is what lets the ground-plane fit be
+   * tested headlessly against synthetic scenes. Sharing the same buffers the geometry
+   * already holds, so this costs no extra memory.
+   */
+  positions: Float32Array;
 }
 
 /** Fallback for colorless clouds: ramp along world height (z-up in DA3's world frame). */
@@ -108,6 +117,7 @@ export const pointCloudSpec: NodeSpec = {
     const bounds = new THREE.Box3().setFromObject(object);
     const extent = bounds.getSize(new THREE.Vector3()).length();
     let pointCount = 0;
+    const positionChunks: Float32Array[] = [];
 
     object.traverse((child) => {
       if (!(child instanceof THREE.Points)) return;
@@ -117,7 +127,9 @@ export const pointCloudSpec: NodeSpec = {
         child.geometry = decimate(original, stride);
         original.dispose();
       }
-      pointCount += child.geometry.getAttribute("position").count;
+      const position = child.geometry.getAttribute("position");
+      positionChunks.push(new Float32Array(position.array.buffer, position.array.byteOffset, position.count * 3));
+      pointCount += position.count;
       child.material = new THREE.PointsMaterial({
         size: (extent / 800) * Number(params.pointSize ?? 1),
         vertexColors: true,
@@ -125,12 +137,28 @@ export const pointCloudSpec: NodeSpec = {
       });
     });
 
+    // DA3 exports one points mesh today, so the common case is a straight reference with
+    // no copy. Concatenating only when there are several keeps it correct either way.
+    const positions =
+      positionChunks.length === 1
+        ? positionChunks[0]
+        : (() => {
+            const merged = new Float32Array(pointCount * 3);
+            let offset = 0;
+            for (const chunk of positionChunks) {
+              merged.set(chunk, offset);
+              offset += chunk.length;
+            }
+            return merged;
+          })();
+
     const value: PointCloudValue = {
       object,
       pointCount,
       bbox: { min: bounds.min.toArray(), max: bounds.max.toArray() },
       extent,
       url: glb.url,
+      positions,
     };
 
     return {

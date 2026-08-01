@@ -19,8 +19,8 @@ after a literature/repo survey — see "M3 — Height measurement" below.
 | M1 — GPU service live | **done** (with carve-outs below) |
 | M2a — Node graph, local only | **done** (one carve-out: mock badge) |
 | M2b — One warm cloud session | **done** (fixture home, service deleted) |
-| M3.0 — Door-clip fixture (one warm session) | in progress |
-| M3a — Geometry core (offline) | not started |
+| M3.0 — Door-clip fixture (one warm session) | **done** (3 fixtures local, service deleted) |
+| M3a — Geometry core (offline) | **done** (78 tests, incl. real fixture) |
 | M3b — Mask → measurement → grading | not started |
 | M3c — Automatic segmentation | not started |
 | M3d — Field/raster regime (vegetation) | deferred |
@@ -438,39 +438,93 @@ whether fine-grained vegetation work is viable). Table is in `MEASUREMENTS.md`.
 
 ---
 
-### M3.0 — Door-clip fixture · ONE warm cloud session
+### M3.0 — Door-clip fixture · ONE warm cloud session ✅
 
-Prerequisites are local and must ALL be green before deploying — a warm instance is the meter.
+**One session, 2026-08-01.** Build 20 min (the M2b image was stale — see below), instance warm
+~10 min for all three runs, **deleted at the end — 0 Cloud Run services remain.** Image kept.
 
-- [ ] Fix rotation handling in `scripts/extract-frames.mjs` (see M3 bugs below) — **blocking**
-- [ ] Extract clip B once, ladder-strided to the 256 and 112 rungs, 1024 px long edge
-- [ ] `verify.sh` green
-- [ ] Deploy — this also finally tests the **unverified build-skip branch** (`server/` unchanged
-      since the M2b image, so it must print "skipping build" and start in ~1 min)
-- [ ] Three runs back to back on the one instance:
-      **356 px / 256 f** (7.2 fps — the primary; allocator peak 17.51 GiB ≈ the sanctioned
-      112 f/504 px load), **504 px / 112 f** (3.15 fps), **252 px / 256 f** (comfortable)
-- [ ] `save-run.sh` all three, **plus the source frames**, sha256-verified
-- [ ] `teardown.sh` — service deleted, image kept
+- [x] Fixed rotation handling in `scripts/extract-frames.mjs` before deploying (see M3 bugs)
+- [x] Extracted clip B in ONE decode, ladder-strided to 256 and 112, 1024 px long edge — 2.7 s
+- [x] `verify.sh` green (176 tests) before spending anything
+- [x] Deployed. ⚠️ It **rebuilt**: the M2b image predates commit `2020ec9`, so the source hash
+      no longer matched. The skip branch remains unverified.
+- [x] Three runs back to back on the one warm instance
+- [x] `save-run.sh` all three, sha256-verified. Frames kept at `fixtures/door/frames/`
+- [x] `teardown.sh` — service deleted, image kept
 
-### M3a — Geometry core (offline, no UI)
+### The door fixture — LOCAL ONLY, not in git
 
-Pure functions in `geometry/`, plain arrays in and numbers out, no Three.js — so they test
-headlessly against synthetic scenes with known answers.
+`fixtures/door/`, 342 MB of payloads plus 11 MB of source frames, gitignored except
+`manifest.json` and `SHA256SUMS`. All three parse with `depth`, `confidence`, `extrinsics`,
+`intrinsics`.
 
-- [ ] `gravity` — up-axis from extrinsics + coherence score the UI can refuse to trust
-- [ ] `plane` — deterministic gravity-gated RANSAC, confidence-weighted, lowest-elevation
-      tie-break, least-squares refinement on inliers; `fitFromSeeds()` fallback for a
-      hand-picked floor
-- [ ] `backproject` — mask + depth + intrinsics + extrinsics → world points, with erosion,
-      confidence threshold and depth-discontinuity rejection
-- [ ] `measure` — P95–P99 height above plane, NMAD uncertainty, density gate; point-to-point
-      distance
-- [ ] Tests: synthetic floor + box at known height, tilted world frame, noise, outlier spray,
-      "no floor visible" must fail loudly rather than return a wrong plane, determinism
+| Directory | Frames | process_res | Depth output | VRAM (driver / allocator) | GPU |
+|---|---|---|---|---|---|
+| `356px-256f` | 256 @ 7.19 fps | 356 | — | 21.33 / 17.51 GiB | 40.8 s |
+| `504px-112f` | 112 @ 3.15 fps | 504 | — | 21.20 / 17.23 GiB | 31.3 s |
+| `252px-256f` | 256 @ 7.19 fps | 252 | — | 16.37 / 12.69 GiB | 16.5 s |
+
+**VRAM depends on frame count and resolution, not clip length.** The 356/256 and 504/112 rungs
+reproduced M2b's allocator peaks (17.51 and 17.23 GiB) to the megabyte on a 34% longer clip.
+That was an assumption; it is now measured.
+
+### First geometry results on clip B (offline, no cloud)
+
+Run with `estimateGravity` → `fitGroundPlane`, `inlierDistance` 0.03, stride 4:
+
+| Fixture | Gravity coherence | Camera span (m) | Floor tilt vs gravity | Below floor | Plane RMSE | p99.9 above floor |
+|---|---|---|---|---|---|---|
+| `356px-256f` | 0.948 | 2.22 × 0.44 × 1.77 | 22.4° | 7.2% | 0.017 m | **2.36 m** |
+| `504px-112f` | 0.949 | 2.36 × 0.46 × 1.89 | 18.4° | 4.6% | 0.017 m | **2.06 m** |
+| `252px-256f` | 0.953 | 2.15 × 0.43 × 1.73 | 27.6° | 10.0% | 0.017 m | **2.05 m** |
+
+Three things worth knowing, none of them yet a measurement of an object:
+
+1. **The scale looks plausible.** The reconstruction spans 2.0–2.4 m above the fitted floor,
+   which is a real room. Clip A spanned only 1.9 m in total and raised a scale worry; clip B
+   does not reproduce it. Nothing is graded until masks exist, but the gross sanity check passes.
+2. **The camera-derived up is 18–28° off the fitted floor normal.** Coherence ~0.95 says the
+   frames AGREE, not that they are right — the phone was held tilted the whole way, exactly the
+   documented failure of this prior. The floor's own normal is the better up axis. **The 252 px
+   run at 27.6° nearly hit the 30° gate**, so a follow-up should re-derive up from the fitted
+   plane and re-fit rather than widening the gate further.
+3. **Plane RMSE is 17 mm on all three.** That is the floor's own roughness, and it propagates
+   into every height's error bar — a ±17 mm floor on a 2.10 m door is 0.8%.
+
+### M3a — Geometry core (offline, no UI) ✅
+
+Pure functions in `geometry/`, plain arrays in and numbers out, no Three.js. **78 tests**, run
+by the app's vitest (its glob includes `../geometry`) and typechecked by the app's tsc.
+
+- [x] `gravity.ts` — up axis + coherence, camera centres, trajectory span (parallax check)
+- [x] `plane.ts` — deterministic gravity-gated RANSAC, confidence-weighted, lowest-elevation
+      selection, height-field least-squares refinement, `fitPlaneFromSeeds()` fallback
+- [x] `backproject.ts` — mask → world points, with erosion, confidence threshold and
+      depth-discontinuity rejection
+- [x] `measure.ts` — percentile height, NMAD uncertainty, density gate, point-to-point distance
+- [x] `calibrate.ts` — the error model (`slope`, `intercept`, residual RMS, scale factor)
+- [x] Synthetic tests: adversarial room (walls denser than the floor, horizontal ceiling),
+      rotated world frame, noise, flying pixels, determinism, honest failures
+- [x] **`fixture.test.ts` — the same code against real DA3 output**, skipped when the
+      gitignored payloads are absent
+
+**The selection rule changed twice under measurement, and both dead ends are worth knowing:**
+
+- Ranking horizontal candidates by *support* puts the plane mid-scene (46% of the cloud below
+  it) because a walkthrough's floor is one of the SPARSEST surfaces, not the densest.
+- Ranking by *footprint density* is worse and backwards: the real floor fills only 9.6% of its
+  own bounding box, while the wrong mid-scene plane fills 26%. It penalises exactly the surface
+  we want. This idea looked principled and cost a rewrite; do not re-derive it.
+- What works is the definition of ground itself: **the surface with (almost) nothing beneath
+  it.** Floor 4.3% below vs mid-scene 60.6% — clean separation, one cheap pass.
 
 ### M3b — Mask → measurement → grading
 
+- [ ] **Re-derive `up` from the fitted floor and re-fit.** Measured on clip B: the
+      camera-derived up is 18–28° off the floor's own normal, and the 252 px run came within
+      2.4° of the 30° orientation gate. The prior only needs to get the fit into the right
+      neighbourhood; the floor then defines up far better than the cameras do. Widening the
+      gate instead would let genuinely tilted surfaces in — do the two-pass fit.
 - [ ] Brush on the frame pane (canvas, brush size, erase, zoom) — no ML, ~100 lines
 - [ ] **Live 3D highlight of the selected points while painting**, so mask spill onto the wall
       behind the object is visible immediately instead of silently inflating the height
