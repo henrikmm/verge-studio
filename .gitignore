@@ -30,3 +30,8 @@ fixtures/room/**
 # local env
 .env
 .env.*
+
+# Live run manifests from a warm cloud session. Point at a transient service and
+# become meaningless once it is torn down; the fixture under fixtures/room/ is the
+# durable record. Never commit.
+.runs/

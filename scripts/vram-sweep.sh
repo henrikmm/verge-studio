@@ -45,6 +45,13 @@ COUNTS=("$@")
 WORK="$(mktemp -d)"
 trap 'rm -rf "${WORK}"' EXIT
 
+# Manifests MUST outlive this script. save-run.sh needs them to fetch artifacts, and the
+# artifacts live on the container's local disk -- once the service is deleted they are
+# gone for good. Writing these into a mktemp dir that the trap wipes would mean finishing
+# a warm session with nothing to save from it.
+MANIFEST_DIR="${MANIFEST_DIR:-.runs}"
+mkdir -p "${MANIFEST_DIR}"
+
 # One decode for the whole ladder.
 if [[ -z "${LADDER_ROOT:-}" ]]; then
   echo "== extracting the ladder locally (ONE decode, hardlinked subsets) =="
@@ -97,12 +104,14 @@ for COUNT in "${COUNTS[@]}"; do
 
   # A failure here is a datapoint, not an error: an OOM is what the ladder is hunting.
   # No -f, so the response body survives a 500 and the real CUDA message is recorded.
+  RESP="${MANIFEST_DIR}/manifest-${LABEL}-${COUNT}f.json"
   START=$(date +%s)
-  CODE=$(api -o "${WORK}/resp-${COUNT}.json" -w '%{http_code}' \
+  CODE=$(api -o "${RESP}" -w '%{http_code}' \
     -X POST "${VERGE_URL}/infer" "${ARGS[@]}" || echo "000")
   WALL=$(( $(date +%s) - START ))
+  [[ "${CODE}" == "200" ]] && echo "  manifest: ${RESP}"
 
-  ENTRY=$(python3 - "${WORK}/resp-${COUNT}.json" "${CODE}" "${COUNT}" "${PROCESS_RES}" "${WALL}" "${EFF_FPS}" <<'PY'
+  ENTRY=$(python3 - "${RESP}" "${CODE}" "${COUNT}" "${PROCESS_RES}" "${WALL}" "${EFF_FPS}" <<'PY'
 import json, sys
 path, code, count, res, wall, eff = sys.argv[1:7]
 out = {"frames": int(count), "process_res": int(res), "effective_fps": float(eff),
