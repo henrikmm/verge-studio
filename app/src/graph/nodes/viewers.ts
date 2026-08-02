@@ -15,7 +15,12 @@ export const viewer3dSpec: NodeSpec = {
   category: "sink",
   version: "0.1.0",
   execution: "auto",
-  inputs: [{ id: "points", label: "Points", type: "point_cloud", required: true }],
+  inputs: [
+    { id: "points", label: "Points", type: "point_cloud", required: true },
+    { id: "plane", label: "Floor Plane", type: "plane" },
+    { id: "selection", label: "Selection", type: "selection" },
+    { id: "measurement", label: "Measurement", type: "measurement" },
+  ],
   outputs: [],
   defaults: {},
   execute: async () => ({}),

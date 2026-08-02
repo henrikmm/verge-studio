@@ -49,6 +49,28 @@ export interface HeightMeasurement {
   maxHeight: number;
 }
 
+export interface VerticalExtentMeasurement {
+  /** Robust top minus robust bottom along the fitted up axis, in metres. */
+  height: number;
+  uncertainty: number;
+  bottom: number;
+  top: number;
+  bottomRoughness: number;
+  topRoughness: number;
+  pointCount: number;
+  lowerPercentile: number;
+  upperPercentile: number;
+  minHeight: number;
+  maxHeight: number;
+}
+
+export interface VerticalExtentOptions {
+  lowerPercentile?: number;
+  upperPercentile?: number;
+  minPoints?: number;
+  endBand?: number;
+}
+
 export class InsufficientSupportError extends Error {
   constructor(message: string) {
     super(message);
@@ -138,6 +160,56 @@ export function measureHeight(
     pointCount: heights.length,
     topBandCount: band.length,
     percentile: p,
+    maxHeight: sorted[sorted.length - 1],
+  };
+}
+
+/**
+ * An object's own vertical size, independent of where it is standing.
+ *
+ * Both ends are percentiles: using max-min would hand the answer to the two noisiest
+ * silhouette pixels. Plane elevation cancels out, but its normal supplies the vertical
+ * axis so this still shares the same floor evidence as height-above-floor.
+ */
+export function measureVerticalExtent(
+  points: ArrayLike<number>,
+  plane: Plane,
+  options: VerticalExtentOptions = {},
+): VerticalExtentMeasurement {
+  const lowerPercentile = options.lowerPercentile ?? 2;
+  const upperPercentile = options.upperPercentile ?? 98;
+  const minPoints = options.minPoints ?? 200;
+  const endBand = options.endBand ?? 0.05;
+  if (!(lowerPercentile < upperPercentile)) {
+    throw new Error("measureVerticalExtent: lower percentile must be below upper percentile");
+  }
+
+  const heights = Array.from(heightsAbovePlane(points, plane)).filter(Number.isFinite);
+  if (heights.length < minPoints) {
+    throw new InsufficientSupportError(
+      `only ${heights.length} usable points (minimum ${minPoints}) — too sparse to measure. ` +
+        `Widen the mask, lower the confidence threshold, or pick a frame with a better view.`,
+    );
+  }
+  const sorted = Float64Array.from(heights).sort();
+  const bottom = percentileOfSorted(sorted, lowerPercentile);
+  const top = percentileOfSorted(sorted, upperPercentile);
+  const bottomBand = Array.from(sorted).filter((value) => value >= bottom - endBand && value <= bottom + endBand);
+  const topBand = Array.from(sorted).filter((value) => value >= top - endBand && value <= top + endBand);
+  const bottomRoughness = bottomBand.length >= 3 ? nmad(bottomBand) : 0;
+  const topRoughness = topBand.length >= 3 ? nmad(topBand) : 0;
+
+  return {
+    height: top - bottom,
+    uncertainty: Math.hypot(bottomRoughness, topRoughness),
+    bottom,
+    top,
+    bottomRoughness,
+    topRoughness,
+    pointCount: heights.length,
+    lowerPercentile,
+    upperPercentile,
+    minHeight: sorted[0],
     maxHeight: sorted[sorted.length - 1],
   };
 }

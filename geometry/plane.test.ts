@@ -9,7 +9,13 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { fitGroundPlane, fitPlaneFromSeeds, GroundPlaneNotFoundError } from "./plane";
+import {
+  fitGroundPlane,
+  fitGroundPlaneTwoPass,
+  anchorGroundPlaneToLowQuantile,
+  fitPlaneFromSeeds,
+  GroundPlaneNotFoundError,
+} from "./plane";
 import { syntheticRoom } from "./synthetic";
 import { angleBetweenDeg, signedHeight, type Vec3 } from "./types";
 
@@ -150,6 +156,23 @@ describe("fitGroundPlane", () => {
     expect(a.plane.offset).toBe(b.plane.offset);
     expect(a.elevation).toBeCloseTo(0, 2);
   });
+
+  it("can draw proposals from the lowest gravity-aligned part of the cloud", () => {
+    const room = syntheticRoom({ noise: 0.004 });
+    const fit = fitGroundPlane(room.points, {
+      up: room.up,
+      candidateLowestFraction: 0.25,
+      // This synthetic prior is exact. Keep the orientation gate correspondingly tight
+      // so a low, tilted slice through the wall grids cannot masquerade as a floor.
+      maxTiltDeg: 5,
+      // The synthetic floor is deliberately sparse but still much stronger than a
+      // horizontal wall slice. Require that distinction in this proposal-prior test.
+      supportRatio: 0.5,
+      iterations: 400,
+    });
+    expect(fit.elevation).toBeCloseTo(0, 2);
+    expect(fit.belowFraction).toBeLessThan(0.15);
+  });
 });
 
 describe("fitPlaneFromSeeds", () => {
@@ -184,6 +207,32 @@ describe("fitPlaneFromSeeds", () => {
     expect(() =>
       fitPlaneFromSeeds(room.points, [[0, 0, 0], [1, 0, 0]], { up: room.up }),
     ).toThrow(GroundPlaneNotFoundError);
+  });
+});
+
+describe("fitGroundPlaneTwoPass", () => {
+  it("uses the first floor normal as the refined up axis", () => {
+    const room = syntheticRoom({ rotate: true, noise: 0.004 });
+    const fit = fitGroundPlaneTwoPass(room.points, { up: room.up, seed: 12, iterations: 400 });
+    expect(fit.initial.seed).toBe(12);
+    expect(fit.refined.seed).toBe(13);
+    expect(angleBetweenDeg(fit.refined.plane.normal, fit.initial.plane.normal)).toBeLessThan(10);
+    expect(fit.refined.elevation).toBeCloseTo(0, 2);
+  });
+});
+
+describe("anchorGroundPlaneToLowQuantile", () => {
+  it("moves a parallel plane down to the robust floor envelope", () => {
+    const room = syntheticRoom();
+    const fit = fitGroundPlane(room.points, { up: room.up });
+    const shifted = {
+      ...fit,
+      plane: { normal: fit.plane.normal, offset: fit.plane.offset - 0.4 },
+      elevation: fit.elevation + 0.4,
+    };
+    const anchored = anchorGroundPlaneToLowQuantile(room.points, shifted, 2);
+    expect(anchored.elevation).toBeCloseTo(0, 2);
+    expect(anchored.belowFraction).toBeLessThan(0.03);
   });
 });
 

@@ -57,6 +57,9 @@ Port/wire colors (typed ports — wire inherits source port color):
 | `frames` | `#d8d8d8` |
 | `depth_field` | `#5aa0e8` |
 | `point_cloud` | `#4ade80` |
+| `plane` | `#f3c969` |
+| `selection` | `#fb7185` |
+| `measurement` | `#e8a95b` |
 | `splat` | `#c084fc` |
 | `camera` | `#e879a0` |
 | `scalar` | `#f59e0b` |

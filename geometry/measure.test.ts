@@ -11,6 +11,7 @@ import {
   InsufficientSupportError,
   measureDistance,
   measureHeight,
+  measureVerticalExtent,
   median,
   nmad,
   percentile,
@@ -133,6 +134,39 @@ describe("measureHeight", () => {
     const plane: Plane = { normal: room.up, offset: 0 };
     const result = measureHeight(room.tablePoints, plane, { minPoints: 100 });
     expect(result.height).toBeCloseTo(room.truth.tableHeight, 3);
+  });
+});
+
+describe("measureVerticalExtent", () => {
+  it("measures an object's own size even when it stands on a table", () => {
+    const bottom = slab(0.75, 300);
+    const top = slab(1.2, 300);
+    const points = new Float32Array(bottom.length + top.length);
+    points.set(bottom);
+    points.set(top, bottom.length);
+    const result = measureVerticalExtent(points, FLOOR);
+    expect(result.height).toBeCloseTo(0.45, 2);
+    expect(result.bottom).toBeCloseTo(0.75, 2);
+    expect(result.top).toBeCloseTo(1.2, 2);
+  });
+
+  it("ignores isolated flying pixels at both ends", () => {
+    const bottom = slab(0.75, 300);
+    const top = slab(1.2, 300);
+    const points = new Float32Array(bottom.length + top.length + 6);
+    points.set(bottom);
+    points.set(top, bottom.length);
+    points.set([0, -2, 0, 0, 5, 0], bottom.length + top.length);
+    const result = measureVerticalExtent(points, FLOOR, { minPoints: 20 });
+    expect(result.minHeight).toBe(-2);
+    expect(result.maxHeight).toBe(5);
+    expect(result.height).toBeCloseTo(0.45, 2);
+  });
+
+  it("rejects inverted percentile controls", () => {
+    expect(() =>
+      measureVerticalExtent(slab(1, 300), FLOOR, { lowerPercentile: 99, upperPercentile: 2 }),
+    ).toThrow(/lower percentile/);
   });
 });
 

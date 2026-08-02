@@ -2,9 +2,9 @@
 
 A Sentinel-style node-graph web app for cloud depth inference and 3D measurement.
 
-Drop in a video → a Cloud Run L4 GPU runs Depth Anything 3 → depth maps, point clouds,
-and Gaussian splats appear live in docked viewports → measure object heights against a
-fitted ground plane.
+Drop in a video → a Cloud Run L4 GPU runs Depth Anything 3 → depth maps and point clouds
+appear live in docked viewports → measure object heights against a fitted ground plane.
+Gaussian-splat rendering remains a later milestone.
 
 **Video is the standard input.** DA3's quality comes from cross-view attention over many
 frames; a single image never engages it and produces badly flawed geometry. Frames are
@@ -20,6 +20,12 @@ cd app && npm install && npm run dev     # http://localhost:5173
 The dev server ships a fixture-backed mock of the inference service plus real local ffmpeg,
 so the whole UI works offline at zero cloud cost. Point `VITE_INFER_BASE` at a deployed
 service to use a real GPU.
+
+M3b's Run Source defaults to saved, reproducible DA3 runs and can also accept the latest manual
+live run. An operator paints endpoint evidence on a registered RGB/depth frame, sees those exact
+points highlighted in 3D, and records raw measurements plus explicitly labelled door-scale
+diagnostics. See [MEASUREMENTS.md](MEASUREMENTS.md) for the current grading tables and
+resolution/frame-count verdict.
 
 ```bash
 ./scripts/verify.sh                      # typecheck + unit tests + fixture smoke

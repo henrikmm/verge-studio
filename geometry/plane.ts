@@ -79,6 +79,13 @@ export interface GroundPlaneOptions {
   /** Score against every Nth point. Purely a speed knob; deterministic either way. */
   stride?: number;
   /**
+   * Draw RANSAC triples from the lowest fraction of points along `up`, while still
+   * scoring every candidate against the full sampled cloud. Floors are sparse in a
+   * walkthrough; this makes the camera-up prior an actual proposal prior instead of
+   * waiting for three floor points to be chosen from a million-point room by luck.
+   */
+  candidateLowestFraction?: number;
+  /**
    * Reject the fit outright if more than this fraction of the cloud lies below it.
    *
    * The definition of ground: it is the surface with (almost) nothing beneath it. This
@@ -105,6 +112,13 @@ export interface GroundPlaneFit {
   seed: number;
 }
 
+export interface TwoPassGroundPlaneFit {
+  /** Camera-pose-up result. Useful evidence when the refit changes the answer. */
+  initial: GroundPlaneFit;
+  /** Final result, refitted with the first floor normal as the new up axis. */
+  refined: GroundPlaneFit;
+}
+
 const DEFAULTS = {
   maxTiltDeg: 30,
   inlierDistance: 0.02,
@@ -113,6 +127,7 @@ const DEFAULTS = {
   supportRatio: 0.1,
   minInliers: 100,
   stride: 1,
+  candidateLowestFraction: 1,
   maxBelowFraction: 0.15,
 } as const;
 
@@ -302,8 +317,17 @@ export function fitGroundPlane(
   const sampled = new Int32Array(Math.ceil(total / stride));
   for (let i = 0, w = 0; i < total; i += stride) sampled[w++] = i;
 
+  const proposalFraction = Math.max(0.01, Math.min(1, opts.candidateLowestFraction));
+  const proposal =
+    proposalFraction < 1
+      ? Int32Array.from(
+          Array.from(sampled)
+            .sort((a, b) => dot(pointAt(points, a), up) - dot(pointAt(points, b), up))
+            .slice(0, Math.max(3, Math.ceil(sampled.length * proposalFraction))),
+        )
+      : sampled;
   const random = makeRandom(opts.seed);
-  const pick = () => sampled[Math.min(sampled.length - 1, Math.floor(random() * sampled.length))];
+  const pick = () => proposal[Math.min(proposal.length - 1, Math.floor(random() * proposal.length))];
 
   let best: { plane: Plane; support: Support; elevation: number } | null = null;
   const candidates: { plane: Plane; support: Support; elevation: number }[] = [];
@@ -394,6 +418,73 @@ export function fitGroundPlane(
     candidatesConsidered: candidates.length,
     belowFraction: below,
     seed: opts.seed,
+  };
+}
+
+/**
+ * Bootstrap gravity from camera orientation, then let the recovered floor tighten it.
+ * The second pass is deliberately constrained: it may polish the floor normal, not
+ * jump to an unrelated horizontal surface.
+ */
+export function fitGroundPlaneTwoPass(
+  points: ArrayLike<number>,
+  options: GroundPlaneOptions,
+): TwoPassGroundPlaneFit {
+  const initial = fitGroundPlane(points, options);
+  const refined = fitGroundPlane(points, {
+    ...options,
+    up: initial.plane.normal,
+    maxTiltDeg: Math.min(options.maxTiltDeg ?? DEFAULTS.maxTiltDeg, 10),
+    seed: (options.seed ?? DEFAULTS.seed) + 1,
+  });
+  return { initial, refined };
+}
+
+/**
+ * Move an already-oriented ground plane onto the cloud's robust lower envelope.
+ *
+ * RANSAC is good at recovering a floor normal but a sparse walkthrough can leave its
+ * chosen parallel plane partway up the room. A low percentile is the robust version of
+ * "lowest point": it ignores a few reconstruction outliers while using wall bottoms and
+ * floor points that never formed a dense enough plane proposal on their own.
+ */
+export function anchorGroundPlaneToLowQuantile(
+  points: ArrayLike<number>,
+  fit: GroundPlaneFit,
+  quantile = 2,
+  stride = 1,
+  inlierDistance = 0.035,
+): GroundPlaneFit {
+  const step = Math.max(1, Math.floor(stride));
+  const heights: number[] = [];
+  for (let i = 0; i + 2 < points.length; i += 3 * step) {
+    const value = dot(fit.plane.normal, [points[i], points[i + 1], points[i + 2]]);
+    if (Number.isFinite(value)) heights.push(value);
+  }
+  if (heights.length < 3) throw new GroundPlaneNotFoundError("not enough points to anchor the floor");
+  heights.sort((a, b) => a - b);
+  const rank = Math.ceil((Math.max(0, Math.min(100, quantile)) / 100) * heights.length);
+  const elevation = heights[Math.min(heights.length - 1, Math.max(0, rank - 1))];
+  const plane: Plane = { normal: fit.plane.normal, offset: -elevation };
+  let inlierCount = 0;
+  let squared = 0;
+  let below = 0;
+  for (let i = 0; i + 2 < points.length; i += 3 * step) {
+    const distance = signedHeight(plane, [points[i], points[i + 1], points[i + 2]]);
+    if (Math.abs(distance) <= inlierDistance) {
+      inlierCount += 1;
+      squared += distance * distance;
+    }
+    if (distance < -0.05) below += 1;
+  }
+  return {
+    ...fit,
+    plane,
+    elevation,
+    inlierCount,
+    inlierFraction: inlierCount / heights.length,
+    rmse: inlierCount > 0 ? Math.sqrt(squared / inlierCount) : NaN,
+    belowFraction: below / heights.length,
   };
 }
 

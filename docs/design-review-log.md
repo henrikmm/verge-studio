@@ -1,5 +1,62 @@
 # Design review log
 
+## 2026-08-02 — M3b evidence workflow + coordinate review (commit pending)
+
+Full in-browser pass at 1280×800 against `docs/DESIGN.md` and both Sentinel references. The
+recorded door fixture was driven through RGB/depth masks, 3D selection, all three resolution
+settings, object grading and export. Browser console: **0 warnings, 0 errors**.
+
+1. Dark surfaces — **PASS** (`body` computed `rgb(13,13,15)`; no white surfaces or default-blue links).
+2. Dockview panes + resize — **PASS** (four required panes plus the Objects tab; CUA sash drag
+   changed the top widths 500/500 → 548/452 px and was restored).
+3. Chrome density — **PASS** (tab strip 26px; labels 11px).
+4. Fixture cloud + orbit + count + gizmo — **PASS** (1,000,000 points; before/after drag visibly
+   changed the view; selected points, translucent floor, ruler and axis gizmo remained visible).
+5. Turbo depth + metric legend — **PASS** (356px run, frame 1/256, 0.91–2.49 m legend; pink mask
+   remained registered when toggling RGB → Depth).
+6. Live pane status — **PASS** (Depth/3D elapsed time and 1,000,000-point count shown; Graph's
+   focused measurement view has 8 nodes / 13 wires, while Full graph has 10 / 15; Objects shows
+   recorded views and the fixture's measured GPU time).
+7. No horizontal scroll / tight gaps — **PASS** (`scrollWidth === clientWidth === 1280`; Dockview
+   panes meet on 0–2px borders).
+8. Type scale — **PASS** (tabs 11px, body 12px, numeric readouts mono; native range inputs are
+   13.33px internally but render no text).
+9. Squint test vs `docs/reference/` — **PASS** (comparable darkness, dense chrome, warm graph
+   canvas, coloured node headers and typed wires; no landing-page whitespace).
+10. Inference controls — **PASS** (Frame Source exposes Sampling FPS / Max frames; DA3 exposes
+    Process res / method / Ref view / Max frames / Splats with slider, dropdown and checkbox mix).
+11. VRAM in inspector + status — **PASS** (both visible in this pass; live mock movement was
+    exercised in the 2026-07-31 acceptance run and its telemetry path is unchanged).
+12. Unmeasured range honesty — **PASS** (regression from the 2026-07-31 measured pass; prediction
+    logic unchanged by M3b and still renders a labelled range).
+13. Capped-frame explanation — **PASS** (regression from the 2026-07-31 measured pass; frame-plan
+    code unchanged, and frame identity is now additionally explicit in M3b).
+14. Mock labelling — **PASS** (`NVIDIA L4 (mock)` in the current inspector snapshot; fixture nodes
+    say `OFFLINE FIXTURE`).
+
+Findings fixed during this pass:
+
+- Object rows had averaged measurements across incompatible resolution settings. They now show
+  only the selected run; the error model is likewise per-run and includes residual RMS.
+- B1 still used floor→top even though the truth is physical door-leaf bottom→top. It now uses the
+  translation-independent extent mode, and all three B1 observations/verdicts were re-recorded.
+- The 2D selection was back-projected in raw NPZ coordinates but compared with DA3's transformed
+  GLB. Applying `hf_alignment` to selected points and camera up made the pink 2D/3D evidence
+  coincide and made the ground fit operate in one coordinate system.
+- B2/B5 are endpoint measurements, not whole-object semantic masks. The UI now asks for the
+  floor patch and upper edge explicitly, matching the user's confirmed vertical stroke.
+- “Recompute” reused cached nodes. It now invalidates ground/selection and their descendants,
+  and a browser check confirmed new elapsed times after the click.
+- DA3 looked disconnected because recorded evidence was a separate graph branch. `Run Source`
+  now switches between recorded evidence and manual live DA3 output; the focused view hides the
+  two live-only nodes while Full graph shows the complete connection.
+- The correction is now labelled “Door-scaled” and consistently applies the multiplicative
+  factor to every length while raw DA3 remains the primary result.
+
+Remaining review item: direct 3D add/remove painting is a useful future correction tool for
+occlusion and sparse per-frame evidence, but it is not needed to repair registration. B4 remains
+ungraded because its stand/table contact is occluded; no endpoint was invented.
+
 ## 2026-08-01 — M2a node graph (commit pending)
 
 In-browser at the default dock layout, mock-backed, driven end to end (drop → Run).

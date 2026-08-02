@@ -9,6 +9,9 @@
   - `src/depth_anything_3/api.py` — `DepthAnything3` class
   - `src/depth_anything_3/utils/geometry.py` — `unproject_depth()` and backprojection primitives; use these, don't rewrite
   - `src/depth_anything_3/utils/export/` — exporters + format enum: `glb`, `npz`, `mini_npz`, `gs_ply`, `gs_video`, `colmap`, `depth_vis`, `feat_vis`
+    - `glb.py` — back-projects all view depths into one reconstruction and records the row-major
+      NPZ→glTF display transform as `scene.extras.hf_alignment`; any selected NPZ points must
+      receive that same transform before comparison with the exported GLB
   - `src/depth_anything_3/app/` — official gradio demo (identical to the HF Space); UI parameter defaults live here
     - `modules/file_handlers.py` → `FileHandler._process_video` — the canonical video→frames logic
     - `modules/ui_components.py` — the Space's slider defaults (sampling FPS, `process_res_method`)
@@ -25,6 +28,10 @@ Key facts already verified (do not re-research): nested-giant outputs metric met
 the 3DGS head (`infer_gs=True` → `gs_ply`/`gs_video`); `mini_npz` = depth/conf/extrinsics/intrinsics
 (no image), `npz` adds image; extrinsics are 3×4 w2c, intrinsics 3×3; glb contains a colored
 conf-filtered point cloud + optional camera frustums (no mesh).
+
+The GLB transform is **not a fitted floor correction**. It changes raw reconstruction/world
+coordinates into first-camera glTF axes and recentres the scene. Ground estimation remains this
+project's separate geometry step.
 
 ## Frontend libraries
 

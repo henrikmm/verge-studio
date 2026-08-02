@@ -27,6 +27,7 @@ import {
 } from "../graph/graph-store";
 import { REGISTRY } from "../graph/nodes";
 import type { ControlSpec } from "../graph/types";
+import type { DepthFieldValue } from "../measurement/depth-field";
 
 function Row({ k, v, title }: { k: string; v: string; title?: string }) {
   return (
@@ -147,9 +148,10 @@ export function Inspector() {
   const depthNode = nodeById(graph, "da3-depth");
   const vram = predictVram(plan.count, Number(depthNode?.params.processRes ?? 504));
 
-  const lastRun = (graph.runtime["da3-depth"]?.outputs?.depth?.value ?? null) as
-    | InferManifest
+  const lastField = (graph.runtime["da3-depth"]?.outputs?.depth?.value ?? null) as
+    | DepthFieldValue
     | null;
+  const lastRun: InferManifest | null = lastField?.manifest ?? null;
 
   const { gpu } = session;
 

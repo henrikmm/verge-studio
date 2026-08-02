@@ -9,13 +9,25 @@
 
 import type { JsonValue } from "./cache-key";
 
-export type PortType = "frames" | "depth_field" | "point_cloud" | "splat" | "camera" | "scalar";
+export type PortType =
+  | "frames"
+  | "depth_field"
+  | "point_cloud"
+  | "plane"
+  | "selection"
+  | "measurement"
+  | "splat"
+  | "camera"
+  | "scalar";
 
 /** Straight from the port/wire color table in docs/DESIGN.md. */
 export const PORT_COLORS: Record<PortType, string> = {
   frames: "#d8d8d8",
   depth_field: "#5aa0e8",
   point_cloud: "#4ade80",
+  plane: "#f3c969",
+  selection: "#fb7185",
+  measurement: "#e8a95b",
   splat: "#c084fc",
   camera: "#e879a0",
   scalar: "#f59e0b",
@@ -104,6 +116,11 @@ export interface NodeSpec {
   inputs: PortSpec[];
   outputs: PortSpec[];
   defaults: Params;
+  /**
+   * Optional input switch for nodes that expose alternate branches. Inactive ports
+   * neither block execution nor participate in the content-addressed cache key.
+   */
+  activeInputs?: (params: Params) => readonly string[];
   /** Inspector rows, in the order they should appear. */
   controls?: ControlSpec[];
   execute: Executor;

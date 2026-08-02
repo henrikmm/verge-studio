@@ -53,7 +53,10 @@ export interface BackprojectOptions {
 }
 
 export interface BackprojectResult {
-  /** Flat xyz world points, ready for `measureHeight`. */
+  /**
+   * Flat xyz points in DA3's raw reconstruction frame. Callers displaying them with
+   * DA3's GLB must also apply the GLB scene's `hf_alignment` transform.
+   */
   points: Float32Array;
   pointCount: number;
   maskedPixels: number;

@@ -95,7 +95,7 @@ describe.skipIf(!available)("real fixture: fixtures/room/504px-112f", () => {
       Array.from(heights).filter((h) => h < -0.05).length / heights.length;
     expect(belowFraction).toBeLessThan(0.15);
     expect(fit.inlierCount).toBeGreaterThan(500);
-  });
+  }, 15_000);
 
   it("is deterministic on real data too", async () => {
     const { extrinsics } = await npz;
@@ -105,7 +105,7 @@ describe.skipIf(!available)("real fixture: fixtures/room/504px-112f", () => {
     const b = fitGroundPlane(points, options);
     expect(a.plane.offset).toBe(b.plane.offset);
     expect(a.inlierCount).toBe(b.inlierCount);
-  });
+  }, 15_000);
 
   it("produces a plausible room height above the fitted floor", async () => {
     const { extrinsics } = await npz;

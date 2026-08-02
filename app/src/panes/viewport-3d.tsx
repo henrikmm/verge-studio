@@ -10,8 +10,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
-import { resolveInput, useGraph } from "../graph/graph-store";
-import { VIEWER_3D_ID, type PointCloudValue } from "../graph/nodes";
+import { resolveCurrentInput, resolveInput, useGraph } from "../graph/graph-store";
+import {
+  VIEWER_3D_ID,
+  type GroundPlaneValue,
+  type MeasurementValue,
+  type PointCloudValue,
+  type SelectionValue,
+} from "../graph/nodes";
 import { OutputRow, PaneControls } from "./pane-chrome";
 
 const GIZMO_PX = 72;
@@ -27,6 +33,7 @@ export function Viewport3D() {
   const controlsRef = useRef<OrbitControls>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
   const mountedRef = useRef<THREE.Object3D>(null);
+  const evidenceRef = useRef<THREE.Group>(null);
 
   const [frameMs, setFrameMs] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -35,6 +42,9 @@ export function Viewport3D() {
   const graph = useGraph();
   const incoming = resolveInput(graph, VIEWER_3D_ID, "points");
   const cloud = incoming?.value as PointCloudValue | undefined;
+  const ground = resolveCurrentInput(graph, VIEWER_3D_ID, "plane")?.value as GroundPlaneValue | undefined;
+  const selection = resolveCurrentInput(graph, VIEWER_3D_ID, "selection")?.value as SelectionValue | undefined;
+  const measurement = resolveCurrentInput(graph, VIEWER_3D_ID, "measurement")?.value as MeasurementValue | undefined;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -47,6 +57,10 @@ export function Viewport3D() {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#0a0a0c");
     sceneRef.current = scene;
+    const evidence = new THREE.Group();
+    evidence.name = "measurement-evidence";
+    scene.add(evidence);
+    evidenceRef.current = evidence;
 
     const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 5000);
     camera.position.set(0, 0, 10);
@@ -106,6 +120,7 @@ export function Viewport3D() {
       observer.disconnect();
       controls.dispose();
       renderer.dispose();
+      evidenceRef.current = null;
       host.removeChild(renderer.domElement);
     };
   }, []);
@@ -138,6 +153,70 @@ export function Viewport3D() {
     camera.far = cloud.extent * 10;
     camera.updateProjectionMatrix();
   }, [cloud]);
+
+  useEffect(() => {
+    const evidence = evidenceRef.current;
+    if (!evidence) return;
+    for (const child of [...evidence.children]) {
+      evidence.remove(child);
+      if (child instanceof THREE.Points || child instanceof THREE.Line || child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        const materials = Array.isArray(child.material) ? child.material : [child.material];
+        for (const material of materials) material.dispose();
+      }
+    }
+
+    if (ground && cloud) {
+      const size = Math.max(1, cloud.extent * 0.65);
+      const geometry = new THREE.PlaneGeometry(size, size);
+      const material = new THREE.MeshBasicMaterial({
+        color: "#f3c969",
+        transparent: true,
+        opacity: 0.12,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      });
+      const floor = new THREE.Mesh(geometry, material);
+      floor.name = "fitted-floor";
+      floor.position.set(
+        -ground.plane.offset * ground.plane.normal[0],
+        -ground.plane.offset * ground.plane.normal[1],
+        -ground.plane.offset * ground.plane.normal[2],
+      );
+      floor.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 0, 1),
+        new THREE.Vector3(...ground.plane.normal),
+      );
+      evidence.add(floor);
+    }
+
+    if (selection && selection.points.length > 0) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(selection.points, 3));
+      const points = new THREE.Points(
+        geometry,
+        new THREE.PointsMaterial({
+          color: "#fb7185",
+          size: Math.max(0.005, (cloud?.extent ?? 5) / 450),
+          sizeAttenuation: true,
+          depthTest: false,
+        }),
+      );
+      points.renderOrder = 4;
+      points.name = "selected-points";
+      evidence.add(points);
+    }
+
+    if (measurement) {
+      const vertices = new Float32Array([...measurement.ruler.bottom, ...measurement.ruler.top]);
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+      const ruler = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: "#f3c969", depthTest: false }));
+      ruler.renderOrder = 5;
+      ruler.name = "measurement-ruler";
+      evidence.add(ruler);
+    }
+  }, [cloud, ground, measurement, selection]);
 
   // DA3's GLB carries camera frustums alongside the points; the chip toggles them.
   // Only the frustum geometry itself may be hidden — toggling every non-Points object
@@ -172,6 +251,12 @@ export function Viewport3D() {
         hint="Left-drag=orbit, wheel=zoom, right-drag=pan"
       />
       <div className="pane-body" ref={hostRef}>
+        {ground && (
+          <div className="viewport-overlay">
+            FLOOR {(ground.refined.rmse * 100).toFixed(1)} cm RMSE · GRAVITY {ground.gravity.coherence.toFixed(2)}
+            {measurement && <><br /><b>{measurement.rawM.toFixed(3)} m</b> · internal spread ±{measurement.internalSpreadM.toFixed(3)} m</>}
+          </div>
+        )}
         {!cloud && (
           <div className="pane-empty">
             Nothing on the wire yet — drop a clip on Frame Source, then run DA3 Depth.

@@ -6,8 +6,9 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-01 · M2b complete (one warm cloud session, torn down); M3 re-planned
-after a literature/repo survey — see "M3 — Height measurement" below.
+Last updated: 2026-08-02 · M3b implemented, coordinate-checked and graded offline; 504px/112f
+is the current raw clip-B operating point. B4 remains honestly ungraded because its lower
+endpoint is occluded.
 
 ---
 
@@ -20,8 +21,8 @@ after a literature/repo survey — see "M3 — Height measurement" below.
 | M2a — Node graph, local only | **done** (one carve-out: mock badge) |
 | M2b — One warm cloud session | **done** (fixture home, service deleted) |
 | M3.0 — Door-clip fixture (one warm session) | **done** (3 fixtures local, service deleted) |
-| M3a — Geometry core (offline) | **done** (78 tests, incl. real fixture) |
-| M3b — Mask → measurement → grading | not started |
+| M3a — Geometry core (offline) | **done** (84 geometry tests, incl. real fixture) |
+| M3b — Mask → measurement → grading | **done** (B4 unavailable in this clip) |
 | M3c — Automatic segmentation | not started |
 | M3d — Field/raster regime (vegetation) | deferred |
 | M4 — Splats + polish | not started |
@@ -148,14 +149,14 @@ These were in the M1 plan but are not implemented. Do not assume they work.
       needs a `-devel` base (bigger image, longer build) or a prebuilt wheel matching torch
       2.5.1/cu121. Deliberately NOT bundled into the M3 rebuild: an unproven base-image swap
       would have risked the M3 session on an M4 feature. Treat splats as unavailable. Blocks M4.
-- [ ] **Cloud Run's 32 MiB response cap makes `/artifact` unusable for the npz.** A 108 MB
+- [ ] **Cloud Run's 32 MiB response cap makes a one-shot `/artifact` fetch unusable for the npz.** A 108 MB
       npz returns **HTTP 500 with zero bytes**, direct and through the proxy alike; the 16 MB
-      GLB is fine. `save-run.sh` works around it with 24 MiB Range chunks, but **the browser
-      still cannot load the npz** — the Depth 2D pane showed "Failed to fetch" on the real
-      cloud run while the 3D viewport (GLB) rendered fine. Real fixes, in preference order:
+      GLB is fine. M3b added the same 24 MiB range-aware retrieval to the browser and it is
+      covered by unit tests, but that path has not been exercised against a live Cloud Run
+      instance since implementation. Durable fixes, in preference order:
       (a) the GCS + signed-URL path that was always the plan, which sidesteps the cap entirely;
       (b) a `mini_npz` export or float16/subsampled depth, which would also cut 108 MB to
-      something sane; (c) range-aware chunked fetching in `depth-2d.tsx`.
+      something sane. Treat live-cloud browser verification as the remaining part of this item.
       **This is the main reason M3 should read the fixture from disk, not over HTTP.**
 - [ ] **`scene.jpg` is produced but never collected** — no `.jpg` in `_collect_artifacts`.
 - [ ] **`predictVram` interpolation table stops at 128** while the measured envelope reaches
@@ -493,7 +494,7 @@ Three things worth knowing, none of them yet a measurement of an object:
 
 ### M3a — Geometry core (offline, no UI) ✅
 
-Pure functions in `geometry/`, plain arrays in and numbers out, no Three.js. **78 tests**, run
+Pure functions in `geometry/`, plain arrays in and numbers out, no Three.js. **84 tests**, run
 by the app's vitest (its glob includes `../geometry`) and typechecked by the app's tsc.
 
 - [x] `gravity.ts` — up axis + coherence, camera centres, trajectory span (parallax check)
@@ -518,25 +519,64 @@ by the app's vitest (its glob includes `../geometry`) and typechecked by the app
 - What works is the definition of ground itself: **the surface with (almost) nothing beneath
   it.** Floor 4.3% below vs mid-scene 60.6% — clean separation, one cheap pass.
 
-### M3b — Mask → measurement → grading
+### M3b — Mask → measurement → grading ✅
 
-- [ ] **Re-derive `up` from the fitted floor and re-fit.** Measured on clip B: the
+- [x] **Re-derive `up` from the fitted floor and re-fit.** Measured on clip B: the
       camera-derived up is 18–28° off the floor's own normal, and the 252 px run came within
       2.4° of the 30° orientation gate. The prior only needs to get the fit into the right
       neighbourhood; the floor then defines up far better than the cameras do. Widening the
       gate instead would let genuinely tilted surfaces in — do the two-pass fit.
-- [ ] Brush on the frame pane (canvas, brush size, erase, zoom) — no ML, ~100 lines
-- [ ] **Live 3D highlight of the selected points while painting**, so mask spill onto the wall
+- [x] Brush on the frame pane: RGB/depth/confidence outputs, frame scrubber, brush/erase/size,
+      clear, mask opacity, zoom and confidence-percentile control. Masks persist as RLE.
+- [x] **Live 3D highlight of the selected points while painting**, so mask spill onto the wall
       behind the object is visible immediately instead of silently inflating the height
-- [ ] `GroundPlane` / `MeasureHeight` / `ScaleCheck` nodes (all CPU, all `auto` — they can never
-      bill). New `plane` port type needs a colour added to `docs/DESIGN.md`.
-- [ ] Objects pane: one row per object — frame thumbnail, name, height ± uncertainty, point
-      count, truth + error. This is the evidence panel, not just a readout: every number can be
-      audited by looking at the crop it came from.
-      **Objects are rows in a pane, never nodes in the graph** — the graph is the pipeline, and
+- [x] **NPZ ↔ GLB registration fixed.** DA3's exported GLB applies `hf_alignment`; selected
+      pixels and camera-derived up now receive the same transform before 3D display, floor fit
+      or measurement. This removed the detached pink cloud reported in review.
+- [x] `GroundPlane` / `BrushSelection` / `MeasureHeight` / `ScaleCheck` nodes (all CPU, all
+      `auto` — they can never bill), with typed plane/selection/measurement wires documented
+      in `docs/DESIGN.md`.
+- [x] Objects pane: one row per object — current-run raw height, truth/error, internal spread,
+      selected-point count, resolution verdict and current-run error model. Rows never average
+      incompatible reconstruction settings; each is audited beside its registered RGB/depth
+      crop and live 3D highlight.
+- [x] Frame identity is explicit: canonical source frame and matching NPZ index are shown and
+      recorded. `Run Source` selects recorded evidence or the latest manually-run live DA3
+      output, so the paid node is connected without auto-running or being mistaken for evidence.
+- [x] **Recompute from source** invalidates ground/selection and every descendant, then actually
+      reruns them. The old button reused cached results and only looked active.
+- [x] B2/B5 use explicit endpoint evidence (floor patch ↔ top edge). The fitted plane supplies
+      the vertical direction, but its offset cannot silently decide these two heights.
+- [x] Range-aware NPZ loading (24 MiB chunks) and canonical-frame mapping for both fixture and
+      future real-run manifests.
+- [x] **Objects are rows in a pane, never nodes in the graph** — the graph is the pipeline, and
       hundreds of vegetation cells would turn the canvas into confetti.
-- [ ] Fill `MEASUREMENTS.md` for all five clip-B objects, per setting
-- [ ] Fit the error model (`a`, `b`, residual RMS) and record the resolution-vs-frames verdict
+- [x] Fill `MEASUREMENTS.md` for every observable clip-B endpoint, per setting. B4 is explicitly
+      unavailable because the laptop hides the stand/table contact; fabricating it was rejected.
+- [x] Fit the error model (`a`, `b`, residual RMS) per run and record the
+      resolution-vs-frames verdict.
+
+**Measured verdict (raw holdout MAE / door-scaled diagnostic):**
+
+| Setting | Raw | Door-scaled | Decision |
+|---|---:|---:|---|
+| **504px · 112f** | **0.113 m** | 0.314 m | **raw default; fastest non-degraded result** |
+| 356px · 256f | 0.182 m | **0.051 m** | best calibrated candidate; validate on another clip |
+| 252px · 256f | 0.257 m | 0.141 m | spatial detail loss is too large |
+
+The door is measured as the user defined it: physical leaf bottom edge → top edge, an extent.
+The door-derived factor is secondary and, when shown, consistently multiplies every length.
+Raw DA3 remains the primary evidence. See `MEASUREMENTS.md` for the object-level table, internal
+spreads and current-run regressions.
+
+**What to understand:** the 504px run is best without calibration; the 356px run becomes best
+after the door factor. Because that same correction harms 504px, there is no evidence yet for a
+universal one-factor correction. The 356px fit's 0.030 m residual is promising but is not a noise
+floor: it comes from only four painted values and B5 has a derived truth.
+
+Final local gate: production build green; `verify.sh` green with **202 unit/fixture tests** plus
+the fixture smoke. The optional server-contract check reported its explicit no-FastAPI skip in
+this shell; no server code changed in M3b. No cloud resource was created or billed.
 
 ### M3c — Automatic segmentation (mask source swap only)
 
@@ -585,7 +625,7 @@ this runs in the browser.**
 
 ```bash
 cd app && npm install && npm run dev     # localhost:5173, fully offline (mock + real ffmpeg)
-./scripts/verify.sh                      # 24 tests: typecheck, units, fixture smoke, server contract
+./scripts/verify.sh                      # typecheck, units, fixture smoke, optional server contract
 ```
 
 ⚠️ **`verify.sh` silently skips the server-contract test unless a Python with `fastapi` is on
@@ -595,7 +635,7 @@ checkmark. Always run it with a venv:
 ```bash
 python3 -m venv /tmp/verge-venv && /tmp/verge-venv/bin/pip install fastapi pydantic \
   python-multipart httpx numpy
-VERGE_PY=/tmp/verge-venv/bin/python ./scripts/verify.sh    # 97 tests + server contract
+VERGE_PY=/tmp/verge-venv/bin/python ./scripts/verify.sh    # full suite + server contract
 ```
 
 The service is **deleted** (0 Cloud Run services). The **image is kept** (9.8 GB, ~$1/month),

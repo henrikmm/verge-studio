@@ -9,7 +9,7 @@
 
 import { useSyncExternalStore } from "react";
 import type { JsonValue } from "./cache-key";
-import { computeDesiredKeys, isStale, runGraph, type RunReport } from "./evaluate";
+import { computeDesiredKeys, downstreamOf, isStale, runGraph, type RunReport } from "./evaluate";
 import { defaultGraph, REGISTRY } from "./nodes";
 import {
   emptyRuntime,
@@ -38,7 +38,7 @@ const state: GraphStoreState = {
   edges: initial.edges,
   runtime: Object.fromEntries(initial.nodes.map((n) => [n.id, emptyRuntime()])),
   desiredKeys: {},
-  selectedId: "da3-depth",
+  selectedId: "fixture-run",
   running: false,
   error: null,
 };
@@ -133,6 +133,21 @@ export function isNodeStale(s: GraphStoreState, id: string): boolean {
 }
 
 /**
+ * Discard cached results from these nodes through the end of their branches.
+ * This is the explicit "do it again" path; normal parameter edits still use the
+ * content-addressed cache and preserve unrelated work.
+ */
+export function invalidateFrom(nodeIds: readonly string[]): string[] {
+  const affected = downstreamOf(nodeIds, state.nodes, state.edges);
+  if (affected.length === 0) return affected;
+  const runtime = { ...state.runtime };
+  for (const id of affected) runtime[id] = emptyRuntime();
+  state.runtime = runtime;
+  commit();
+  return affected;
+}
+
+/**
  * What is arriving on a node's input port right now. Panes use this: a sink computes
  * nothing, it just reads the wire feeding it.
  */
@@ -144,6 +159,19 @@ export function resolveInput(
   const edge = s.edges.find((e) => e.target === nodeId && e.targetPort === portId);
   if (!edge) return null;
   return s.runtime[edge.source]?.outputs?.[edge.sourcePort] ?? null;
+}
+
+/** Evidence views must never treat a retained stale output as a fresh measurement. */
+export function resolveCurrentInput(
+  s: GraphStoreState,
+  nodeId: string,
+  portId: string,
+): NodeOutput | null {
+  const edge = s.edges.find((e) => e.target === nodeId && e.targetPort === portId);
+  if (!edge) return null;
+  const source = s.runtime[edge.source];
+  if (!source?.outputs || source.status !== "ok" || isNodeStale(s, edge.source)) return null;
+  return source.outputs[edge.sourcePort] ?? null;
 }
 
 let activeRun: AbortController | null = null;

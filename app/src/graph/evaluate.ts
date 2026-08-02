@@ -82,6 +82,32 @@ export function upstreamOf(nodeId: string, nodes: GraphNode[], edges: GraphEdge[
   return topoOrder(nodes, edges).filter((id) => needed.has(id));
 }
 
+/** The selected nodes and every descendant, in execution order. */
+export function downstreamOf(
+  nodeIds: readonly string[],
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+): string[] {
+  const known = new Set(nodes.map((node) => node.id));
+  const outgoing = new Map<string, string[]>(nodes.map((node) => [node.id, []]));
+  for (const edge of edges) {
+    if (known.has(edge.source) && known.has(edge.target)) {
+      outgoing.get(edge.source)!.push(edge.target);
+    }
+  }
+  const affected = new Set(nodeIds.filter((id) => known.has(id)));
+  const queue = [...affected];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    for (const child of outgoing.get(id) ?? []) {
+      if (affected.has(child)) continue;
+      affected.add(child);
+      queue.push(child);
+    }
+  }
+  return topoOrder(nodes, edges).filter((id) => affected.has(id));
+}
+
 /**
  * A downstream node's identity must distinguish *which* output port it consumes, so
  * the upstream key alone is not enough. Folding the port name in keeps the value a
@@ -108,9 +134,11 @@ export function computeDesiredKeys(
   for (const id of topoOrder(nodes, edges)) {
     const node = byId.get(id)!;
     const spec = specFor(registry, node);
+    const activeInputs = spec.activeInputs ? new Set(spec.activeInputs(node.params)) : null;
     const inputContentSha256: Record<string, string> = {};
     for (const edge of edges) {
       if (edge.target !== id) continue;
+      if (activeInputs && !activeInputs.has(edge.targetPort)) continue;
       const upstreamKey = keys.get(edge.source);
       if (upstreamKey === undefined) continue; // dangling edge
       inputContentSha256[edge.targetPort] = portIdentity(upstreamKey, edge.sourcePort);
@@ -196,6 +224,7 @@ export async function runGraph(options: RunOptions): Promise<RunReport> {
     if (signal?.aborted) break;
     const node = byId.get(id)!;
     const spec = specFor(registry, node);
+    const activeInputs = spec.activeInputs ? new Set(spec.activeInputs(node.params)) : null;
     const key = desired.get(id)!;
 
     if (upToDate.has(id)) {
@@ -207,6 +236,7 @@ export async function runGraph(options: RunOptions): Promise<RunReport> {
     const inputs: Record<string, NodeOutput> = {};
     let blocked = false;
     for (const port of spec.inputs) {
+      if (activeInputs && !activeInputs.has(port.id)) continue;
       const edge = edges.find((e) => e.target === id && e.targetPort === port.id);
       if (!edge) {
         if (port.required) blocked = true;
@@ -215,7 +245,10 @@ export async function runGraph(options: RunOptions): Promise<RunReport> {
       const fromNode = live.get(edge.source);
       const output = fromNode?.[edge.sourcePort];
       if (!output || !upToDate.has(edge.source)) {
-        blocked = true;
+        // A connected optional input is allowed to be unavailable. This is what lets
+        // Run Source expose the live DA3 branch without a stale paid node blocking the
+        // default recorded-evidence path.
+        if (port.required) blocked = true;
         continue;
       }
       inputs[port.id] = output;

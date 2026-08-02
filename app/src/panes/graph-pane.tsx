@@ -19,7 +19,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   getGraph,
   isNodeStale,
@@ -33,6 +33,7 @@ import { REGISTRY } from "../graph/nodes";
 import { portColor, type PortType } from "../graph/types";
 
 const nodeTypes = { card: NodeCard };
+const LIVE_ONLY_NODES = new Set(["frame-source", "da3-depth"]);
 
 function portTypeOf(nodeType: string, portId: string, side: "in" | "out"): PortType | null {
   const spec = REGISTRY[nodeType];
@@ -44,22 +45,28 @@ function portTypeOf(nodeType: string, portId: string, side: "in" | "out"): PortT
 function GraphCanvas() {
   const graph = useGraph();
   const { fitView } = useReactFlow();
+  const [scope, setScope] = useState<"measurement" | "full">("measurement");
+  const visibleNodes = useMemo(
+    () => graph.nodes.filter((node) => scope === "full" || !LIVE_ONLY_NODES.has(node.id)),
+    [graph.nodes, scope],
+  );
+  const visibleIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
 
   const rfNodes = useMemo<Node[]>(
     () =>
-      graph.nodes.map((n) => ({
+      visibleNodes.map((n) => ({
         id: n.id,
         type: "card",
         position: n.position,
         data: {},
         selected: graph.selectedId === n.id,
       })),
-    [graph.nodes, graph.selectedId],
+    [visibleNodes, graph.selectedId],
   );
 
   const rfEdges = useMemo<Edge[]>(
     () =>
-      graph.edges.map((e) => {
+      graph.edges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)).map((e) => {
         const source = graph.nodes.find((n) => n.id === e.source);
         const type = source ? portTypeOf(source.type, e.sourcePort, "out") : null;
         // A wire out of a stale node is showing old data; dim it to say so.
@@ -77,8 +84,13 @@ function GraphCanvas() {
           },
         };
       }),
-    [graph],
+    [graph, visibleIds],
   );
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => fitView({ padding: 0.15, duration: 200 }));
+    return () => cancelAnimationFrame(frame);
+  }, [fitView, scope]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => {
     let nodes = getGraph().nodes;
@@ -137,29 +149,39 @@ function GraphCanvas() {
     [isValidConnection],
   );
 
-  const staleCount = graph.nodes.filter((n) => isNodeStale(graph, n.id)).length;
+  const staleCount = visibleNodes.filter((n) => isNodeStale(graph, n.id)).length;
+  const visibleWireCount = graph.edges.filter(
+    (edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target),
+  ).length;
 
   return (
     <div className="pane">
       <div className="pane-status">
         <span>
-          {graph.nodes.length} nodes · {graph.edges.length} wires
+          {visibleNodes.length} nodes · {visibleWireCount} wires
         </span>
         <span className={staleCount === 0 ? "ok" : ""}>
           {staleCount === 0 ? "all current" : `${staleCount} stale`}
         </span>
         {graph.error && <span style={{ color: "var(--accent-err)" }}>{graph.error}</span>}
-        <span className="hint">Drag a port to rewire · drop a video on Frame Source</span>
+        <span className="hint">{scope === "measurement" ? "Measurement view · open Full graph for live DA3" : "Full pipeline · drag a port to rewire"}</span>
       </div>
       <div className="pane-body graph-canvas">
         <div className="graph-banner">
           <span className="graph-title">VERGE STUDIO / METRIC DEPTH PIPELINE</span>
           <span className="graph-sub">
-            Local frames → cloud DA3 forward pass → native point cloud → measured views
+            {scope === "measurement"
+              ? "selected run → native point cloud → measured evidence"
+              : "local frames → manual DA3 → selectable run source → measured evidence"}
           </span>
-          <button className="graph-fit" onClick={() => fitView({ padding: 0.15, duration: 200 })}>
-            Fit
-          </button>
+          <div className="graph-actions">
+            <button className="graph-fit" onClick={() => setScope((value) => value === "full" ? "measurement" : "full")}>
+              {scope === "full" ? "Measurement view" : "Full graph"}
+            </button>
+            <button className="graph-fit" onClick={() => fitView({ padding: 0.15, duration: 200 })}>
+              Fit
+            </button>
+          </div>
         </div>
         <ReactFlow
           nodes={rfNodes}

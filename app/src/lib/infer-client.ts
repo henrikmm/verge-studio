@@ -50,7 +50,7 @@ export function artifactUrl(url: string): string {
   return INFER_IS_REMOTE ? `${INFER_BASE.replace(/\/$/, "")}${url}` : url;
 }
 
-function headers(extra: Record<string, string> = {}): Record<string, string> {
+export function requestHeaders(extra: Record<string, string> = {}): Record<string, string> {
   return AUTH_TOKEN ? { ...extra, authorization: `Bearer ${AUTH_TOKEN}` } : extra;
 }
 
@@ -86,7 +86,7 @@ function toGpu(w: WireGpu): GpuSnapshot {
 }
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
-function toManifest(w: any): InferManifest {
+export function manifestFromWire(w: any): InferManifest {
   return {
     schemaVersion: w.schema_version,
     runId: w.run_id,
@@ -146,18 +146,18 @@ function toManifest(w: any): InferManifest {
 }
 
 export async function getGpu(): Promise<GpuSnapshot> {
-  return toGpu((await expectOk(await fetch(`${INFER_BASE}/gpu`, { headers: headers() }))) as WireGpu);
+  return toGpu((await expectOk(await fetch(`${INFER_BASE}/gpu`, { headers: requestHeaders() }))) as WireGpu);
 }
 
 export async function warmup(): Promise<GpuSnapshot> {
   const body = (await expectOk(
-    await fetch(`${INFER_BASE}/warmup`, { method: "POST", headers: headers() }),
+    await fetch(`${INFER_BASE}/warmup`, { method: "POST", headers: requestHeaders() }),
   )) as { gpu: WireGpu };
   return toGpu(body.gpu);
 }
 
 export async function shutdown(): Promise<void> {
-  await expectOk(await fetch(`${INFER_BASE}/shutdown`, { method: "POST", headers: headers() }));
+  await expectOk(await fetch(`${INFER_BASE}/shutdown`, { method: "POST", headers: requestHeaders() }));
 }
 
 export interface VideoProbe {
@@ -180,7 +180,7 @@ export async function probeVideo(path: string): Promise<VideoSource> {
   return (await expectOk(
     await fetch(`${LOCAL_BASE}/probe`, {
       method: "POST",
-      headers: headers({ "content-type": "application/json" }),
+      headers: requestHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ path }),
     }),
   )) as VideoSource;
@@ -194,7 +194,7 @@ export async function uploadVideo(file: File): Promise<VideoSource> {
   return (await expectOk(
     await fetch(`${LOCAL_BASE}/upload`, {
       method: "POST",
-      headers: headers({ "x-filename": file.name, "content-type": "application/octet-stream" }),
+      headers: requestHeaders({ "x-filename": file.name, "content-type": "application/octet-stream" }),
       body: file,
     }),
   )) as VideoSource;
@@ -215,7 +215,7 @@ export async function extractFrames(
   return (await expectOk(
     await fetch(`${LOCAL_BASE}/extract`, {
       method: "POST",
-      headers: headers({ "content-type": "application/json" }),
+      headers: requestHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ path, fps, maxFrames }),
     }),
   )) as { frames: string[]; plan: FramePlan; probe: VideoProbe; outDir: string };
@@ -227,7 +227,7 @@ export function frameUrl(path: string): string {
 }
 
 export async function fetchFrameBlob(path: string): Promise<Blob> {
-  const res = await fetch(frameUrl(path), { headers: headers() });
+  const res = await fetch(frameUrl(path), { headers: requestHeaders() });
   if (!res.ok) throw new Error(`frame ${path}: ${res.status}`);
   return res.blob();
 }
@@ -241,11 +241,11 @@ export async function infer(
   params: InferParams,
 ): Promise<InferManifest> {
   if (!Array.isArray(frames)) {
-    return toManifest(
+    return manifestFromWire(
       await expectOk(
         await fetch(`${INFER_BASE}/infer`, {
           method: "POST",
-          headers: headers({ "content-type": "application/json" }),
+          headers: requestHeaders({ "content-type": "application/json" }),
           body: JSON.stringify({
             frameCount: frames.frameCount,
             processRes: params.processRes,
@@ -272,9 +272,9 @@ export async function infer(
       max_frames: params.maxFrames,
     }),
   );
-  return toManifest(
+  return manifestFromWire(
     await expectOk(
-      await fetch(`${INFER_BASE}/infer`, { method: "POST", headers: headers(), body: form }),
+      await fetch(`${INFER_BASE}/infer`, { method: "POST", headers: requestHeaders(), body: form }),
     ),
   );
 }

@@ -19,6 +19,7 @@ import {
   setNodeParams,
   isNodeStale,
 } from "../graph/graph-store";
+import { clearActiveMask, exportMeasurementSession, setMaskData } from "../measurement/measurement-store";
 
 export function installDevHandle(): void {
   if (!import.meta.env.DEV) return;
@@ -31,6 +32,9 @@ export function installDevHandle(): void {
     isNodeStale,
     run,
     runNode,
+    clearActiveMask,
+    setMaskData,
+    exportMeasurementSession,
 
     /** Point Frame Source at a clip already on disk, bypassing drag-and-drop. */
     loadVideo(path: string, name = path.split("/").pop() ?? "clip.mp4") {
@@ -57,7 +61,8 @@ export function installDevHandle(): void {
     /** The manifest the DA3 node last produced — the thing a cloud run must deliver. */
     manifest() {
       const outputs = getGraph().runtime["da3-depth"]?.outputs;
-      return (outputs?.depth?.value ?? null) as unknown;
+      const field = outputs?.depth?.value as { manifest?: unknown } | undefined;
+      return field?.manifest ?? null;
     },
   };
 

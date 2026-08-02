@@ -316,6 +316,25 @@ describe("runGraph", () => {
     expect(h.runtime["n-cloud"]?.status).toBe("blocked");
   });
 
+  it("does not let an unavailable optional branch block an automatic node", async () => {
+    const { nodes, edges } = pipeline();
+    const reg = registry();
+    reg.cloud.inputs[0] = { ...reg.cloud.inputs[0], required: false };
+    const h = makeHarness();
+    const report = await runGraph({
+      nodes,
+      edges,
+      registry: reg,
+      runtime: h.runtime,
+      onChange: h.onChange,
+      allowManual: false,
+    });
+
+    expect(report.ran).toEqual(["n-source", "n-cloud", "n-sink"]);
+    expect(report.blocked).toEqual(["n-gpu"]);
+    expect(calls).toEqual({ source: 1, gpu: 0, cloud: 1, sink: 1 });
+  });
+
   it("allows a single named manual node — the per-node Run button", async () => {
     const { nodes, edges } = pipeline();
     const h = makeHarness();

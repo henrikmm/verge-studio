@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeDesiredKeys, topoOrder, upstreamOf } from "../evaluate";
+import { computeDesiredKeys, downstreamOf, topoOrder, upstreamOf } from "../evaluate";
 import { defaultGraph, REGISTRY, VIEWER_2D_ID, VIEWER_3D_ID } from "./index";
 
 const { nodes, edges } = defaultGraph();
@@ -48,6 +48,16 @@ describe("the default pipeline", () => {
     expect(upstreamOf(VIEWER_2D_ID, nodes, edges)).not.toContain("point-cloud");
     expect(upstreamOf(VIEWER_3D_ID, nodes, edges)).toContain("point-cloud");
   });
+
+  it("finds the complete measurement branch for an explicit recompute", () => {
+    expect(downstreamOf(["ground-plane", "brush-selection"], nodes, edges)).toEqual([
+      "ground-plane",
+      "brush-selection",
+      "measure-height",
+      "scale-check",
+      VIEWER_3D_ID,
+    ]);
+  });
 });
 
 describe("invalidation on the real pipeline", () => {
@@ -67,7 +77,7 @@ describe("invalidation on the real pipeline", () => {
     expect(after.get(VIEWER_2D_ID)).toBe(before.get(VIEWER_2D_ID));
   });
 
-  it("restamps both viewers when the depth parameters change", () => {
+  it("keeps the offline measurement branch reusable when live DA3 parameters change", () => {
     const before = computeDesiredKeys(nodes, edges, REGISTRY);
     const changed = nodes.map((n) =>
       n.id === "da3-depth" ? { ...n, params: { ...n.params, processRes: 756 } } : n,
@@ -75,11 +85,12 @@ describe("invalidation on the real pipeline", () => {
     const after = computeDesiredKeys(changed, edges, REGISTRY);
 
     expect(after.get("frame-source")).toBe(before.get("frame-source"));
-    expect(after.get(VIEWER_2D_ID)).not.toBe(before.get(VIEWER_2D_ID));
-    expect(after.get(VIEWER_3D_ID)).not.toBe(before.get(VIEWER_3D_ID));
+    expect(after.get("da3-depth")).not.toBe(before.get("da3-depth"));
+    expect(after.get(VIEWER_2D_ID)).toBe(before.get(VIEWER_2D_ID));
+    expect(after.get(VIEWER_3D_ID)).toBe(before.get(VIEWER_3D_ID));
   });
 
-  it("restamps the whole graph when the source video content changes", () => {
+  it("restamps only the live branch when the source video content changes", () => {
     const before = computeDesiredKeys(nodes, edges, REGISTRY);
     const changed = nodes.map((n) =>
       n.id === "frame-source"
@@ -88,8 +99,26 @@ describe("invalidation on the real pipeline", () => {
     );
     const after = computeDesiredKeys(changed, edges, REGISTRY);
 
-    for (const node of nodes) {
-      expect(after.get(node.id), node.id).not.toBe(before.get(node.id));
+    expect(after.get("frame-source")).not.toBe(before.get("frame-source"));
+    expect(after.get("da3-depth")).not.toBe(before.get("da3-depth"));
+    for (const node of nodes.filter((candidate) => !["frame-source", "da3-depth"].includes(candidate.id))) {
+      expect(after.get(node.id), node.id).toBe(before.get(node.id));
+    }
+  });
+
+  it("restamps the complete measurement branch when the fixture setting changes", () => {
+    const before = computeDesiredKeys(nodes, edges, REGISTRY);
+    const changed = nodes.map((node) =>
+      node.id === "fixture-run"
+        ? { ...node, params: { ...node.params, setting: "252px-256f" } }
+        : node,
+    );
+    const after = computeDesiredKeys(changed, edges, REGISTRY);
+
+    expect(after.get("frame-source")).toBe(before.get("frame-source"));
+    expect(after.get("da3-depth")).toBe(before.get("da3-depth"));
+    for (const id of ["fixture-run", "point-cloud", "ground-plane", "brush-selection", "measure-height", "scale-check", VIEWER_2D_ID, VIEWER_3D_ID]) {
+      expect(after.get(id), id).not.toBe(before.get(id));
     }
   });
 });

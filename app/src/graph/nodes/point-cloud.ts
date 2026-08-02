@@ -10,8 +10,8 @@
 
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import type { InferManifest } from "../../lib/contract";
 import { artifactUrl } from "../../lib/infer-client";
+import type { DepthFieldValue } from "../../measurement/depth-field";
 import type { NodeSpec } from "../types";
 
 export interface PointCloudValue {
@@ -30,22 +30,54 @@ export interface PointCloudValue {
    * already holds, so this costs no extra memory.
    */
   positions: Float32Array;
+  /**
+   * Row-major transform from the raw NPZ reconstruction frame into the
+   * display frame used by DA3's exported GLB (first-camera glTF axes plus
+   * scene centering).
+   *
+   * DA3 records this as `scene.extras.hf_alignment`. Pixel selections are
+   * back-projected from the NPZ, so they must cross this boundary before they can
+   * be compared with the displayed cloud.
+   */
+  worldFromDa3: Float32Array;
 }
 
-/** Fallback for colorless clouds: ramp along world height (z-up in DA3's world frame). */
+const IDENTITY_4X4 = Float32Array.from([
+  1, 0, 0, 0,
+  0, 1, 0, 0,
+  0, 0, 1, 0,
+  0, 0, 0, 1,
+]);
+
+/** Read DA3's row-major NPZ-to-GLB display transform from the scene extras. */
+export function worldFromDa3(object: THREE.Group): Float32Array {
+  const candidate: unknown = object.userData.hf_alignment;
+  if (!Array.isArray(candidate) || candidate.length !== 4) return IDENTITY_4X4.slice();
+  const values: number[] = [];
+  for (const row of candidate) {
+    if (!Array.isArray(row) || row.length !== 4) return IDENTITY_4X4.slice();
+    for (const entry of row) {
+      if (typeof entry !== "number" || !Number.isFinite(entry)) return IDENTITY_4X4.slice();
+      values.push(entry);
+    }
+  }
+  return Float32Array.from(values);
+}
+
+/** Fallback for colorless clouds: ramp along aligned world height (Y-up). */
 function colorByHeight(geometry: THREE.BufferGeometry) {
   const pos = geometry.getAttribute("position");
   const colors = new Float32Array(pos.count * 3);
   let min = Infinity;
   let max = -Infinity;
   for (let i = 0; i < pos.count; i++) {
-    const z = pos.getZ(i);
-    if (z < min) min = z;
-    if (z > max) max = z;
+    const y = pos.getY(i);
+    if (y < min) min = y;
+    if (y > max) max = y;
   }
   const c = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
-    const t = (pos.getZ(i) - min) / (max - min || 1);
+    const t = (pos.getY(i) - min) / (max - min || 1);
     c.setHSL(0.66 - 0.66 * t, 0.85, 0.55);
     colors[i * 3] = c.r;
     colors[i * 3 + 1] = c.g;
@@ -96,7 +128,7 @@ export const pointCloudSpec: NodeSpec = {
   type: "point-cloud",
   label: "Point Cloud",
   category: "geometry",
-  version: "0.1.0",
+  version: "0.2.0",
   execution: "auto",
   inputs: [{ id: "depth", label: "Depth Field", type: "depth_field", required: true }],
   outputs: [{ id: "points", label: "Points", type: "point_cloud" }],
@@ -106,7 +138,8 @@ export const pointCloudSpec: NodeSpec = {
     { kind: "slider", key: "pointSize", label: "Point size", min: 0.25, max: 4, step: 0.25 },
   ],
   execute: async ({ inputs, params }) => {
-    const manifest = inputs.depth?.value as InferManifest | undefined;
+    const field = inputs.depth?.value as DepthFieldValue | undefined;
+    const manifest = field?.manifest;
     const glb = manifest?.artifacts.find((a) => a.kind === "glb");
     if (!glb) throw new Error("manifest has no GLB artifact");
 
@@ -159,6 +192,7 @@ export const pointCloudSpec: NodeSpec = {
       extent,
       url: glb.url,
       positions,
+      worldFromDa3: worldFromDa3(object),
     };
 
     return {
