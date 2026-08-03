@@ -42,19 +42,21 @@ separates the two error types that matter:
 That decomposition is the real deliverable of M3. "Is DA3 accurate?" is much less useful than
 "how much of DA3's error is bias we can remove, and how much is noise we cannot?"
 
-### M3b raw results — 2026-08-02
+### M3b raw results — 2026-08-03
 
 Each cell is `raw DA3 measurement (signed error) ± internal spread`, in metres. “Internal
 spread” is the local patch roughness; it is **not** a claim that the total measurement is that
-accurate. Every error is much larger than that spread, which shows that systematic scale/floor
-bias dominates local point noise in this clip.
+accurate. Every frozen error is much larger than that spread, which shows that reconstruction
+bias, floor direction and operator endpoint placement dominate local point noise in this clip.
 
 These values supersede both earlier M3b passes. The first mixed DA3's raw NPZ coordinates with
 the transformed GLB coordinates, displacing the pink 3D evidence from its 2D source. The second
 fixed that registration but let a thin tilted slice win as the floor: its 2 cm fit error looked
 good even though only 0.7% of the 504px cloud supported it. The current pass keeps every point
 in the GLB frame and compares floor hypotheses using support, tilt, below-floor mass and fit
-error together. B2 and B5 are floor-referenced heights; B1 and B3 are object extents.
+error together. B2 and B5 are floor-to-top endpoint extents; B1 and B3 are object extents. For
+all four, the plane supplies the vertical direction; the painted lower endpoint supplies the
+measurement origin.
 
 The floor diagnostics below are part of the result, not decoration. “Support” is the fraction
 of the sampled scene close to the chosen plane. A small fit error without meaningful support is
@@ -65,6 +67,20 @@ not accepted as evidence of a floor.
 | **504px · 112f** | **14.6%** | 11.8° | **0.012 m** | whole cloud |
 | 356px · 256f | 10.5% | 15.4° | 0.018 m | whole cloud |
 | 252px · 256f | 2.7% | **9.1°** | 0.020 m | lower region |
+
+### Why only the two endpoints can be enough
+
+The current object measurements are vertical extents. The brush does not have to outline every
+pixel of the object: it needs enough trustworthy 3D points near the intended lower and upper
+endpoints. The measurement takes robust lower and upper height percentiles along the fitted
+floor direction. The clean line shown in 3D is the resulting ruler between those height bands;
+it is not invented geometry and it does not mean the pixels between the endpoints were inferred.
+
+A connecting brush stroke is still useful when it stays on the object: it supplies more points,
+makes accidental endpoint selection easier to see, and helps pass the minimum-density check. But
+two compact endpoint patches can be sufficient. One painted video frame also can be sufficient:
+that frame has its own predicted depth and camera pose, which place its selected pixels into the
+same 3D coordinate system as the point cloud reconstructed from all frames.
 
 | Object | Truth | 504px · 112f | 356px · 256f | 252px · 256f |
 |---|---:|---:|---:|---:|
@@ -77,12 +93,23 @@ not accepted as evidence of a floor.
 B4 is deliberately absent: its stand/table contact is hidden by the laptop. Guessing that
 endpoint would make the table more complete and the evidence less honest.
 
+**Operator refinement on 2026-08-03:** the user repainted the 504px door endpoints and the app
+reported approximately **2.0 m**, about **0.10 m / 4.8%** below the 2.10 m truth. This is the
+best observed door result, but it is intentionally not substituted into the table yet: the
+exact value and exported mask were not captured in this repository. The change from 1.887 m to
+about 2.0 m proves that endpoint placement is now a material part of the remaining error budget.
+The 504px table and tower results above are already within 0.046 m and 0.043 m of truth.
+
 ### Resolution/frame-count verdict
 
 Raw MAE is over the three observable holdouts B2, B3 and direct B5. “Door-scaled” multiplies
 every predicted length by the B1 truth/raw factor. That is the mathematically consistent use
 of a scale correction: translation-independent extents are still lengths. The correction
 remains secondary evidence—raw DA3 is still the primary output.
+
+The door-scaled columns below still use the frozen 1.887 m door observation. They are reproducible
+for the saved benchmark, but provisional as a product conclusion: the exact refined door mask
+must be recorded before recalculating its scale factor.
 
 | Setting | GPU | B1 scale factor | Raw holdout MAE | Door-scaled MAE |
 |---|---:|---:|---:|---:|
@@ -112,6 +139,19 @@ noise-floor estimate**: there are only four painted values, and B5's truth is de
 and B4. The useful result is narrower: calibration looks worth testing on a second clip, while
 the much better raw 504px result shows why the app must continue showing raw and corrected
 values side by side.
+
+### What M3b now establishes — and what it does not
+
+**Established on clip B:** the pipeline can take sparse 2D endpoint evidence, place it on the
+correct 3D reconstruction, recover a supported floor direction, measure extents, and audit the
+result against tape measurements. At 504px, the best observed errors are roughly 0.10 m on the
+2.10 m door and 0.04–0.05 m on the table and PC tower. This is good enough to justify automating
+the evidence selection rather than replacing the geometry pipeline.
+
+**Not established yet:** a universal accuracy figure across new rooms, phones, camera motion,
+floor visibility, or outdoor terrain. The benchmark currently contains one primary clip and one
+operator. Before claiming repeatability, record multiple independent redraws of each endpoint and
+run a second capture with changed camera orientation and path.
 
 ---
 
@@ -146,7 +186,14 @@ resolution-vs-frames question can be answered offline here at zero cloud cost.
 - [x] **B3** stands on the tabletop; measure its own 0.45 m extent.
 - [x] Confirm B2's intended evidence: tabletop edge + visible floor patch; a connecting stroke
       is valid. This is an endpoint measurement, not semantic segmentation of the whole table.
-- [ ] Refine/freeze the remaining pink operator masks before treating this as a repeatable
-      benchmark. B4 remains ungraded until another view exposes the stand contact.
+- [ ] Record and export the exact user-refined ~2.0 m B1 observation; do not recalculate the
+      door-derived scale factor from the rounded recollection.
+- [ ] Draw B1/B2/B3 independently at least three times and retain every result instead of
+      replacing the previous observation. Report endpoint/operator spread separately from the
+      point-cloud internal spread.
+- [ ] Freeze the benchmark masks with a mask revision or digest tied to every recorded row.
+      B4 remains ungraded until another view exposes the stand contact.
+- [ ] Repeat the primary measurements on a second full video with a different camera path and
+      orientation before stating cross-video accuracy.
 - [ ] A taller-than-2.10 m reference (floor to ceiling) would extend the calibration curve
       further and tighten the fitted slope. Optional.

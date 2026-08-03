@@ -4,7 +4,8 @@ A Sentinel-style node-graph web app for cloud depth inference and 3D measurement
 
 Drop in a video → a Cloud Run L4 GPU runs Depth Anything 3 → depth maps and point clouds
 appear live in docked viewports → measure object heights against a fitted ground plane.
-Gaussian-splat rendering remains a later milestone.
+Gaussian splats are intentionally out of scope: the measurement path uses metric depth,
+camera poses and point clouds directly.
 
 **Video is the standard input.** DA3's quality comes from cross-view attention over many
 frames; a single image never engages it and produces badly flawed geometry. Frames are

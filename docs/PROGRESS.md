@@ -6,9 +6,10 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-02 · M3b implemented, coordinate-checked and graded offline; 504px/112f
-is the current raw clip-B operating point. B4 remains honestly ungraded because its lower
-endpoint is occluded.
+Last updated: 2026-08-03 · M3b is working end to end on the primary door clip. A user-refined
+door mask produced approximately 2.0 m against 2.10 m truth; the exact observation still needs
+to be exported before replacing the frozen benchmark row. 504px/112f remains the operating
+point. B4 remains honestly ungraded because its lower endpoint is occluded.
 
 ---
 
@@ -18,14 +19,82 @@ endpoint is occluded.
 |---|---|
 | M0 — Bootstrap + offline viewer | **done** |
 | M1 — GPU service live | **done** (with carve-outs below) |
-| M2a — Node graph, local only | **done** (one carve-out: mock badge) |
+| M2a — Node graph, local only | **done** |
 | M2b — One warm cloud session | **done** (fixture home, service deleted) |
 | M3.0 — Door-clip fixture (one warm session) | **done** (3 fixtures local, service deleted) |
-| M3a — Geometry core (offline) | **done** (84 geometry tests, incl. real fixture) |
-| M3b — Mask → measurement → grading | **done** (B4 unavailable in this clip) |
-| M3c — Automatic segmentation | not started |
-| M3d — Field/raster regime (vegetation) | deferred |
-| M4 — Splats + polish | not started |
+| M3a — Geometry core (offline) | **done** (89 geometry/fixture tests) |
+| M3b — Mask → measurement → grading | **done on clip B** (repeatability is next) |
+| M3c — Automatic evidence selection | **next** |
+| M3d — Field/raster regime (vegetation) | planned after M3c proof |
+| M4 — Productization + evidence hardening | not started; splats dropped from roadmap |
+
+---
+
+## Current assessment and recommended next sequence — 2026-08-03
+
+### What we now have working
+
+- A real DA3 video fixture flows through 2D evidence, frame-specific depth/camera pose,
+  registered 3D points, floor direction, robust endpoint measurement and tape-truth grading.
+- Sparse evidence works better than expected. For an extent, compact lower and upper endpoint
+  patches can be enough; the 3D line is the measured ruler between robust endpoint height bands,
+  not a hallucinated filled object.
+- The corrected floor is supported by visible scene points and carries support, tilt and RMSE
+  diagnostics. The previous diagonal-floor regression is covered by real-fixture tests.
+- On the 504px run, the frozen table and PC tower are 0.046 m and 0.043 m from truth. The user's
+  refined door mask returned about 2.0 m, roughly 0.10 m from its 2.10 m truth. This is a strong
+  proof of usefulness on this clip, not yet a universal accuracy claim.
+
+The largest newly exposed uncertainty is **operator endpoint placement**. The old 1.887 m door
+and the refined ~2.0 m door came from the same reconstruction and floor. Their difference is
+measurement evidence, not noise to hide: automatic selection is valuable if it makes endpoints
+more repeatable, even before it produces a beautiful full-object mask.
+
+### Recommended sequence
+
+1. **P0 — Freeze repeatability before adding another model.** Export the exact refined door
+   observation and its mask. Draw B1/B2/B3 independently at least three times. Retain all trials
+   and track raw result, endpoint/operator spread, internal point spread, selected-point count,
+   mask revision/digest and time-to-measure. Recorded rows currently replace the previous row;
+   that is convenient for UI use but insufficient for a repeatability study.
+2. **P1 — Challenge the floor on new captures.** Build a small 5–10 clip set covering portrait
+   and landscape capture, phone roll/pitch, little visible floor, glossy or textureless floor,
+   multiple horizontal surfaces and an outdoor slope. Track support, tilt, below-floor mass,
+   RMSE and the score margin between the best two floor hypotheses. Add an explicit “cannot
+   establish ground” result plus manual 3D floor seeds when the evidence is weak or ambiguous.
+3. **P2 — M3c, automate evidence before attempting video-wide semantics.** Start on one canonical
+   frame with click-prompted endpoint/object selection and keep brush correction. Grade it by
+   measurement difference from frozen manual evidence, failure/abstention rate, correction
+   clicks and operator time—not mask IoU alone. Multi-frame propagation is later work only if a
+   single frame cannot supply reliable endpoints.
+4. **P3 — M3d, transfer the proven geometry to grass.** Grass is not a door repeated many times.
+   Use a local ground raster and per-cell vegetation height percentiles, with point-count and
+   confidence gates. Track tape/reference error, valid-area coverage, abstention rate, cell size
+   and sensitivity to ground slope. Use semantic vegetation masking to exclude non-vegetation;
+   do not require instance segmentation of individual blades.
+5. **P4 — Productize the evidence path.** Prefer compact `mini_npz` or transient object storage
+   with signed URLs, verify a live cloud manifest in the browser, make recorded evidence
+   reproducible, and implement honest per-session cost reporting.
+
+### Floor generalization risk
+
+Yes, a wrong floor can return on another video or camera configuration. The current fix removes
+the specific self-referential failure and makes weak floors easier to see; it does not prove that
+every scene contains one recoverable global plane. Sparse/occluded floors, dominant tabletops,
+stairs, sloped terrain, poor depth and an inaccurate camera-up prior can still produce the wrong
+candidate. The present 1% support threshold is a last-resort rejection gate, not a certificate.
+The next gain is therefore an ambiguity/rejection policy and cross-video challenge set, not more
+fine-tuning on this one room. Outdoor grass will need local ground, not this single-plane model.
+
+### Gaussian splat decision
+
+**Drop Gaussian splats from the product roadmap.** They improve appearance and novel-view
+rendering, but no measurement node consumes them: the metric depth, camera poses and point cloud
+already provide the geometry this product needs. Repairing `gsplat` would require a larger CUDA
+build path, extra GPU work, another viewer and more output formats without improving the current
+measurement evidence. Keep DA3's upstream capability out of scope and later remove our checkbox,
+contract branches and unused splat port/type as cleanup. Do not spend another cloud session
+proving `infer_gs`.
 
 ---
 
@@ -53,6 +122,9 @@ Decisions made, do not relitigate without reason:
    unlabelled until then rather than showing an invented number.
 4. **Keep the image, delete the service.** See the Cloud discipline section of `CLAUDE.md` —
    the rule was reversed on 2026-07-31 after we noticed the old one optimised the cheap axis.
+
+Superseding decision, 2026-08-03: Gaussian splats are no longer a deliverable. Historical M1/M2
+notes below preserve what was attempted, but `infer_gs` should not be repaired or scheduled.
 
 ### The test videos — two clips, and B is the one that matters
 
@@ -142,13 +214,9 @@ These were in the M1 plan but are not implemented. Do not assume they work.
 - [x] ~~Isolate per-run VRAM peaks~~ — fixed in M2b, see `server/vram.py`.
 - [x] ~~`result.npz` may clobber DA3's native npz~~ — measured in M2b: DA3 writes no npz at
       all, so there was nothing to clobber. Ours renamed to `verge-result.npz` defensively.
-- [ ] **`infer_gs` is broken: `gsplat` is missing from the image.** One real run returned
-      `name 'rasterization' is not defined`. ⚠️ **Corrected 2026-08-01: this is NOT a one-line
-      pip addition.** The base image is `pytorch/pytorch:2.5.1-cuda12.1-cudnn9-**runtime**`,
-      which has no `nvcc`; gsplat compiles CUDA extensions at install or JIT at first use, so it
-      needs a `-devel` base (bigger image, longer build) or a prebuilt wheel matching torch
-      2.5.1/cu121. Deliberately NOT bundled into the M3 rebuild: an unproven base-image swap
-      would have risked the M3 session on an M4 feature. Treat splats as unavailable. Blocks M4.
+- [x] ~~Repair `infer_gs` / add `gsplat`.~~ Closed by scope decision on 2026-08-03. Splats do
+      not feed measurement, while repairing them requires a larger CUDA build and more GPU work.
+      Removing the dormant checkbox/contract/output branches is cleanup under the reframed M4.
 - [ ] **Cloud Run's 32 MiB response cap makes a one-shot `/artifact` fetch unusable for the npz.** A 108 MB
       npz returns **HTTP 500 with zero bytes**, direct and through the proxy alike; the 16 MB
       GLB is fine. M3b added the same 24 MiB range-aware retrieval to the browser and it is
@@ -255,13 +323,9 @@ resolution-vs-frames trade** — that was the point of saving more than one.
 
 ### NOT done in M2b, with reasons
 
-- [ ] **`infer_gs` DOES NOT WORK.** One run at 32 frames failed with
-      `name 'rasterization' is not defined`. Root cause: `server/Dockerfile` line 17 installs
-      xformers, google-cloud-storage, fastapi, uvicorn, python-multipart and DA3 — but **not
-      `gsplat`**, which provides `rasterization` for DA3's splat path. Fix is to add `gsplat`
-      to that pip install, which costs a full ~20 min rebuild. Deferred to M4, where the splat
-      viewer work makes the rebuild worth paying for. The parameter is plumbed correctly end
-      to end; only the image dependency is missing.
+- [x] ~~Repair `infer_gs`.~~ One historical 32-frame run failed because `gsplat` was absent.
+      Closed by the 2026-08-03 scope decision: splats do not feed measurement, so the project
+      will remove the dormant path instead of paying for a larger CUDA build and viewer.
 - [ ] **Session cost ticker** — still `$0.00` and unlabelled. Not built. The instance-lifetime
       data now exists to drive it (build 19m30s, warm ~50 min) but nothing consumes it.
 - [ ] **Transient GCS storage, signed URLs, explicit Save.** Untouched, as in M1. Artifacts
@@ -547,9 +611,9 @@ by the app's vitest (its glob includes `../geometry`) and typechecked by the app
       output, so the paid node is connected without auto-running or being mistaken for evidence.
 - [x] **Recompute from source** invalidates ground/selection and every descendant, then actually
       reruns them. The old button reused cached results and only looked active.
-- [x] B2/B5 are explicitly labelled floor-referenced measurements; B1/B3 are extents. The 3D
-      ruler follows the selected object's endpoint bands for extents instead of looking like a
-      projection to an invented ground point.
+- [x] B2/B5 are explicitly labelled floor-to-top endpoint measurements; B1/B3 are object
+      extents. The floor fit supplies direction, while the painted lower endpoint supplies the
+      origin. The 3D ruler follows endpoint bands instead of projecting to an invented point.
 - [x] **Honest floor display.** Yellow markers show the points that actually support the fit,
       and the translucent plane is clipped to their observed footprint and centred on them.
       The former large origin-centred square amplified even modest tilt into a false-looking
@@ -582,14 +646,35 @@ changing its painted mask. This is strong evidence that floor validation was the
 bug, not 2D→3D registration. The 356px fit's 0.004 m residual is still not a noise floor: it comes
 from only four painted values and B5 has a derived truth.
 
+The user's later endpoint refinement moved the same 504px door result to approximately 2.0 m.
+That does not invalidate the geometry result; it reveals that endpoint placement is now a large
+part of the error budget. The exact value and mask must be exported before the frozen table and
+door-derived correction are recalculated.
+
+**What “Recompute from source” actually does:** it does not rerun DA3, reload the video or bill
+the GPU. It discards cached results beginning at `GroundPlane` and `BrushSelection`, then reruns
+the local CPU measurement branch: floor, current mask→3D points, extent, scale check and 3D
+overlay. Painting, changing object or changing source already invalidates the necessary nodes
+automatically, so unchanged input should produce the same deterministic result. Keep this only
+as a recovery/debug action; rename it to **Rebuild measurement** with “local only—DA3 is not
+run”, or remove it from the normal evidence workflow.
+
 Final local gate: production build green; `verify.sh` green with **207 unit/fixture tests** plus
 the fixture smoke. The optional server-contract check reported its explicit no-FastAPI skip in
 this shell; no server code changed in M3b. No cloud resource was created or billed.
 
-### M3c — Automatic segmentation (mask source swap only)
+### M3c — Automatic evidence selection (mask source swap only)
 
 Nothing downstream changes: a brush mask and a model mask are the same bytes. **No cloud cost —
-this runs in the browser.**
+this runs in the browser.** The first goal is repeatable measurement endpoints on one canonical
+frame, not perfect outlines or propagation across the entire video.
+
+- [ ] Freeze the manual-repeatability benchmark first; automation cannot be judged against a
+      moving target.
+- [ ] Prototype click-prompted selection with editable brush output. Accept it only if it reduces
+      endpoint measurement variation or operator time without hiding failures.
+- [ ] Report measurement delta, abstention/failure rate, correction clicks and latency. Mask IoU
+      is diagnostic, not the product metric.
 
 - [ ] MobileSAM or EfficientSAM (both Apache-2.0, ~10 MB ONNX) via ONNX Runtime Web /
       transformers.js: encode the frame once, decode a mask per click (~200 ms)
@@ -604,10 +689,12 @@ this runs in the browser.**
 
 ### M3d — Field/raster regime (deferred, for the roadside case)
 
-- [ ] Ground raster → per-cell height percentiles above the local ground, point-count QA gate
+- [ ] Local ground raster → per-cell height percentiles above ground, point-count/confidence gate
 - [ ] Output is a heat map, not a list; the donor's cell/segment code is the template
 - [ ] Do **not** try to instance-segment vegetation; reserve segmentation for large discrete
       plants where identity actually matters
+- [ ] Benchmark against physical patch references and report error plus valid-area/abstention
+      coverage; a map that silently fills unsupported cells is not acceptable
 
 ### Bugs found during M3
 
@@ -621,11 +708,13 @@ this runs in the browser.**
    is for. Fix: parse `side_data` rotation and swap the planning dimensions when |rotation| is
    90 or 270.
 
-## M4 — Splats + polish ⬜
+## M4 — Productization + evidence hardening ⬜
 
-- [ ] `infer_gs=True` path proven on GPU → `gs_ply` (+ optional `gs_video`)
-- [ ] Splat viewer node via `@mkkellogg/gaussian-splats-3d`
-- [ ] Per-node cost accounting
+- [ ] Remove dormant `infer_gs`, splat export types, UI checkbox and unused splat port/type
+- [ ] Compact `mini_npz` and/or transient object storage + signed URLs; verify live browser fetch
+- [ ] Tie every recorded result to reproducible mask evidence and retain repeat trials
+- [ ] Rename/remove the misleading Recompute action
+- [ ] Per-session/per-node cost accounting
 
 ---
 
