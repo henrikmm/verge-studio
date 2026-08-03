@@ -1,8 +1,7 @@
 import {
   backprojectMask,
-  anchorGroundPlaneToLowQuantile,
   estimateGravity,
-  fitGroundPlaneTwoPass,
+  fitGroundPlaneRobust,
   fitErrorModel,
   measureHeight,
   measureVerticalExtent,
@@ -12,9 +11,9 @@ import {
   signedHeight,
   type BackprojectResult,
   type ErrorModel,
-  type GroundPlaneFit,
   type GravityEstimate,
   type Plane,
+  type RobustGroundPlaneFit,
   type Vec3,
 } from "../../../../geometry";
 import {
@@ -34,9 +33,13 @@ export const SCALE_CHECK_ID = "scale-check";
 
 export interface GroundPlaneValue {
   plane: Plane;
-  initial: GroundPlaneFit;
-  refined: GroundPlaneFit;
+  fit: RobustGroundPlaneFit;
   gravity: GravityEstimate;
+  evidence: {
+    points: Float32Array;
+    center: Vec3;
+    radius: number;
+  };
 }
 
 export interface SelectionValue {
@@ -55,6 +58,7 @@ export interface MeasurementValue {
   internalSpreadM: number;
   pointCount: number;
   ruler: { bottom: Vec3; top: Vec3 };
+  rulerKind: "floor_height" | "extent";
   details: Record<string, number>;
 }
 
@@ -135,14 +139,94 @@ function pointNearestHeight(points: ArrayLike<number>, plane: Plane, wanted: num
   return best;
 }
 
-function verticalRuler(top: Vec3, plane: Plane, height: number): { bottom: Vec3; top: Vec3 } {
+function pointBandCentroid(
+  points: ArrayLike<number>,
+  plane: Plane,
+  wanted: number,
+  band = 0.05,
+): Vec3 {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  let count = 0;
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    const point: Vec3 = [points[i], points[i + 1], points[i + 2]];
+    if (Math.abs(signedHeight(plane, point) - wanted) > band) continue;
+    x += point[0];
+    y += point[1];
+    z += point[2];
+    count += 1;
+  }
+  return count > 0 ? [x / count, y / count, z / count] : pointNearestHeight(points, plane, wanted);
+}
+
+function verticalRuler(
+  tangentAnchor: Vec3,
+  plane: Plane,
+  bottomHeight: number,
+  topHeight: number,
+): { bottom: Vec3; top: Vec3 } {
+  const anchorHeight = signedHeight(plane, tangentAnchor);
+  const base: Vec3 = [
+    tangentAnchor[0] - plane.normal[0] * anchorHeight,
+    tangentAnchor[1] - plane.normal[1] * anchorHeight,
+    tangentAnchor[2] - plane.normal[2] * anchorHeight,
+  ];
   return {
-    top,
     bottom: [
-      top[0] - plane.normal[0] * height,
-      top[1] - plane.normal[1] * height,
-      top[2] - plane.normal[2] * height,
+      base[0] + plane.normal[0] * bottomHeight,
+      base[1] + plane.normal[1] * bottomHeight,
+      base[2] + plane.normal[2] * bottomHeight,
     ],
+    top: [
+      base[0] + plane.normal[0] * topHeight,
+      base[1] + plane.normal[1] * topHeight,
+      base[2] + plane.normal[2] * topHeight,
+    ],
+  };
+}
+
+function collectPlaneEvidence(
+  points: ArrayLike<number>,
+  plane: Plane,
+  band: number,
+  stride: number,
+): GroundPlaneValue["evidence"] {
+  const selected: number[] = [];
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  let count = 0;
+  const step = Math.max(1, Math.floor(stride));
+  for (let i = 0; i + 2 < points.length; i += 3 * step) {
+    const point: Vec3 = [points[i], points[i + 1], points[i + 2]];
+    if (Math.abs(signedHeight(plane, point)) > band) continue;
+    selected.push(...point);
+    x += point[0];
+    y += point[1];
+    z += point[2];
+    count += 1;
+  }
+  if (count === 0) throw new Error("fitted floor has no displayable supporting points");
+  const rawCenter: Vec3 = [x / count, y / count, z / count];
+  const centerHeight = signedHeight(plane, rawCenter);
+  const center: Vec3 = [
+    rawCenter[0] - plane.normal[0] * centerHeight,
+    rawCenter[1] - plane.normal[1] * centerHeight,
+    rawCenter[2] - plane.normal[2] * centerHeight,
+  ];
+  const radii: number[] = [];
+  for (let i = 0; i + 2 < selected.length; i += 3) {
+    const dx = selected[i] - center[0];
+    const dy = selected[i + 1] - center[1];
+    const dz = selected[i + 2] - center[2];
+    const normalDistance = dx * plane.normal[0] + dy * plane.normal[1] + dz * plane.normal[2];
+    radii.push(Math.sqrt(Math.max(0, dx * dx + dy * dy + dz * dz - normalDistance * normalDistance)));
+  }
+  return {
+    points: Float32Array.from(selected),
+    center,
+    radius: Math.max(0.2, percentile(radii, 90)),
   };
 }
 
@@ -150,21 +234,19 @@ export const groundPlaneSpec: NodeSpec = {
   type: "ground-plane",
   label: "Ground Plane",
   category: "geometry",
-  version: "0.3.0",
+  version: "0.4.0",
   execution: "auto",
   inputs: [
     { id: "depth", label: "Depth Field", type: "depth_field", required: true },
     { id: "points", label: "Points", type: "point_cloud", required: true },
   ],
   outputs: [{ id: "plane", label: "Floor Plane", type: "plane" }],
-  defaults: { inlierDistance: 0.035, maxTiltDeg: 30, stride: 16, iterations: 1200, candidateLowestPercent: 35, floorQuantile: 2 },
+  defaults: { inlierDistance: 0.035, maxTiltDeg: 30, stride: 16, iterations: 1200 },
   controls: [
     { kind: "slider", key: "inlierDistance", label: "Inlier band", min: 0.01, max: 0.1, step: 0.005, suffix: " m" },
     { kind: "slider", key: "maxTiltDeg", label: "Initial tilt", min: 10, max: 45, step: 1, suffix: "°" },
     { kind: "slider", key: "stride", label: "Fit stride", min: 4, max: 32, step: 1, suffix: "×" },
     { kind: "slider", key: "iterations", label: "RANSAC", min: 250, max: 5000, step: 250 },
-    { kind: "slider", key: "candidateLowestPercent", label: "Lowest proposals", min: 10, max: 100, step: 5, suffix: "%" },
-    { kind: "slider", key: "floorQuantile", label: "Floor anchor", min: 0.5, max: 10, step: 0.5, suffix: "%" },
   ],
   execute: async ({ inputs, params }) => {
     const field = inputs.depth?.value as DepthFieldValue | undefined;
@@ -181,36 +263,36 @@ export const groundPlaneSpec: NodeSpec = {
     if (gravity.coherence < 0.7) {
       throw new Error(`camera up is incoherent (${gravity.coherence.toFixed(2)}); do not fit a floor automatically`);
     }
-    const fit = fitGroundPlaneTwoPass(cloud.positions, {
+    const fit = fitGroundPlaneRobust(cloud.positions, {
       up: gravity.up,
       maxTiltDeg: Number(params.maxTiltDeg),
       inlierDistance: Number(params.inlierDistance),
       iterations: Number(params.iterations),
       stride: Number(params.stride),
-      candidateLowestFraction: Number(params.candidateLowestPercent) / 100,
       minInliers: 100,
-      supportRatio: 0.02,
+      minInlierFraction: 0.01,
+      proposalFractions: [1, 0.35],
+      supportRatio: 0.1,
       maxBelowFraction: 0.2,
       seed: 7,
     });
-    const anchored = anchorGroundPlaneToLowQuantile(
+    const evidence = collectPlaneEvidence(
       cloud.positions,
-      fit.refined,
-      Number(params.floorQuantile),
-      Number(params.stride),
+      fit.plane,
       Number(params.inlierDistance),
+      Number(params.stride),
     );
     const value: GroundPlaneValue = {
-      plane: anchored.plane,
-      initial: fit.initial,
-      refined: anchored,
+      plane: fit.plane,
+      fit,
       gravity,
+      evidence,
     };
     return {
       plane: {
         type: "plane",
         value,
-        summary: `${(anchored.inlierFraction * 100).toFixed(1)}% floor · ${(anchored.rmse * 100).toFixed(1)} cm RMSE`,
+        summary: `${(fit.inlierFraction * 100).toFixed(1)}% support · ${fit.tiltDeg.toFixed(1)}° tilt · ${(fit.rmse * 100).toFixed(1)} cm RMSE`,
       },
     };
   },
@@ -308,7 +390,7 @@ export const measureHeightSpec: NodeSpec = {
   type: "measure-height",
   label: "Measure Height",
   category: "geometry",
-  version: "0.2.0",
+  version: "0.3.0",
   execution: "auto",
   inputs: [
     { id: "selection", label: "Selection", type: "selection", required: true },
@@ -339,6 +421,9 @@ export const measureHeightSpec: NodeSpec = {
     let rawM: number;
     let internalSpreadM: number;
     let topHeight: number;
+    let bottomHeight: number;
+    let rulerAnchor: Vec3;
+    let rulerKind: MeasurementValue["rulerKind"];
     let details: Record<string, number>;
     if (mode === "vertical_extent") {
       const result = measureVerticalExtent(selection.points, ground.plane, {
@@ -348,27 +433,39 @@ export const measureHeightSpec: NodeSpec = {
       });
       rawM = result.height;
       internalSpreadM = result.uncertainty;
+      bottomHeight = result.bottom;
       topHeight = result.top;
+      const bottomCentroid = pointBandCentroid(selection.points, ground.plane, result.bottom);
+      const topCentroid = pointBandCentroid(selection.points, ground.plane, result.top);
+      rulerAnchor = [
+        (bottomCentroid[0] + topCentroid[0]) / 2,
+        (bottomCentroid[1] + topCentroid[1]) / 2,
+        (bottomCentroid[2] + topCentroid[2]) / 2,
+      ];
+      rulerKind = "extent";
       details = { bottomM: result.bottom, topM: result.top, bottomRoughnessM: result.bottomRoughness, topRoughnessM: result.topRoughness };
     } else {
       const result = measureHeight(selection.points, ground.plane, {
         percentile: Number(params.percentile),
         minPoints: Number(params.minPoints),
-        planeRmse: ground.refined.rmse,
+        planeRmse: ground.fit.rmse,
       });
       rawM = result.height;
       internalSpreadM = result.uncertainty;
+      bottomHeight = 0;
       topHeight = result.height;
-      details = { topRoughnessM: result.topRoughness, floorRmseM: ground.refined.rmse, maxHeightM: result.maxHeight };
+      rulerAnchor = pointBandCentroid(selection.points, ground.plane, result.height);
+      rulerKind = "floor_height";
+      details = { topRoughnessM: result.topRoughness, floorRmseM: ground.fit.rmse, maxHeightM: result.maxHeight };
     }
-    const top = pointNearestHeight(selection.points, ground.plane, topHeight);
     const value: MeasurementValue = {
       objectId: selection.objectId,
       mode,
       rawM,
       internalSpreadM,
       pointCount: selection.diagnostics.pointCount,
-      ruler: verticalRuler(top, ground.plane, rawM),
+      ruler: verticalRuler(rulerAnchor, ground.plane, bottomHeight, topHeight),
+      rulerKind,
       details,
     };
     return {

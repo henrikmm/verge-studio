@@ -167,22 +167,33 @@ export function Viewport3D() {
     }
 
     if (ground && cloud) {
-      const size = Math.max(1, cloud.extent * 0.65);
-      const geometry = new THREE.PlaneGeometry(size, size);
+      const evidenceGeometry = new THREE.BufferGeometry();
+      evidenceGeometry.setAttribute("position", new THREE.BufferAttribute(ground.evidence.points, 3));
+      const support = new THREE.Points(
+        evidenceGeometry,
+        new THREE.PointsMaterial({
+          color: "#f3c969",
+          size: Math.max(0.004, cloud.extent / 900),
+          sizeAttenuation: true,
+          transparent: true,
+          opacity: 0.75,
+        }),
+      );
+      support.name = "floor-support-points";
+      evidence.add(support);
+
+      const radius = Math.min(cloud.extent * 0.35, ground.evidence.radius * 1.05);
+      const geometry = new THREE.CircleGeometry(Math.max(0.2, radius), 64);
       const material = new THREE.MeshBasicMaterial({
         color: "#f3c969",
         transparent: true,
-        opacity: 0.12,
+        opacity: 0.09,
         side: THREE.DoubleSide,
         depthWrite: false,
       });
       const floor = new THREE.Mesh(geometry, material);
       floor.name = "fitted-floor";
-      floor.position.set(
-        -ground.plane.offset * ground.plane.normal[0],
-        -ground.plane.offset * ground.plane.normal[1],
-        -ground.plane.offset * ground.plane.normal[2],
-      );
+      floor.position.set(...ground.evidence.center);
       floor.quaternion.setFromUnitVectors(
         new THREE.Vector3(0, 0, 1),
         new THREE.Vector3(...ground.plane.normal),
@@ -211,10 +222,26 @@ export function Viewport3D() {
       const vertices = new Float32Array([...measurement.ruler.bottom, ...measurement.ruler.top]);
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-      const ruler = new THREE.Line(geometry, new THREE.LineBasicMaterial({ color: "#f3c969", depthTest: false }));
+      const rulerMaterial = new THREE.LineBasicMaterial({ color: "#e8a95b", depthTest: false });
+      const ruler = new THREE.Line(geometry, rulerMaterial);
       ruler.renderOrder = 5;
       ruler.name = "measurement-ruler";
       evidence.add(ruler);
+
+      const markerRadius = Math.max(0.008, (cloud?.extent ?? 5) / 180);
+      for (const [name, position] of [
+        ["ruler-bottom", measurement.ruler.bottom],
+        ["ruler-top", measurement.ruler.top],
+      ] as const) {
+        const marker = new THREE.Mesh(
+          new THREE.SphereGeometry(markerRadius, 12, 8),
+          new THREE.MeshBasicMaterial({ color: "#e8a95b", depthTest: false }),
+        );
+        marker.position.set(...position);
+        marker.renderOrder = 6;
+        marker.name = name;
+        evidence.add(marker);
+      }
     }
   }, [cloud, ground, measurement, selection]);
 
@@ -253,8 +280,8 @@ export function Viewport3D() {
       <div className="pane-body" ref={hostRef}>
         {ground && (
           <div className="viewport-overlay">
-            FLOOR {(ground.refined.rmse * 100).toFixed(1)} cm RMSE · GRAVITY {ground.gravity.coherence.toFixed(2)}
-            {measurement && <><br /><b>{measurement.rawM.toFixed(3)} m</b> · internal spread ±{measurement.internalSpreadM.toFixed(3)} m</>}
+            FLOOR {(ground.fit.inlierFraction * 100).toFixed(1)}% SUPPORT · {ground.fit.tiltDeg.toFixed(1)}° TILT · {(ground.fit.rmse * 100).toFixed(1)} cm RMSE
+            {measurement && <><br />{measurement.rulerKind === "extent" ? "EXTENT" : "HEIGHT ABOVE FLOOR"} <b>{measurement.rawM.toFixed(3)} m</b> · spread ±{measurement.internalSpreadM.toFixed(3)} m</>}
           </div>
         )}
         {!cloud && (

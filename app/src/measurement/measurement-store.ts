@@ -88,6 +88,7 @@ export interface MeasurementObservation {
   pointCount: number;
   confidenceThreshold: number;
   floorRmseM: number;
+  floorSupportFraction?: number;
   floorTiltDeg: number;
   floorBelowFraction: number;
   gravityCoherence: number;

@@ -11,7 +11,9 @@
 import { describe, expect, it } from "vitest";
 import {
   fitGroundPlane,
+  fitGroundPlaneRobust,
   fitGroundPlaneTwoPass,
+  groundPlaneQuality,
   anchorGroundPlaneToLowQuantile,
   fitPlaneFromSeeds,
   GroundPlaneNotFoundError,
@@ -172,6 +174,53 @@ describe("fitGroundPlane", () => {
     });
     expect(fit.elevation).toBeCloseTo(0, 2);
     expect(fit.belowFraction).toBeLessThan(0.15);
+  });
+});
+
+describe("fitGroundPlaneRobust", () => {
+  it("compares whole-cloud and lower-region hypotheses deterministically", () => {
+    const room = syntheticRoom({ noise: 0.004, rotate: true });
+    const a = fitGroundPlaneRobust(room.points, { up: room.up, iterations: 500 });
+    const b = fitGroundPlaneRobust(room.points, { up: room.up, iterations: 500 });
+
+    expect(a.hypotheses).toHaveLength(2);
+    expect(a.plane).toEqual(b.plane);
+    expect(a.proposalFraction).toBe(b.proposalFraction);
+    expect(angleBetweenDeg(a.plane.normal, room.up)).toBeLessThan(2);
+  });
+
+  it("does not mistake a thin, tilted plane with low RMSE for stronger floor evidence", () => {
+    const common = {
+      plane: { normal: [0, 1, 0] as Vec3, offset: 0 },
+      inlierCount: 100,
+      elevation: 0,
+      candidatesConsidered: 20,
+      seed: 7,
+    };
+    const thin = {
+      ...common,
+      inlierFraction: 0.007,
+      rmse: 0.01,
+      tiltDeg: 28,
+      belowFraction: 0.015,
+    };
+    const supported = {
+      ...common,
+      inlierFraction: 0.145,
+      rmse: 0.012,
+      tiltDeg: 12,
+      belowFraction: 0,
+    };
+    const options = { maxTiltDeg: 30, inlierDistance: 0.035, maxBelowFraction: 0.2 };
+    expect(groundPlaneQuality(supported, options)).toBeGreaterThan(
+      groundPlaneQuality(thin, options),
+    );
+  });
+
+  it("fails instead of rendering a plane below the minimum support fraction", () => {
+    const room = syntheticRoom();
+    expect(() => fitGroundPlaneRobust(room.points, { up: room.up, minInlierFraction: 0.9 }))
+      .toThrow(/numerically thin plane/);
   });
 });
 

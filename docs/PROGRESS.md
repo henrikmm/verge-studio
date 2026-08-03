@@ -485,12 +485,12 @@ Three things worth knowing, none of them yet a measurement of an object:
    which is a real room. Clip A spanned only 1.9 m in total and raised a scale worry; clip B
    does not reproduce it. Nothing is graded until masks exist, but the gross sanity check passes.
 2. **The camera-derived up is 18–28° off the fitted floor normal.** Coherence ~0.95 says the
-   frames AGREE, not that they are right — the phone was held tilted the whole way, exactly the
-   documented failure of this prior. The floor's own normal is the better up axis. **The 252 px
-   run at 27.6° nearly hit the 30° gate**, so a follow-up should re-derive up from the fitted
-   plane and re-fit rather than widening the gate further.
-3. **Plane RMSE is 17 mm on all three.** That is the floor's own roughness, and it propagates
-   into every height's error bar — a ±17 mm floor on a 2.10 m door is 0.8%.
+   frames AGREE, not that they are right. This initially suggested re-deriving up from the first
+   floor and fitting again. M3b visual review disproved that strategy: a first fit must not be
+   allowed to become its own reference. Competing independently scored hypotheses are safer.
+3. **Plane RMSE was 17 mm on all three initial fits.** M3b showed why RMSE cannot stand alone:
+   a thin, tilted slice can also have a small residual. Support, tilt and below-floor mass must
+   travel with RMSE as floor evidence.
 
 ### M3a — Geometry core (offline, no UI) ✅
 
@@ -498,8 +498,9 @@ Pure functions in `geometry/`, plain arrays in and numbers out, no Three.js. **8
 by the app's vitest (its glob includes `../geometry`) and typechecked by the app's tsc.
 
 - [x] `gravity.ts` — up axis + coherence, camera centres, trajectory span (parallax check)
-- [x] `plane.ts` — deterministic gravity-gated RANSAC, confidence-weighted, lowest-elevation
-      selection, height-field least-squares refinement, `fitPlaneFromSeeds()` fallback
+- [x] `plane.ts` — deterministic gravity-gated RANSAC, confidence-weighted competing whole-cloud
+      and lower-region proposals, support/tilt/below-mass quality scoring, height-field
+      least-squares refinement, `fitPlaneFromSeeds()` fallback
 - [x] `backproject.ts` — mask → world points, with erosion, confidence threshold and
       depth-discontinuity rejection
 - [x] `measure.ts` — percentile height, NMAD uncertainty, density gate, point-to-point distance
@@ -521,11 +522,12 @@ by the app's vitest (its glob includes `../geometry`) and typechecked by the app
 
 ### M3b — Mask → measurement → grading ✅
 
-- [x] **Re-derive `up` from the fitted floor and re-fit.** Measured on clip B: the
-      camera-derived up is 18–28° off the floor's own normal, and the 252 px run came within
-      2.4° of the 30° orientation gate. The prior only needs to get the fit into the right
-      neighbourhood; the floor then defines up far better than the cameras do. Widening the
-      gate instead would let genuinely tilted surfaces in — do the two-pass fit.
+- [x] **Retire the self-referential two-pass floor fit.** User review exposed that the
+      lower-slice → re-fit → low-quantile-anchor chain could manufacture a precise-looking but
+      strongly tilted floor. On 504px it had only 0.7% support and 27.9° tilt despite a 2 cm
+      RMSE. The replacement compares whole-cloud and lower-region hypotheses, and scores
+      support, tilt, below-floor mass and RMSE together. The selected 504px floor has 14.6%
+      support, 11.8° tilt and 1.2 cm RMSE.
 - [x] Brush on the frame pane: RGB/depth/confidence outputs, frame scrubber, brush/erase/size,
       clear, mask opacity, zoom and confidence-percentile control. Masks persist as RLE.
 - [x] **Live 3D highlight of the selected points while painting**, so mask spill onto the wall
@@ -545,8 +547,13 @@ by the app's vitest (its glob includes `../geometry`) and typechecked by the app
       output, so the paid node is connected without auto-running or being mistaken for evidence.
 - [x] **Recompute from source** invalidates ground/selection and every descendant, then actually
       reruns them. The old button reused cached results and only looked active.
-- [x] B2/B5 use explicit endpoint evidence (floor patch ↔ top edge). The fitted plane supplies
-      the vertical direction, but its offset cannot silently decide these two heights.
+- [x] B2/B5 are explicitly labelled floor-referenced measurements; B1/B3 are extents. The 3D
+      ruler follows the selected object's endpoint bands for extents instead of looking like a
+      projection to an invented ground point.
+- [x] **Honest floor display.** Yellow markers show the points that actually support the fit,
+      and the translucent plane is clipped to their observed footprint and centred on them.
+      The former large origin-centred square amplified even modest tilt into a false-looking
+      ground projection.
 - [x] Range-aware NPZ loading (24 MiB chunks) and canonical-frame mapping for both fixture and
       future real-run manifests.
 - [x] **Objects are rows in a pane, never nodes in the graph** — the graph is the pipeline, and
@@ -560,21 +567,22 @@ by the app's vitest (its glob includes `../geometry`) and typechecked by the app
 
 | Setting | Raw | Door-scaled | Decision |
 |---|---:|---:|---|
-| **504px · 112f** | **0.113 m** | 0.314 m | **raw default; fastest non-degraded result** |
-| 356px · 256f | 0.182 m | **0.051 m** | best calibrated candidate; validate on another clip |
-| 252px · 256f | 0.257 m | 0.141 m | spatial detail loss is too large |
+| **504px · 112f** | **0.061 m** | **0.026 m** | **default; best raw and corrected result** |
+| 356px · 256f | 0.193 m | 0.029 m | close after calibration, but slower and weaker raw |
+| 252px · 256f | 0.227 m | 0.187 m | spatial detail loss is too large |
 
 The door is measured as the user defined it: physical leaf bottom edge → top edge, an extent.
 The door-derived factor is secondary and, when shown, consistently multiplies every length.
 Raw DA3 remains the primary evidence. See `MEASUREMENTS.md` for the object-level table, internal
 spreads and current-run regressions.
 
-**What to understand:** the 504px run is best without calibration; the 356px run becomes best
-after the door factor. Because that same correction harms 504px, there is no evidence yet for a
-universal one-factor correction. The 356px fit's 0.030 m residual is promising but is not a noise
-floor: it comes from only four painted values and B5 has a derived truth.
+**What to understand:** the 504px run is best with or without the door correction. The floor fix
+cut its raw holdout MAE from 0.113 m to 0.061 m and moved the door from 1.522 m to 1.887 m without
+changing its painted mask. This is strong evidence that floor validation was the dominant M3b
+bug, not 2D→3D registration. The 356px fit's 0.004 m residual is still not a noise floor: it comes
+from only four painted values and B5 has a derived truth.
 
-Final local gate: production build green; `verify.sh` green with **202 unit/fixture tests** plus
+Final local gate: production build green; `verify.sh` green with **207 unit/fixture tests** plus
 the fixture smoke. The optional server-contract check reported its explicit no-FastAPI skip in
 this shell; no server code changed in M3b. No cloud resource was created or billed.
 

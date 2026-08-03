@@ -49,20 +49,30 @@ spread” is the local patch roughness; it is **not** a claim that the total mea
 accurate. Every error is much larger than that spread, which shows that systematic scale/floor
 bias dominates local point noise in this clip.
 
-These values supersede the first M3b pass. That pass back-projected the painted pixels in the
-raw NPZ coordinate frame but displayed and fitted them against DA3's transformed GLB frame.
-The pink 3D evidence was therefore displaced from its 2D source. The current pass applies the
-GLB's recorded `hf_alignment` transform to both selected points and the camera-derived up
-direction. B2 and B5 also use the user-confirmed endpoint stroke (floor patch ↔ upper edge), so
-their height does not depend on the automatic plane's vertical offset.
+These values supersede both earlier M3b passes. The first mixed DA3's raw NPZ coordinates with
+the transformed GLB coordinates, displacing the pink 3D evidence from its 2D source. The second
+fixed that registration but let a thin tilted slice win as the floor: its 2 cm fit error looked
+good even though only 0.7% of the 504px cloud supported it. The current pass keeps every point
+in the GLB frame and compares floor hypotheses using support, tilt, below-floor mass and fit
+error together. B2 and B5 are floor-referenced heights; B1 and B3 are object extents.
+
+The floor diagnostics below are part of the result, not decoration. “Support” is the fraction
+of the sampled scene close to the chosen plane. A small fit error without meaningful support is
+not accepted as evidence of a floor.
+
+| Setting | Floor support | Tilt from camera up | Plane RMSE | Chosen proposal |
+|---|---:|---:|---:|---|
+| **504px · 112f** | **14.6%** | 11.8° | **0.012 m** | whole cloud |
+| 356px · 256f | 10.5% | 15.4° | 0.018 m | whole cloud |
+| 252px · 256f | 2.7% | **9.1°** | 0.020 m | lower region |
 
 | Object | Truth | 504px · 112f | 356px · 256f | 252px · 256f |
 |---|---:|---:|---:|---:|
-| B1 door-leaf extent | 2.100 | 1.522 (-0.578) ±0.035 | 1.542 (-0.558) ±0.034 | 1.237 (-0.863) ±0.025 |
-| B2 floor → table | 0.750 | 0.629 (-0.121) ±0.024 | 0.576 (-0.174) ±0.004 | 0.540 (-0.210) ±0.017 |
-| B3 tower extent | 0.450 | 0.401 (-0.049) ±0.030 | 0.340 (-0.110) ±0.028 | 0.282 (-0.168) ±0.016 |
+| B1 door-leaf extent | 2.100 | 1.887 (-0.213) ±0.037 | 1.557 (-0.543) ±0.032 | 1.243 (-0.857) ±0.027 |
+| B2 floor → table | 0.750 | 0.704 (-0.046) ±0.003 | 0.583 (-0.167) ±0.007 | 0.551 (-0.199) ±0.021 |
+| B3 tower extent | 0.450 | 0.407 (-0.043) ±0.026 | 0.355 (-0.095) ±0.027 | 0.301 (-0.149) ±0.020 |
 | B4 monitor + stand extent | 0.534 | unavailable | unavailable | unavailable |
-| B5 floor → monitor top | 1.284 | 1.453 (+0.169) ±0.039 | 1.021 (-0.263) ±0.026 | 0.890 (-0.394) ±0.018 |
+| B5 floor → monitor top | 1.284 | 1.190 (-0.094) ±0.017 | 0.967 (-0.317) ±0.016 | 0.950 (-0.334) ±0.029 |
 
 B4 is deliberately absent: its stand/table contact is hidden by the laptop. Guessing that
 endpoint would make the table more complete and the evidence less honest.
@@ -76,16 +86,15 @@ remains secondary evidence—raw DA3 is still the primary output.
 
 | Setting | GPU | B1 scale factor | Raw holdout MAE | Door-scaled MAE |
 |---|---:|---:|---:|---:|
-| **504px · 112f** | 31.27 s | 1.380 | **0.113 m** | 0.314 m |
-| 356px · 256f | 40.83 s | 1.362 | 0.182 m | **0.051 m** |
-| 252px · 256f | 16.47 s | 1.698 | 0.257 m | 0.141 m |
+| **504px · 112f** | 31.27 s | 1.113 | **0.061 m** | **0.026 m** |
+| 356px · 256f | 40.83 s | 1.349 | 0.193 m | 0.029 m |
+| 252px · 256f | 16.47 s | 1.689 | 0.227 m | 0.187 m |
 
-**Decision:** use **504px · 112 frames** as the default for an uncalibrated/raw workflow on this
-clip: it has the lowest raw holdout error, costs less GPU time than 356px, and preserves the PC
-tower particularly well. The 356px run is the better *calibrated candidate*—one door factor
-reduces its holdout MAE to 0.051 m—but the same correction makes the 504px run worse. That
-instability is exactly why door scaling stays a diagnostic rather than silently replacing the
-raw result. At the same 256-frame coverage, 252px loses too much spatial detail.
+**Decision:** use **504px · 112 frames** as the default on this clip. It now wins both raw and
+door-scaled holdout error, costs less GPU time than 356px, and preserves the PC tower well. The
+356px run still responds consistently to the door correction, but it is slower and much worse
+before calibration. At the same 256-frame coverage, 252px loses too much spatial detail.
+Door scaling remains a diagnostic rather than silently replacing raw DA3.
 
 ### Current-run raw error models
 
@@ -94,14 +103,14 @@ diagnostic fits rather than a four-independent-object laboratory calibration.
 
 | Setting | slope `a` | offset `b` | residual RMS | mean AbsRel | max raw error |
 |---|---:|---:|---:|---:|---:|
-| 504px · 112f | 0.716 | +0.181 m | 0.206 m | 16.9% | 0.578 m |
-| 356px · 256f | 0.731 | +0.033 m | **0.030 m** | 23.7% | 0.558 m |
-| 252px · 256f | 0.569 | +0.086 m | 0.054 m | 34.3% | 0.863 m |
+| 504px · 112f | 0.893 | +0.024 m | 0.016 m | **8.3%** | **0.213 m** |
+| 356px · 256f | 0.727 | +0.033 m | **0.004 m** | 23.5% | 0.543 m |
+| 252px · 256f | 0.566 | +0.112 m | 0.071 m | 31.6% | 0.857 m |
 
-The 356px run is internally close to a single affine calibration, but **0.030 m is not yet a
+The 356px run is internally close to a single affine calibration, but **0.004 m is not yet a
 noise-floor estimate**: there are only four painted values, and B5's truth is derived from B2
 and B4. The useful result is narrower: calibration looks worth testing on a second clip, while
-the inconsistent 504px correction proves that the app must continue showing raw and corrected
+the much better raw 504px result shows why the app must continue showing raw and corrected
 values side by side.
 
 ---

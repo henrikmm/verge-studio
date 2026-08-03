@@ -160,9 +160,10 @@ export function ObjectsPane() {
       internalSpreadM: measurement.internalSpreadM,
       pointCount: measurement.pointCount,
       confidenceThreshold: selection.confidenceThreshold,
-      floorRmseM: ground.refined.rmse,
-      floorTiltDeg: ground.refined.tiltDeg,
-      floorBelowFraction: ground.refined.belowFraction,
+      floorRmseM: ground.fit.rmse,
+      floorSupportFraction: ground.fit.inlierFraction,
+      floorTiltDeg: ground.fit.tiltDeg,
+      floorBelowFraction: ground.fit.belowFraction,
       gravityCoherence: ground.gravity.coherence,
     });
   };

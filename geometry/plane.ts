@@ -119,6 +119,27 @@ export interface TwoPassGroundPlaneFit {
   refined: GroundPlaneFit;
 }
 
+export interface GroundPlaneHypothesis {
+  /** Fraction of the gravity-sorted cloud used to propose RANSAC triples. */
+  proposalFraction: number;
+  /** Higher is better. Combines support with the physical sanity checks below. */
+  qualityScore: number;
+  fit: GroundPlaneFit;
+}
+
+export interface RobustGroundPlaneOptions extends Omit<GroundPlaneOptions, "candidateLowestFraction"> {
+  /** Competing proposal pools. Whole-cloud + lower-region is the measured default. */
+  proposalFractions?: readonly number[];
+  /** Refuse a numerically thin plane even when RANSAC can polish it to a low RMSE. */
+  minInlierFraction?: number;
+}
+
+export interface RobustGroundPlaneFit extends GroundPlaneFit {
+  proposalFraction: number;
+  qualityScore: number;
+  hypotheses: readonly GroundPlaneHypothesis[];
+}
+
 const DEFAULTS = {
   maxTiltDeg: 30,
   inlierDistance: 0.02,
@@ -130,6 +151,26 @@ const DEFAULTS = {
   candidateLowestFraction: 1,
   maxBelowFraction: 0.15,
 } as const;
+
+/**
+ * Comparable quality across proposal strategies.
+ *
+ * RMSE alone is unsafe: an arbitrary diagonal slice can be extremely thin. Support is
+ * therefore the base evidence, with soft penalties for disagreeing with camera-derived
+ * up, leaving points below the plane, and using most of the allowed inlier band.
+ */
+export function groundPlaneQuality(
+  fit: GroundPlaneFit,
+  options: Pick<GroundPlaneOptions, "maxTiltDeg" | "inlierDistance" | "maxBelowFraction"> = {},
+): number {
+  const maxTilt = Math.max(1, options.maxTiltDeg ?? DEFAULTS.maxTiltDeg);
+  const inlierDistance = Math.max(1e-6, options.inlierDistance ?? DEFAULTS.inlierDistance);
+  const maxBelow = Math.max(1e-6, options.maxBelowFraction ?? DEFAULTS.maxBelowFraction);
+  const tiltPenalty = 2 * (fit.tiltDeg / maxTilt) ** 2;
+  const belowPenalty = 2 * (fit.belowFraction / maxBelow) ** 2;
+  const residualPenalty = fit.rmse / inlierDistance;
+  return Math.log(Math.max(1e-6, fit.inlierFraction)) - tiltPenalty - belowPenalty - residualPenalty;
+}
 
 /**
  * mulberry32 — small, fast, and fully determined by its seed.
@@ -422,9 +463,76 @@ export function fitGroundPlane(
 }
 
 /**
- * Bootstrap gravity from camera orientation, then let the recovered floor tighten it.
- * The second pass is deliberately constrained: it may polish the floor normal, not
- * jump to an unrelated horizontal surface.
+ * Fit several physically plausible floor hypotheses and keep the strongest one.
+ *
+ * A hard lower-cloud crop fixed sparse floors in one reconstruction and created a
+ * diagonal floor in another. Treating full-cloud and lower-region sampling as competing
+ * hypotheses retains both useful behaviours and makes the decision from measured
+ * evidence instead of a clip-specific constant.
+ */
+export function fitGroundPlaneRobust(
+  points: ArrayLike<number>,
+  options: RobustGroundPlaneOptions,
+): RobustGroundPlaneFit {
+  const {
+    proposalFractions = [1, 0.35],
+    minInlierFraction = 0.01,
+    ...fitOptions
+  } = options;
+  const fractions = Array.from(
+    new Set(proposalFractions.map((value) => Math.max(0.01, Math.min(1, value)))),
+  );
+  const hypotheses: GroundPlaneHypothesis[] = [];
+  const failures: string[] = [];
+
+  for (const proposalFraction of fractions) {
+    try {
+      const fit = fitGroundPlane(points, {
+        ...fitOptions,
+        candidateLowestFraction: proposalFraction,
+      });
+      hypotheses.push({
+        proposalFraction,
+        qualityScore: groundPlaneQuality(fit, fitOptions),
+        fit,
+      });
+    } catch (error) {
+      failures.push(
+        `${Math.round(proposalFraction * 100)}% proposals: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  const chosen = hypotheses.sort((a, b) => b.qualityScore - a.qualityScore)[0];
+  if (!chosen) {
+    throw new GroundPlaneNotFoundError(
+      `no floor hypothesis survived: ${failures.join(" | ")}`,
+    );
+  }
+  if (chosen.fit.inlierFraction < minInlierFraction) {
+    throw new GroundPlaneNotFoundError(
+      `best floor hypothesis has only ${(chosen.fit.inlierFraction * 100).toFixed(2)}% support ` +
+        `(minimum ${(minInlierFraction * 100).toFixed(2)}%) — do not project measurements ` +
+        `from a numerically thin plane`,
+    );
+  }
+
+  return {
+    ...chosen.fit,
+    proposalFraction: chosen.proposalFraction,
+    qualityScore: chosen.qualityScore,
+    hypotheses,
+  };
+}
+
+/**
+ * Legacy explicit two-pass helper.
+ *
+ * Useful only when the caller has independently validated the first plane. Do not use
+ * it as automatic floor selection: a wrong first plane becomes the second pass's frame
+ * of reference, which caused the visibly tilted M3b door-floor regression.
  */
 export function fitGroundPlaneTwoPass(
   points: ArrayLike<number>,
@@ -441,12 +549,13 @@ export function fitGroundPlaneTwoPass(
 }
 
 /**
- * Move an already-oriented ground plane onto the cloud's robust lower envelope.
+ * Move an independently validated, already-oriented plane onto a robust lower envelope.
  *
  * RANSAC is good at recovering a floor normal but a sparse walkthrough can leave its
  * chosen parallel plane partway up the room. A low percentile is the robust version of
  * "lowest point": it ignores a few reconstruction outliers while using wall bottoms and
- * floor points that never formed a dense enough plane proposal on their own.
+ * floor points that never formed a dense enough plane proposal on their own. Do not use
+ * this to rescue an unvalidated automatic plane; the anchor can amplify a bad normal.
  */
 export function anchorGroundPlaneToLowQuantile(
   points: ArrayLike<number>,

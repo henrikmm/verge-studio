@@ -52,6 +52,14 @@ Findings fixed during this pass:
   two live-only nodes while Full graph shows the complete connection.
 - The correction is now labelled “Door-scaled” and consistently applies the multiplicative
   factor to every length while raw DA3 remains the primary result.
+- User visual review caught a floor that was mathematically low-error but physically implausible:
+  only 0.7% of the 504px cloud supported it and it was tilted 27.9° from camera-derived up. The
+  self-referential two-pass/anchor chain was removed. Competing whole-cloud/lower-region fits now
+  expose support, tilt and RMSE; the selected 504px floor is 14.6% supported and tilted 11.8°.
+- The old floor square was centred at the world origin and much larger than its evidence, making
+  tilt look like a plane projected outside the cloud. It is now centred and clipped to the actual
+  yellow floor-support points. Extent rulers are anchored to the selected endpoint bands and are
+  labelled separately from “height above floor”.
 
 Remaining review item: direct 3D add/remove painting is a useful future correction tool for
 occlusion and sparse per-frame evidence, but it is not needed to repair registration. B4 remains

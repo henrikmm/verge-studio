@@ -17,14 +17,15 @@ import { parseNpz } from "../app/src/lib/npz";
 import { estimateGravity, cameraCentres, trajectorySpan } from "./gravity";
 import { fitGroundPlane } from "./plane";
 import { heightsAbovePlane, percentile } from "./measure";
+import { normalize, type Vec3 } from "./types";
 
 const ROOT = new URL("../fixtures/room/504px-112f/", import.meta.url);
 const NPZ = fileURLToPath(new URL("verge-result.npz", ROOT));
 const GLB = fileURLToPath(new URL("scene.glb", ROOT));
 const available = existsSync(NPZ) && existsSync(GLB);
 
-/** Read the POSITION accessor of the GLB's single points mesh. */
-function readGlbPoints(path: string): Float32Array {
+/** Read the points and the NPZ→GLB transform used by the displayed scene. */
+function readGlb(path: string): { points: Float32Array; alignment: number[] } {
   const buffer = readFileSync(path);
   const jsonLength = buffer.readUInt32LE(12);
   const gltf = JSON.parse(buffer.subarray(20, 20 + jsonLength).toString("utf8"));
@@ -37,19 +38,33 @@ function readGlbPoints(path: string): Float32Array {
       const accessor = gltf.accessors[primitive.attributes.POSITION];
       const view = gltf.bufferViews[accessor.bufferView];
       const offset = binOffset + (view.byteOffset ?? 0) + (accessor.byteOffset ?? 0);
-      return new Float32Array(
-        buffer.buffer.slice(
-          buffer.byteOffset + offset,
-          buffer.byteOffset + offset + accessor.count * 12,
+      return {
+        points: new Float32Array(
+          buffer.buffer.slice(
+            buffer.byteOffset + offset,
+            buffer.byteOffset + offset + accessor.count * 12,
+          ),
         ),
-      );
+        alignment: (gltf.scenes[gltf.scene].extras.hf_alignment as number[][]).flat(),
+      };
     }
   }
   throw new Error("no POINTS primitive in the GLB");
 }
 
+function transformDirection(direction: Vec3, transform: number[]): Vec3 {
+  const value = normalize([
+    transform[0] * direction[0] + transform[1] * direction[1] + transform[2] * direction[2],
+    transform[4] * direction[0] + transform[5] * direction[1] + transform[6] * direction[2],
+    transform[8] * direction[0] + transform[9] * direction[1] + transform[10] * direction[2],
+  ]);
+  if (!value) throw new Error("alignment has a degenerate rotation");
+  return value;
+}
+
 describe.skipIf(!available)("real fixture: fixtures/room/504px-112f", () => {
-  const points = readGlbPoints(GLB);
+  const glb = readGlb(GLB);
+  const points = glb.points;
   const npz = parseNpz(readFileSync(NPZ).buffer as ArrayBuffer);
 
   it("carries the 1,000,000-point cloud DA3 exports", () => {
@@ -64,7 +79,7 @@ describe.skipIf(!available)("real fixture: fixtures/room/504px-112f", () => {
     // Measured 2026-08-01. High coherence means the operator held the phone upright.
     expect(gravity.coherence).toBeGreaterThan(0.9);
     expect(gravity.up[1]).toBeLessThan(0); // this clip's up is mostly -Y
-  });
+  }, 15_000);
 
   it("confirms the clip has real camera translation, so DA3 had parallax to use", async () => {
     const { extrinsics } = await npz;
@@ -77,8 +92,9 @@ describe.skipIf(!available)("real fixture: fixtures/room/504px-112f", () => {
   it("FINDS THE FLOOR, not a wall — the failure this whole design exists for", async () => {
     const { extrinsics } = await npz;
     const gravity = estimateGravity(extrinsics.data);
+    const up = transformDirection(gravity.up, glb.alignment);
     const fit = fitGroundPlane(points, {
-      up: gravity.up,
+      up,
       inlierDistance: 0.03,
       stride: 4,
       minInliers: 500,
@@ -99,7 +115,7 @@ describe.skipIf(!available)("real fixture: fixtures/room/504px-112f", () => {
 
   it("is deterministic on real data too", async () => {
     const { extrinsics } = await npz;
-    const up = estimateGravity(extrinsics.data).up;
+    const up = transformDirection(estimateGravity(extrinsics.data).up, glb.alignment);
     const options = { up, inlierDistance: 0.03, stride: 8, minInliers: 200 };
     const a = fitGroundPlane(points, options);
     const b = fitGroundPlane(points, options);
@@ -109,7 +125,7 @@ describe.skipIf(!available)("real fixture: fixtures/room/504px-112f", () => {
 
   it("produces a plausible room height above the fitted floor", async () => {
     const { extrinsics } = await npz;
-    const up = estimateGravity(extrinsics.data).up;
+    const up = transformDirection(estimateGravity(extrinsics.data).up, glb.alignment);
     const fit = fitGroundPlane(points, {
       up,
       inlierDistance: 0.03,
@@ -122,7 +138,7 @@ describe.skipIf(!available)("real fixture: fixtures/room/504px-112f", () => {
     // gate on DA3's metric claim, not a precision check.
     expect(top).toBeGreaterThan(1);
     expect(top).toBeLessThan(5);
-  });
+  }, 15_000);
 
   it("exposes depth, confidence, intrinsics and extrinsics for backprojection", async () => {
     const arrays = await npz;
