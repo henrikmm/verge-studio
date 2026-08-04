@@ -1,5 +1,57 @@
 # Design review log
 
+## 2026-08-04 — uncertainty budget, sittings, blind mode (commit pending, from `ff62f1f`)
+
+In-browser pass at 1280×800 after the honesty fixes. Browser console: **0 errors**. Storage was
+seeded with a synthetic 0.2.0 session (the in-app browser has its own localStorage), which also
+exercised the 0.2.0 → 0.3.0 migration end to end.
+
+1. Dark surfaces — **PASS** (`body` computed `rgb(13,13,15)`; the only near-white fills are the
+   `#d8d8d8` frames port dots, which are the DESIGN.md port palette).
+2. Dockview panes — **PASS** (Depth 2D, Viewport 3D, Graph, Inspector + Objects).
+3. Chrome density — **PASS** (tab strip 26px; labels 11px).
+4. Cloud + orbit + count + gizmo — **PASS**. Orbit is now *measured*, not assumed: a
+   `left_click_drag` inside the canvas visibly rotated the room between two screenshots, and the
+   gizmo rotated with it. This closes the M2a "orbit not re-measured" item — the old `readPixels`
+   checksum fails while the pane is hidden, but tool screenshots do capture the WebGL surface.
+5. Turbo depth + legend — **PASS** (frame 1/256, mask registered in RGB).
+6. Live status rows — **PASS** (10 nodes · 15 wires · 2 stale; 1,000,000 pts; 36,654 px selected).
+7. No horizontal scroll — **PASS** (`scrollWidth === clientWidth === 1280`).
+8. Type scale — **PASS** (zero elements inside `.pane` above 14px; readouts in JetBrains Mono).
+9. Squint test vs `docs/reference/sentinel-scientific-organism.png` — **PASS**. Comparable
+   darkness, density and contrast; the warm graph canvas, colored node headers, A/P badges and
+   ms footers all read as the same family. Remaining differences are deliberate: Sentinel puts
+   the numeric value inside the slider track and uses collapsible ▼ section headers, we put the
+   value right-aligned in mono and use plain headings.
+10. Inspector exposes every inference param — **PASS with a spec change**: process res, res
+    method, ref view and max frames each show their value in mono on the right. **Splats are
+    gone**, by the 2026-08-03 scope decision — the checklist item was edited to match rather
+    than left describing a control we deliberately removed.
+11. VRAM in inspector + status bar — **PARTIAL**: both are present (`0 B / 22.03 GiB`). "The live
+    bar moves during a run" still needs a real cloud run and was not re-verified.
+12. Unmeasured predictions as a labelled range — **NOT RE-VERIFIED** (needs a loaded clip; the
+    frame-plan section reads "no clip loaded" against the recorded fixture).
+13. Capped frame plan explains itself — **NOT RE-VERIFIED**, same reason.
+14. Mock-backed readouts labelled — **PASS** (`NVIDIA L4 (mock)` in the inspector header).
+
+Fixed during the pass:
+- The blind-mode toggle was clipped out of view: `.pane-status` is `nowrap` + `overflow:hidden`,
+  so a control on its right edge silently leaves the viewport in a narrow pane. Moved to the
+  `.object-context` row and gave that row `flex-wrap` so it wraps instead of clipping.
+- The uncertainty budget went blank whenever no mask was painted. It now falls back to the
+  object's recorded trial mean and says which of the two it is showing.
+- Viewport 3D's **Pause button did nothing** — `paused` was state that the rAF loop never read.
+  The loop now skips its work while paused (via a ref, so pausing cannot tear down the context).
+
+Found and NOT fixed — logged as PROGRESS follow-ups:
+- **Edges can never be selected, so edge deletion is unreachable.** `rfEdges` never sets
+  `selected` and `onEdgesChange` drops every non-`remove` change, so React Flow's selection is
+  overwritten on each render and Backspace has nothing to delete. A real click was confirmed to
+  land on `.react-flow__edge-interaction` with no selection resulting. Node deletion is fine
+  (10 → 9 nodes, and its wire went with it).
+- Rewiring by port drag remains **unverified**: handles are ~8px, and automated drags that miss
+  pan the canvas instead. Needs a human hand or a zoomed-in graph.
+
 ## 2026-08-02 — M3b evidence workflow + coordinate review (commit pending)
 
 Full in-browser pass at 1280×800 against `docs/DESIGN.md` and both Sentinel references. The

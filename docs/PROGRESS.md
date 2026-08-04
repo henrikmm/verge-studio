@@ -6,11 +6,29 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-04 · P0 done: the repeatability store shipped and nine trials were painted
+Last updated: 2026-08-04 (second session) · **Backlog audit + honesty fixes.** Every unchecked
+box in this file was graded against the code. Three were already done and never ticked, one
+whole block was decorative history, and the rest are now either fixed, verified, or written
+down below as a real task. The headline code change: the app no longer displays patch roughness
+as if it were the measurement uncertainty — bias and random error are now reported separately.
+
+Earlier that day · P0 done: the repeatability store shipped and nine trials were painted
 and analysed. **The result overturned its own premise** — operator endpoint placement repeats to
 1–6 mm within a sitting, so it is not the missing noise term; the residual error is systematic
 bias, and DA3's raw scale on clip B is ~3% low rather than the ~11% the frozen n=1 door row
 implied. 504px/112f remains the operating point. B4 remains ungraded (occluded endpoint).
+
+### Two standing constraints — read before touching anything
+
+1. **`server/` is frozen unless you intend to pay for a rebuild.** The deployed image is correct
+   as it stands. `deploy.sh` tags by a hash of `server/`, so *any* edit under it — even a
+   comment — forces a ~20 min rebuild on the next deploy. Two known one-line improvements
+   (`scene.jpg` collection, removing the dead `infer_gs` field) are deliberately NOT applied for
+   this reason. Batch them with the next real server change.
+2. **Gaussian splats are not a deliverable and never will be.** The one historical `infer_gs`
+   failure was a missing `gsplat` dependency; it does not matter, because no measurement node
+   consumes splats. Do not add the dependency, do not schedule a run, do not rebuild the image
+   for it. The app-side checkbox, contract field and port type were removed on 2026-08-04.
 
 ---
 
@@ -26,8 +44,10 @@ implied. 504px/112f remains the operating point. B4 remains ungraded (occluded e
 | M3a — Geometry core (offline) | **done** (89 geometry/fixture tests) |
 | M3b — Mask → measurement → grading | **done on clip B** |
 | P0 — Repeatability study | **done**; spread 1–6 mm, premise refuted, see findings below |
-| M3c — Automatic evidence selection | next, but its precision case is now gone |
-| M3d — Field/raster regime (vegetation) | planned after M3c proof |
+| P0.1 — Honesty fixes + backlog audit | **done 2026-08-04**; uncertainty split, sittings, blind mode |
+| M3c — Automatic evidence selection on the door | **next** — judged on ease of use, not precision |
+| M3d — Field/raster regime (vegetation) | planned after M3c proves out on the door |
+| P1 — Floor challenge set | **queued after M3 completes** — see its own section below |
 | M4 — Productization + evidence hardening | not started; splats dropped from roadmap |
 
 ---
@@ -54,28 +74,28 @@ more repeatable, even before it produces a beautiful full-object mask.
 
 ### Recommended sequence
 
-1. **P0 — Freeze repeatability before adding another model.** ~~Recorded rows currently replace
-   the previous row.~~ **Store built and verified 2026-08-04** — trials accumulate, each freezes
-   its own mask and time-to-measure, and operator spread is reported apart from patch roughness.
-   What remains is the painting itself: B1/B2/B3 drawn independently at least three times at
-   504px, then the export folded into `MEASUREMENTS.md`. See the P0 section below.
-2. **P1 — Challenge the floor on new captures.** Build a small 5–10 clip set covering portrait
-   and landscape capture, phone roll/pitch, little visible floor, glossy or textureless floor,
-   multiple horizontal surfaces and an outdoor slope. Track support, tilt, below-floor mass,
-   RMSE and the score margin between the best two floor hypotheses. Add an explicit “cannot
-   establish ground” result plus manual 3D floor seeds when the evidence is weak or ambiguous.
-3. **P2 — M3c, automate evidence before attempting video-wide semantics.** Start on one canonical
-   frame with click-prompted endpoint/object selection and keep brush correction. Grade it by
-   measurement difference from frozen manual evidence, failure/abstention rate, correction
-   clicks and operator time—not mask IoU alone. Multi-frame propagation is later work only if a
-   single frame cannot supply reliable endpoints.
-4. **P3 — M3d, transfer the proven geometry to grass.** Grass is not a door repeated many times.
-   Use a local ground raster and per-cell vegetation height percentiles, with point-count and
-   confidence gates. Track tape/reference error, valid-area coverage, abstention rate, cell size
-   and sensitivity to ground slope. Use semantic vegetation masking to exclude non-vegetation;
-   do not require instance segmentation of individual blades.
-5. **P4 — Productize the evidence path.** Prefer compact `mini_npz` or transient object storage
-   with signed URLs, verify a live cloud manifest in the browser, make recorded evidence
+**Re-ordered 2026-08-04 (user decision):** M3c comes next and must prove itself **on the door**
+before any grass work. The floor challenge set (P1) is queued for after M3 completes, not before.
+
+1. ~~**P0 — Freeze repeatability before adding another model.**~~ **Done 2026-08-04**: the store
+   ships, nine trials are painted and analysed, and the premise was refuted. The remaining
+   painting work (B5, the 356/252px doors, separated sittings) is listed under "P0 follow-ups".
+2. **M3c — automatic evidence selection, on clip B's door first.** One canonical frame,
+   click-prompted endpoint/object selection, brush correction retained. Grade by measurement
+   difference from the frozen manual trials, failure/abstention rate, correction clicks and
+   operator time — not mask IoU. Multi-frame propagation only if one frame cannot supply
+   reliable endpoints. **Its precision case is gone** (see the P0 findings): at 1–6 mm spread and
+   a 5–10 s median paint there is no headroom, so it must win on ease of use and on scenes where
+   a brush is impractical.
+3. **M3d — transfer the proven geometry to grass**, once the door proves out. Grass is not a
+   door repeated many times: use a local ground raster and per-cell vegetation height
+   percentiles, with point-count and confidence gates. Track tape/reference error, valid-area
+   coverage, abstention rate, cell size and sensitivity to ground slope. Use semantic vegetation
+   masking to exclude non-vegetation; do not require instance segmentation of individual blades.
+4. **P1 — Challenge the floor on new captures.** Queued for after M3 completes. Full task
+   definition in its own section below.
+5. **M4 — Productize the evidence path.** Compact `mini_npz` or transient object storage with
+   signed URLs, verify a live cloud manifest in the browser, make recorded evidence
    reproducible, and implement honest per-session cost reporting.
 
 ### Floor generalization risk
@@ -204,8 +224,10 @@ These were in the M1 plan but are not implemented. Do not assume they work.
       rule was created. Every run so far served artifacts from the container's local disk.
 - [ ] **Explicit Save action.** The "persist only on Save" half of the storage policy is unbuilt.
 - [ ] **Signed URLs for artifacts.** Untouched; the local-disk fallback was used throughout.
-- [ ] **`infer_gs` / Gaussian splats never exercised on GPU.** The parameter is plumbed end to
-      end but every real run used `infer_gs=false`. Assume it is untested, not working.
+- [x] ~~**`infer_gs` / Gaussian splats never exercised on GPU.**~~ **Closed by scope decision**,
+      2026-08-03, and the app-side plumbing was removed 2026-08-04. It was never exercised and
+      never will be. `server/contract.py` still declares the field with a `False` default; that
+      is deliberate, see the standing constraints at the top of this file.
 - [ ] **The app has never consumed a real cloud manifest.** The viewport still loads the fixture.
       The multipart upload path in `app/src/lib/infer-client.ts::infer()` has NOT been run against
       the deployed service — the sweep used `curl` from a shell script instead. That seam is
@@ -228,10 +250,17 @@ These were in the M1 plan but are not implemented. Do not assume they work.
       (b) a `mini_npz` export or float16/subsampled depth, which would also cut 108 MB to
       something sane. Treat live-cloud browser verification as the remaining part of this item.
       **This is the main reason M3 should read the fixture from disk, not over HTTP.**
-- [ ] **`scene.jpg` is produced but never collected** — no `.jpg` in `_collect_artifacts`.
-- [ ] **`predictVram` interpolation table stops at 128** while the measured envelope reaches
-      144. `MAX_MEASURED_FRAMES` says 144, so 129–144 is flagged as extrapolation even though
-      it was measured. Cosmetic, but it makes the UI slightly more pessimistic than the data.
+- [ ] **`scene.jpg` is produced but never collected** — no `.jpg` in `_collect_artifacts`
+      (`server/main.py:206`). Verified safe to add on 2026-08-04: `export_dir` and `frame_dir`
+      are separate, so a `.jpg` entry cannot sweep up the 112 input frames. **Deliberately not
+      applied** — it is a one-line change to a frozen directory; batch it with the next real
+      server change. Decide then whether it deserves a `kind` at all.
+- [x] ~~**`predictVram` interpolation table stops at 128.**~~ **Fixed 2026-08-04.** 144 is in
+      the table, derived from the recovered 21.88 GiB (its byte value was genuinely lost to the
+      sweep-merge bug and is not back-computed). Note what the fix exposed: the 144 driver peak
+      is *lower* than 128's 21.94 GiB, because the driver figure saturates against the 22.03 GiB
+      device limit — it is a plateau with scatter, not a curve. The table is therefore forced
+      non-decreasing, with the allocator series named in-code as the real model.
 
 ## M2a — Node graph, local only ✅ (mostly)
 
@@ -256,10 +285,9 @@ Zero cloud cost. Ticked items were exercised in the browser, not merely written.
 - [x] Design-review fix-list from 2026-07-31 — all four items done, see `docs/design-review-log.md`
 - [x] **The mock now parses real multipart**, so the browser's upload path is identical offline
       and in the cloud. `Last run · Frames 30` confirmed the server counted 30 uploaded JPEGs.
-- [ ] **Mock-vs-real badge on `DA3Depth`.** NOT done — the mock returns `mock: true` but nothing
-      surfaces it on the card. Honesty rule 3 is currently unmet for the node graph; a screenshot
-      of a fixture-driven run is not distinguishable from a real one except via the status bar's
-      `NVIDIA L4 (mock)`.
+- [x] **Mock-vs-real badge on `DA3Depth`.** Closed in M2b and re-verified 2026-08-04:
+      `app/src/graph/nodes/da3-depth.ts` appends `· MOCK` to the card summary. This box sat
+      unticked here for three days after the work was done — the audit found it, not a rerun.
 
 Deliberately excluded from M2a: any real cloud run, the splat node, the cost ticker.
 
@@ -270,17 +298,23 @@ Deliberately excluded from M2a: any real cloud run, the splat node, the cost tic
 - An explicit Run walks the whole chain and leaves the graph reading `all current`.
 - Changing a downstream CPU param does not restamp DA3 Depth (unit-tested on the real pipeline).
 
-### NOT verified in M2a
+### NOT verified in M2a — **worked through on 2026-08-04**
 
-- **Orbit/pan interaction was not re-measured.** `readPixels` returns a cleared buffer outside
-  the render frame, and rAF is paused while the browser pane is hidden — which it is whenever
-  the JS tool runs — so the M0 checksum technique could not be repeated. The OrbitControls code
-  is unchanged; only its data source changed. Re-measure before claiming the viewport is good.
-- Node deletion, edge deletion and rewiring by drag are implemented but were never exercised.
-- `PaneControls` supports a `Remove` button that is not wired (Dockview owns pane lifecycle).
-- Pausing a pane stops the depth pane re-fetching but not the 3D render loop.
-- The acceptance checklist in `docs/DESIGN.md` has not been re-graded end to end since the
-  layout gained the control/OUTPUT rows.
+- [x] ~~Orbit/pan was not re-measured.~~ **Verified.** The `readPixels` checksum genuinely cannot
+  run (rAF is paused while the browser pane is hidden, which is exactly when the JS tool runs),
+  but tool *screenshots* do capture the WebGL surface: a drag inside the canvas visibly rotated
+  the room and the gizmo turned with it. The technique, not the code, was the blocker.
+- [x] ~~Node deletion never exercised.~~ **Verified**: selecting a node and pressing Backspace
+  took the graph 10 → 9 nodes and removed its wire with it.
+- [ ] **Edge deletion is broken, not merely unverified** — see bug 1 in "Bugs found during the
+  2026-08-04 audit". Edges can never be selected, so Backspace has nothing to act on.
+- [ ] **Rewiring by drag is still unverified** — see bug 2. Automated drags cannot reliably hit
+  an 8 px handle; this one needs a human.
+- [ ] `PaneControls` supports a `Remove` button that is not wired (Dockview owns pane lifecycle).
+- [x] ~~Pausing a pane does not stop the 3D render loop.~~ **Fixed** — see bug 3.
+- [x] ~~The `docs/DESIGN.md` checklist has not been re-graded.~~ **Re-graded 2026-08-04**, full
+  pass recorded in `docs/design-review-log.md`. Items 1–10 and 14 pass; 11 is partial and 12–13
+  need a loaded clip, all noted there rather than claimed.
 
 ## M2b — One warm cloud session ✅
 
@@ -328,8 +362,10 @@ resolution-vs-frames trade** — that was the point of saving more than one.
 - [x] ~~Repair `infer_gs`.~~ One historical 32-frame run failed because `gsplat` was absent.
       Closed by the 2026-08-03 scope decision: splats do not feed measurement, so the project
       will remove the dormant path instead of paying for a larger CUDA build and viewer.
-- [ ] **Session cost ticker** — still `$0.00` and unlabelled. Not built. The instance-lifetime
-      data now exists to drive it (build 19m30s, warm ~50 min) but nothing consumes it.
+- [x] ~~**Session cost ticker shows `$0.00`.**~~ **Made honest 2026-08-04.** It was defensible
+      while no cloud session had run; after three warm sessions it was a fabricated number on
+      screen. It now reads `cloud: none` / `cloud: fixture` / `cloud: 1 run · billing not
+      instrumented` from the manifest. Real per-session accounting is still unbuilt — see M4.
 - [ ] **Transient GCS storage, signed URLs, explicit Save.** Untouched, as in M1. Artifacts
       still come off the container's local disk. `save-run.sh` is the manual stand-in.
 - [ ] **`scene.jpg`** appears in the export dir but is not collected as an artifact (no `.jpg`
@@ -364,54 +400,18 @@ resolution-vs-frames trade** — that was the point of saving more than one.
    subsets: 435 s → 13 s.
 
 <details>
-<summary>Original M2b plan (kept for context — all items resolved above)</summary>
+<summary>Original M2b plan — historical note, NOT a checklist</summary>
 
-- [x] **Add frame downscaling to `scripts/extract-frames.mjs` BEFORE deploying** (long edge
-      ~1024 px). This is now a hard prerequisite for the ladder below, not a nicety: at native
-      4K (432 KB/frame) a 128-frame run is ~55 MB and a 256-frame run ~110 MB, both far over
-      Cloud Run's documented 32 MiB HTTP/1 request cap. At 1024 px (62 KB/frame) even 256 frames
-      is ~16 MB and fits. The bytes are wasted regardless — DA3 resizes to `process_res` (504)
-      internally. Local-only change, verifiable with `verify.sh`; do not spend a warm instance
-      discovering this.
-- [ ] Fix `VramSampler` **first** (see open follow-ups) so the ladder below measures something real
-- [ ] **Frame-count ladder — double until it breaks: 32 → 64 → 128 → 192 → 256.** Each run is
-      seconds and an OOM costs only an error message, so push to actual failure rather than
-      stopping at a comfortable number. Then bisect the last good interval.
+**Do not read the list that used to live here as outstanding work.** It held eight `[ ]` boxes
+inside a section whose own header said everything was resolved, and the 2026-08-04 audit found
+it was the single largest source of phantom backlog in this file. Every item was delivered and
+is recorded above with its measurement; the two that were not (`infer_gs`, the cost ticker) are
+tracked in their own right — `infer_gs` is closed by scope decision, the cost ticker by M4.
 
-      Why this matters: `max_frames=32` is a *hardware* cap, not a quality choice, and it is
-      only "the highest count anyone has measured", not a known ceiling. At 26.61 s it forces
-      **1.20 effective fps** against DA3's own 10 fps default. The clip is still fully spanned
-      (`planFrames` lowers fps rather than truncating), but the sampling is sparse.
-
-      What the measured slope predicts: activations grow ≈0.14 GiB/frame (3.55 GiB at 4 frames
-      → 7.46 GiB at 32), so `(22.03 − 6.57) / 0.14 ≈ **110 frames** at 504 px` ≈ 4.1 fps.
-      260 frames would need ≈46 GiB and will certainly OOM. Treat both numbers as linear
-      extrapolation across an 8× gap from allocator-contaminated readings — the ladder is what
-      replaces them with fact.
-
-- [ ] **Second ladder at reduced `process_res`, if 10 fps is wanted.** VRAM scales ≈ res², so
-      resolution is the lever that buys frames: 504→356 roughly doubles the frame budget
-      (~220 frames), 504→252 roughly quadruples it (~440), at which point the 266 frames a
-      10 fps sampling of this clip wants would fit. Whether that trade is worth it is a
-      MEASUREMENT-ACCURACY question, not a VRAM one — defer the verdict to M3's tape-measure
-      comparison, and save artifacts from more than one setting so M3 can compare offline
-      without another cloud session.
-- [ ] Room video end-to-end **through the browser**. The multipart path is no longer untested —
-      M2a exercised it against the dev middleware, which parses the same body FastAPI does — but
-      it has still never crossed a network to the real service (auth headers, CORS, request size
-      limits, timeouts are all unexercised).
-- [ ] `scripts/save-run.sh` — download the manifest's artifacts **before teardown**. Artifacts live
-      on the container's local disk (no GCS bucket exists) and **die with the instance**.
-- [ ] Confirm DA3's native npz key names and fix the `result.npz` clobber (see open follow-ups)
-- [ ] One `infer_gs=true` run to find out whether it works at all
-- [ ] Session cost ticker, driven by instance lifetime (not inference seconds)
-- [ ] `scripts/teardown.sh` (keeps the image now — that is intended)
-
-Known consequence: a 64–96 frame run's GLB will be far over the 5 MB commit limit (the 4-frame
-roadside GLB is already 5.6 MB). `fixtures/room/` will therefore be **local-only and gitignored**,
-with only its `manifest.json` + checksums committed. It will not survive a fresh clone.
-
-*(Confirmed: the 112-frame GLB is 16.1 MB and its npz 108 MB.)*
+What the plan got wrong, worth keeping: it predicted the frame ceiling at ~110 from the
+contaminated 0.14 GiB/frame slope. The real slope is 0.0700 and the ceiling landed in (144, 160).
+It also assumed the GLB would be the large artifact; the npz is 108 MB and the GLB only 16 MB,
+which is what made Cloud Run's 32 MiB response cap a problem at all.
 
 </details>
 
@@ -742,26 +742,82 @@ ease of use and on scenes where a brush is impractical — not on precision.
 
 ### P0 follow-ups still open
 
-- [ ] **Separated repeats, not back-to-back ones.** The only way to bound the operator is trials
-      taken in different sittings, without the previous number visible. B1 and B3 already show
-      23–24× more between-sitting movement than within.
-- [ ] **The displayed ± is still wrong, and repeatability did not fix it.** The app shows patch
-      roughness (±0.003–0.043 m) beside errors of 0.02–0.08 m. Since the residual is now known to
-      be bias rather than scatter, the honest display is a calibrated value plus a stated
-      systematic term — not a spread.
-- [ ] Re-measure B5 under the trial protocol; it is still n=1.
-- [ ] 356/252px doors are still n=1 at 1.408 / 1.125 m, so their door-scaled MAE columns are
+- [x] ~~**The displayed ± is wrong.**~~ **Fixed 2026-08-04.** `geometry/uncertainty.ts` composes
+      a budget that keeps the two error kinds apart, because a known bias stated as a ± reads as
+      random scatter and is the exact mistake that let 1.887 m sit beside a ±0.037 m covering
+      none of its 0.213 m error. The Objects pane now shows raw value → clip scale bias (%) →
+      calibrated value ± total, with random and systematic broken out and the limitation printed
+      beneath. `scaleVerdict` no longer receives patch roughness as if it were a total
+      uncertainty; its verdict now answers "noise or bias?", which is the useful question.
+      Six unit tests pin that the bias can never migrate into the random term.
+
+- [x] ~~**Nothing in the app can tell a separated repeat from a back-to-back one.**~~ **Tooling
+      built 2026-08-04** — the measuring itself is still yours to do, see below. Schema 0.3.0
+      stamps every trial with a `sittingId` fixed for the page load; `trialStats` reports
+      `withinSittingRangeM` and `betweenSittingRangeM` separately, and **only the between-sitting
+      figure may be called an operator bound** — it stays NaN below two sittings. The nine P0
+      rows migrate to one shared `legacy-2026-08-04` id, because they were one afternoon.
+      **Blind mode** (Objects pane, next to SOURCE/RUN) hides every reading until you turn it
+      off; verified in-browser that nothing but the tape truths survives it.
+
+**Still yours to paint — I cannot do these, and pretending otherwise is the exact failure P0 found:**
+
+- [ ] **Separated repeats.** Reload the app on a different day, turn **Blind** on, repaint B1/B2/B3
+      from scratch, record, and only then reveal. Two sittings is the minimum for the
+      cross-sitting number to appear at all. B1 and B3 already show 23–24× more between-sitting
+      movement than within, and that gap — not the 1–6 mm — is the real operator term.
+- [ ] Re-measure **B5** under the trial protocol; it is still n=1.
+- [ ] **356/252px doors** are still n=1 at 1.408 / 1.125 m, so their door-scaled MAE columns are
       stale. The 504px ranking is unaffected — it won on raw error, which needs no door.
-- [ ] Recompute the resolution verdict table once those exist.
+- [ ] Recompute the resolution verdict table once those exist. The Objects pane table and the
+      error model both recompute themselves from the store, so this is a consequence of the
+      painting above rather than separate work; what remains is folding it into `MEASUREMENTS.md`.
 
-### M3c — Automatic evidence selection (mask source swap only)
+### P0.1 — Honesty fixes and backlog audit ✅ 2026-08-04
 
-Nothing downstream changes: a brush mask and a model mask are the same bytes. **No cloud cost —
-this runs in the browser.** The first goal is repeatable measurement endpoints on one canonical
-frame, not perfect outlines or propagation across the entire video.
+A second session spent entirely on the gap between what this file claimed and what the code did.
+No cloud resource created, no file under `server/` touched (`git status` clean there).
 
-- [ ] Freeze the manual-repeatability benchmark first; automation cannot be judged against a
-      moving target. The store for it exists (see P0); the trials do not.
+- [x] **`geometry/uncertainty.ts`** — the uncertainty budget. Random terms (patch roughness ⊕
+      half the trial range) in quadrature; the known scale bias stated and corrected, never
+      folded into a ±. Degrades honestly: no trials means no operator term rather than a zero,
+      and fewer than two graded objects means no calibration rather than a factor of 1.0.
+- [x] **Sittings (schema 0.3.0) and blind mode** — see the P0 follow-ups above.
+- [x] **Three stale checkboxes closed** that were already done: the M2a mock badge, M3c's
+      "freeze the benchmark first", and M4's mask-evidence item.
+- [x] **The M2b `<details>` block de-fanged** — eight unchecked boxes inside a section whose own
+      header said everything was resolved. It was the largest source of phantom backlog here.
+- [x] Cost ticker, Recompute rename, `predictVram` 144, app-side splat removal — all above.
+- [x] `docs/DESIGN.md` checklist item 10 no longer requires a splats control we removed.
+- [x] Full gate: `verify.sh` green with **226 tests** (213 → 226) including the server contract
+      check under a venv, production build green, design review re-graded.
+
+**Verified in-browser on the real 504px fixture**, with a synthetic 0.2.0 session seeded into the
+in-app browser's own localStorage (which also exercised the 0.2.0 → 0.3.0 migration end to end):
+budget renders raw → bias → calibrated ± with random/systematic split; blind mode leaves nothing
+but the tape truths visible; a recorded trial carries this page load's `sittingId` and its own
+mask digest while the nine migrated rows carry `legacy-2026-08-04`; a second sitting made the
+cross-sitting figure appear and correctly flipped the budget's limiting term to "operator".
+
+### M3c — Automatic evidence selection, **proven on the door first**
+
+Nothing downstream changes: a brush mask and a model mask are the same bytes, and `setMaskData()`
+in `measurement-store.ts` already exists as the seam — it writes a mask programmatically and
+deliberately clears the paint clock, so a model mask cannot be credited with operator time.
+**No cloud cost — this runs in the browser.** The first goal is repeatable measurement endpoints
+on one canonical frame of clip B, not perfect outlines or propagation across the entire video.
+
+**Scope decision, 2026-08-04 (user):** prove click-prompted selection on **the door** before any
+grass work. And read the P0 findings first — the precision argument for this milestone is gone.
+Manual endpoints repeat to 1–6 mm with a 5–10 s median paint, so automation cannot win on either
+axis. What it must deliver instead is ease of use, scenes where a brush is impractical, and above
+all the ability to **abstain**: the load-bearing P0 lesson is that a wrong mask produced a
+confident, healthy-looking 1.887 m with no reported statistic distinguishing it from the correct
+2.020 m. An automatic mask that returns a quiet wrong answer is worse than no automation.
+
+- [x] ~~Freeze the manual-repeatability benchmark first.~~ **Done by P0 on 2026-08-04**: nine
+      trials, three each on B1/B2/B3 at 504px, nine distinct mask digests, committed as
+      `docs/measurement-trials-2026-08-04.json`. Automation now has a fixed target to beat.
 - [ ] Prototype click-prompted selection with editable brush output. Accept it only if it reduces
       endpoint measurement variation or operator time without hiding failures.
 - [ ] Report measurement delta, abstention/failure rate, correction clicks and latency. Mask IoU
@@ -778,6 +834,29 @@ frame, not perfect outlines or propagation across the entire video.
       capability. Mask2Former's *weights* are CC-BY-NC-4.0 — same licence as DA3, no new
       constraint.
 
+### P1 — Floor challenge set (queued: start after M3 completes)
+
+The floor has only ever been challenged in one room. This is the largest *unknown* in the
+project, as opposed to the known problems above — see "Floor generalization risk" near the top,
+which this task exists to close. Deliberately scheduled after M3 by user decision on 2026-08-04.
+
+- [ ] **Capture 5–10 short clips**, each spanning its scene with real camera translation (a pan
+      from a fixed point has no parallax and DA3 has nothing to work with). Cover: portrait and
+      landscape; noticeable phone roll and pitch; very little visible floor; a glossy or
+      textureless floor; a room with a dominant tabletop competing with the floor; stairs or a
+      split level; and one outdoor slope.
+- [ ] **Track per clip**: support fraction, tilt vs gravity, below-floor mass, plane RMSE,
+      gravity coherence, and — the new one — **the score margin between the best two floor
+      hypotheses**. A narrow margin is the signal that the fit is a coin flip, and nothing
+      currently reports it.
+- [ ] **Add an explicit "cannot establish ground" result.** The present 1% support threshold is a
+      last-resort rejection gate, not a certificate. Abstaining must be a first-class outcome
+      that propagates: a measurement with no trustworthy floor should refuse, not guess.
+- [ ] **Manual 3D floor seeds** for when the evidence is genuinely weak. `fitPlaneFromSeeds()`
+      already exists in `geometry/plane.ts` and has never been reachable from the UI.
+- [ ] Cost note: each clip needs a DA3 pass, so **batch the whole set into ONE warm cloud
+      session** and `save-run.sh` them all before teardown. Plan the sweep before deploying.
+
 ### M3d — Field/raster regime (deferred, for the roadside case)
 
 - [ ] Local ground raster → per-cell height percentiles above ground, point-count/confidence gate
@@ -786,6 +865,32 @@ frame, not perfect outlines or propagation across the entire video.
       plants where identity actually matters
 - [ ] Benchmark against physical patch references and report error plus valid-area/abstention
       coverage; a map that silently fills unsupported cells is not acceptable
+
+### Bugs found during the 2026-08-04 audit
+
+1. ⚠️ **Edge selection is impossible, so edge deletion is unreachable through the UI.**
+   `graph-pane.tsx`'s `rfEdges` never sets `selected`, and `onEdgesChange` drops every change
+   that is not a `remove`. React Flow is fully controlled here, so its internal selection is
+   overwritten on the next render — and Backspace only deletes *selected* elements. Confirmed
+   in-browser: a real click lands on `.react-flow__edge-interaction` and nothing selects.
+   **Node deletion works** (10 → 9 nodes, and the node's wire went with it), so the fix is to
+   carry `selected` on edges the same way nodes already do.
+2. ⚠️ **Rewiring by port drag is still unverified.** Port handles are ~8 px; automated drags that
+   miss them pan the canvas instead, which is indistinguishable from a rejected connection.
+   `onConnect` + `isValidConnection` + the one-wire-per-input replace rule are all written and
+   typed, but none of it has been driven by a real drag. Needs a human hand or a zoomed graph.
+3. **Viewport 3D's Pause button did nothing** — `paused` was React state that the rAF loop never
+   read, so the loop rendered on regardless. **Fixed 2026-08-04** via a ref, so pausing skips the
+   work without tearing down the WebGL context.
+4. **A control on the right edge of `.pane-status` silently leaves the viewport** — that row is
+   `white-space: nowrap` + `overflow: hidden`. The blind-mode toggle was invisible in a narrow
+   Objects pane until it was moved to `.object-context`, which now wraps instead of clipping.
+   Worth remembering before putting any future control in a status row.
+5. **Gotcha 4 is out of date in the good direction.** Coordinate clicks in the browser pane are
+   *no longer* mis-scaled ~7.8×: a click at screenshot-space (197, 328) was measured landing at
+   viewport (315, 525), exactly the 1.6× the 800×500-vs-1280×800 ratio predicts. Orbit was
+   verified this way (see `docs/design-review-log.md`), closing the M2a item that said the
+   `readPixels` checksum could not be repeated — tool screenshots do capture the WebGL surface.
 
 ### Bugs found during M3
 
@@ -801,11 +906,15 @@ frame, not perfect outlines or propagation across the entire video.
 
 ## M4 — Productization + evidence hardening ⬜
 
-- [ ] Remove dormant `infer_gs`, splat export types, UI checkbox and unused splat port/type
+- [x] ~~Remove dormant `infer_gs`, splat export types, UI checkbox and unused splat port/type~~ —
+      **app side done 2026-08-04** (`InferParams.inferGs`, the `gs_ply`/`gs_video` artifact kinds,
+      the checkbox and the `splat` port type/colour are gone). `server/` keeps its `infer_gs`
+      field on purpose; see the standing constraints at the top.
 - [ ] Compact `mini_npz` and/or transient object storage + signed URLs; verify live browser fetch
 - [x] ~~Tie every recorded result to reproducible mask evidence and retain repeat trials~~ —
       done by P0 on 2026-08-04; each trial carries its own RLE mask and digest.
-- [ ] Rename/remove the misleading Recompute action
+- [x] ~~Rename/remove the misleading Recompute action~~ — **done 2026-08-04**: it is now
+      **"Rebuild measurement"** with a tooltip stating that DA3 is not run and nothing is billed.
 - [ ] Per-session/per-node cost accounting
 
 ---
@@ -827,8 +936,9 @@ python3 -m venv /tmp/verge-venv && /tmp/verge-venv/bin/pip install fastapi pydan
 VERGE_PY=/tmp/verge-venv/bin/python ./scripts/verify.sh    # full suite + server contract
 ```
 
-The service is **deleted** (0 Cloud Run services). The **image is kept** (9.8 GB, ~$1/month),
-so the next deploy should **skip the build and start in ~1 min**.
+The service is **deleted** (0 Cloud Run services). The **image is kept** (9.8 GB, ~$1/month) and
+its tag matches the current tree (verified 2026-08-04, below), so the next deploy should **skip
+the build and start in ~1 min** — the first time that claim has been made against a checked tag.
 
 ```bash
 ./scripts/deploy.sh                  # builds only if server/ changed since the stored image
@@ -837,16 +947,20 @@ PURGE_IMAGE=1 ./scripts/teardown.sh  # ...and deletes the image, when the projec
 FORCE_BUILD=1 ./scripts/deploy.sh    # rebuild even when the source hash matches
 ```
 
-⚠️ **The build-skip branch has still never executed, and the M2b image is already stale.**
-Checked 2026-08-01 before the M3 deploy: the registry holds `src-d8977556a0573326`, but a clean
-tree now hashes to `src-3038078518c96bb0`. `server/` was edited *after* that image was built —
-commit `2020ec9` set the frame cap to 112 in `server/contract.py`. So the M2b claim that "the
-next deploy should skip the build and start in ~1 min" was **wrong**, and M3.0 paid a full
-rebuild.
+✅ **The image now matches the tree — checked 2026-08-04, and this is why `server/` is frozen.**
+A clean tree hashes to `src-3038078518c96bb0`, and the registry holds exactly that tag (plus the
+older `src-d8977556a0573326` from M2b). So the next deploy **should** finally take the skip
+branch — which has still never executed, and this will be its first real test.
 
-The hashing logic itself is behaving correctly (different source → different tag → rebuild);
-what was wrong was the assumption that the tree had not changed. **Before predicting a fast
-deploy, actually compare the tags:**
+This is not luck. It is the whole reason the two known one-line server improvements were left
+unapplied on 2026-08-04: `deploy.sh` hashes every file under `server/`, so a single comment
+would have thrown away a matching 12 GB image and cost the next session ~20 minutes.
+
+History, so the lesson is not lost: M2b claimed "the next deploy should skip the build" while
+`server/contract.py` had been edited after that image was built (commit `2020ec9`, frame cap
+112). The claim was wrong and M3.0 paid a full rebuild. The hashing logic was behaving correctly
+throughout — the assumption that the tree had not changed was what was wrong. **Before
+predicting a fast deploy, actually compare the tags:**
 
 ```bash
 find server -type f -not -path '*/__pycache__/*' | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256 | cut -c1-16

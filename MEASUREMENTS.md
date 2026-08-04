@@ -97,6 +97,13 @@ endpoint would make the table more complete and the evidence less honest.
 2026-08-04 discarded the previous row whenever a new one was recorded. The ± is patch
 roughness, not repeatability.
 
+⚠️ **The ± in this table is NOT the measurement uncertainty**, and the app no longer displays it
+as if it were. Since 2026-08-04 the Objects pane composes a budget (`geometry/uncertainty.ts`)
+that keeps the two error kinds apart: patch roughness and operator repeatability are random and
+shrink with more trials; the clip's scale error is systematic, is stated as a signed percentage,
+and is removed by calibration rather than hidden inside a ±. On this clip the systematic term is
+roughly an order of magnitude larger than the random one — which is the whole finding.
+
 **The 504px column is superseded** by the three-trial means in the next section: B1 **2.020**,
 B2 **0.698**, B3 **0.427**. The B1 row above (1.887 m) is the largest single distortion in this
 file — it made DA3's scale error look ~11% when three trials put it near 3%. The historical rows

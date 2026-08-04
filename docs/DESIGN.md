@@ -141,8 +141,9 @@ These are design constraints, not just copy guidelines:
 7. No horizontal window scroll at 1280×800; gaps between panes ≤ 4px.
 8. Fonts: UI text ≤ 12px, numeric readouts in mono; no font-size > 14px except empty-state hints.
 9. Side-by-side squint test vs `docs/reference/`: comparable darkness, density, contrast.
-10. Inspector exposes every inference param (fps, process res, max frames, ref view, splats) with
+10. Inspector exposes every inference param (fps, process res, max frames, ref view) with
     mixed control types, and each shows its current value in mono on the right.
+    *Splats were removed on 2026-08-04 — no measurement node consumes them (see PROGRESS.md).*
 11. VRAM is visible in both the inspector and the status bar; during a run the live bar moves.
 12. Unmeasured predictions render as a labelled range, never a bare number (honesty rule 1).
 13. A capped frame plan explains itself in-place, showing the arithmetic (honesty rule 2).
