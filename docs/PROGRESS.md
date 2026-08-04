@@ -712,10 +712,18 @@ captured as data.
 endpoint to **1–6 mm** — 15–90× smaller than the residual error against truth. The premise that
 the 1.887 → ≈2.0 door swing was ~0.1 m of operator jitter is refuted.
 
-**The swing is real but lives between sittings.** Against the frozen n=1 rows: B1 moved +0.133 m
-(23× its within-session spread) and B3 +0.021 m (24×). Back-to-back trials measure short-term
-consistency and are blind to the variation that matters. **Do not quote these spreads as the
-measurement uncertainty** — they bound one sitting, not the operator.
+**The frozen rows were a different, worse operator.** Against them, B1 moved +0.133 m (23× its
+within-session spread) and B3 +0.021 m (24×). The cause is identified: those masks were painted
+in an earlier *agent* session, and the B1 mask's lower endpoint never reached the bottom of the
+door leaf (user-confirmed 2026-08-04). That is one placement mistake, not scatter, and it does
+not belong in an uncertainty budget.
+
+**The wrong answer looked healthy — this is the load-bearing lesson.** 1.887 m came with a
+±0.037 m patch roughness, a supported floor and a 2 cm plane RMSE. No reported statistic
+separated it from the correct 2.020 m; only looking at where the mask sat did. Hence the live 3D
+highlight, and hence M3c's automatic mask must be able to **abstain** rather than return a
+confident short answer. Still do not quote the 1–6 mm spreads as measurement uncertainty: they
+bound one sitting, and are by construction blind to a mask placed in the wrong place.
 
 **What remains is bias, which is correctable.** All errors negative and similar in relative size
 (−3.8%, −6.9%, −5.0%). The error model moved from slope 0.893 / offset +0.024 to **0.969 /

@@ -159,7 +159,7 @@ The premise for this study was that the 1.887 m → ≈2.0 m door swing was oper
 is 15–90× *smaller* than the residual error against truth. Endpoint placement is one of the most
 repeatable parts of this pipeline, not the least.
 
-#### Finding 2 — the swing was real, but it lives between sittings, not within one
+#### Finding 2 — the frozen rows were a different, worse operator, and the error is identified
 
 Comparing the three-trial means against the frozen n=1 rows from 2026-08-03, same setting:
 
@@ -169,14 +169,21 @@ Comparing the three-trial means against the frozen n=1 rows from 2026-08-03, sam
 | B2 | 0.704 | 0.698 | −0.006 | 0.0041 | 1× |
 | B3 | 0.407 | 0.427 | **+0.021** | 0.0009 | **24×** |
 
-B1 and B3 moved by 23–24× their own within-session spread. Three trials painted back to back
-therefore measure short-term consistency and **cannot see** the variation that actually matters:
-how the endpoints get interpreted on a different day, at a different zoom, after looking at a
-different frame. A spread of 0.0009 m on B3 would be a false precision claim if quoted as *the*
-operator uncertainty — the same operator moved that object 0.021 m between sittings.
+**The cause is known, and it is not operator variance.** The frozen rows were painted in an
+earlier *agent* session, and on B1 that mask's lower endpoint never reached the bottom of the
+door leaf — confirmed by the user, 2026-08-04. A short mask measures a short door. The +0.133 m
+is one identifiable placement mistake, not scatter, and it does not belong in an uncertainty
+budget. Two operators were being compared, and one of them was wrong.
 
-⚠️ **Do not quote these spreads as the measurement uncertainty.** They bound one sitting.
-Widely-separated repeats are what would bound the operator, and this study does not contain them.
+**The dangerous part is that the wrong answer looked healthy.** 1.887 m arrived with a ±0.037 m
+patch roughness, a supported floor, a 2 cm plane RMSE and a plausible-looking number. Nothing in
+the reported statistics distinguished it from the correct 2.020 m. Only looking at where the mask
+sat did. This is the case for the live 3D highlight, and the argument that an automatic mask must
+be able to *abstain* rather than quietly return a confident, short answer.
+
+⚠️ Still do not quote the 1–6 mm spreads as the measurement uncertainty. They bound one sitting
+of one operator who knows this scene. They say nothing about a mask placed wrongly — which is the
+failure that actually occurred here, and which repeatability by construction cannot detect.
 
 #### Finding 3 — what is left is bias, and bias is correctable
 
