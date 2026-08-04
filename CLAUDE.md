@@ -80,7 +80,7 @@ Your task list dies with your session; `docs/PROGRESS.md` is the only thing that
 
 - Commit at the end of each coherent unit. Subject: short imperative, ≤72 chars. **No long bodies.**
 - Never commit: `node_modules/`, weights, media >5 MB (existing `fixtures/` are whitelisted), secrets.
-- Trailer: `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+
 
 ## Environment notes
 
