@@ -28,6 +28,7 @@ import {
   setNodes,
   useGraph,
 } from "../graph/graph-store";
+import { toggleFocus, useDock } from "../lib/dock-store";
 import { NodeCard } from "../graph/node-card";
 import { REGISTRY } from "../graph/nodes";
 import { portColor, type PortType } from "../graph/types";
@@ -52,6 +53,8 @@ function portTypeOf(nodeType: string, portId: string, side: "in" | "out"): PortT
 
 function GraphCanvas() {
   const graph = useGraph();
+  const dock = useDock();
+  const focused = dock.focusedId === "graph";
   const { setViewport } = useReactFlow();
   const [scope, setScope] = useState<"measurement" | "full">("measurement");
   const visibleNodes = useMemo(
@@ -262,6 +265,20 @@ function GraphCanvas() {
             </button>
             <button className="graph-fit" onClick={refit}>
               Fit
+            </button>
+            {/* Double-clicking the tab does this too, but the graph is the pane most worth
+                filling the window and a hidden gesture is not an affordance. The other panes
+                with a control row carry the same verb there. */}
+            <button
+              className={`graph-fit${focused ? " on" : ""}`}
+              title={
+                focused
+                  ? "Restore the other panes (Esc)"
+                  : "Fill the window with the graph. The other panes keep their state and come straight back."
+              }
+              onClick={() => toggleFocus("graph")}
+            >
+              {focused ? "Restore" : "Focus"}
             </button>
           </div>
         </div>

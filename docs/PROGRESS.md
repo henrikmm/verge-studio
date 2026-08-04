@@ -1071,6 +1071,12 @@ Driven by an operator review that asked five questions; the answers are what sha
 3. ⚠️ **A custom Dockview tab silently breaks click-to-activate**, because it replaces the
    default tab that normally calls `setActive()`. Caught in-browser: clicking Inspector did
    nothing. Fixed, and worth remembering before adding any other custom Dockview renderer.
+4. ⚠️ **Saving the layout while a pane was focused corrupted the grid.** A maximized group sizes
+   its siblings to nothing, and that is what `toJSON` serialized — measured: an 853/427 column
+   split came back as **640/640** after focus → reload → restore. Stripping `maximizedNode` was
+   not enough because the SIZES were already wrong; the layout is now simply not saved while a
+   group is maximized. Focus is a transient view mode, not a restored preference — reopening the
+   app with one pane filling the window and no visible way back is not a good default.
 
 ### Track E — colour ✅
 

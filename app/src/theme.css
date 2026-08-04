@@ -370,6 +370,11 @@ body {
   border-color: var(--text-dim);
 }
 
+.graph-fit.on {
+  color: var(--emph-hi);
+  border-color: var(--emph-hi);
+}
+
 /* Node card — anatomy per DESIGN.md */
 .node-card {
   width: 180px;

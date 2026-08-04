@@ -90,7 +90,7 @@ export const PANES: readonly PaneDef[] = [
 const PANE_BY_ID = new Map(PANES.map((pane) => [pane.id, pane]));
 
 /** Versioned: a layout referring to components this build no longer has must not be restored. */
-const LAYOUT_KEY = "verge.dock-layout/2";
+const LAYOUT_KEY = "verge.dock-layout/3";
 
 export interface DockState {
   /** Panel ids currently mounted in the dock. */
@@ -129,12 +129,34 @@ function sync(): void {
   emit();
 }
 
+/**
+ * Persist the layout — but never the focused state.
+ *
+ * Focus is a transient view mode; the arrangement is the preference. Two reasons to strip
+ * `maximizedNode` on the way out:
+ *
+ * 1. Restoring into a focused pane is wrong on its own terms — the app opens with one pane
+ *    filling the window and no visible way back except a key you have to know.
+ * 2. It measurably corrupts the grid. `fromJSON` restores the maximized node with its siblings
+ *    hidden, and the `layout()` call that follows redistributes space among the VISIBLE views
+ *    only; un-maximizing then returns the hidden ones at whatever share they were left with.
+ *    Measured: a 853/427 split came back as 640/640 after focus → reload → restore.
+ */
 function saveLayout(): void {
   if (!api || rebuilding) return;
+  // While a group is maximized its siblings are sized to nothing, and that is what gets
+  // serialized — measured: an 853/427 split came back as 640/640 after focus → reload.
+  // The arrangement underneath a focused pane is not a layout anyone chose, so it is not
+  // saved. Exiting focus fires another layout change, which saves the real one.
+  if (api.hasMaximizedGroup()) return;
   window.clearTimeout(saveTimer);
   saveTimer = window.setTimeout(() => {
     try {
-      window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(api?.toJSON()));
+      const json = api?.toJSON();
+      // Belt and braces: focus is a transient view mode, never a restored preference. Opening
+      // the app with one pane filling the window and no visible way back is not a good default.
+      if (json?.grid) delete (json.grid as { maximizedNode?: unknown }).maximizedNode;
+      window.localStorage.setItem(LAYOUT_KEY, JSON.stringify(json));
     } catch {
       // A full or disabled localStorage must never take the app down with it.
     }
