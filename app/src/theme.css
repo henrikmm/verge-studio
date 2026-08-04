@@ -584,7 +584,14 @@ body {
   font-size: 11px;
 }
 
-.inspector-row input[type="range"] {
+/*
+  ALL range inputs, not just the inspector's.
+  The measurement toolbars' sliders were never styled, so they fell back to the UA control:
+  a white track with the OS accent colour on the filled portion — five white surfaces and a
+  system blue in a spec that forbids both (acceptance checklist item 1). Styling the element
+  rather than a container is what stops the next toolbar from reintroducing it.
+*/
+input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   width: 100%;
@@ -594,7 +601,7 @@ body {
   outline: none;
 }
 
-.inspector-row input[type="range"]::-webkit-slider-thumb {
+input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
   width: 9px;
@@ -602,6 +609,21 @@ body {
   border-radius: 2px;
   background: var(--slider);
   cursor: ew-resize;
+}
+
+input[type="range"]::-moz-range-thumb {
+  width: 9px;
+  height: 14px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--slider);
+  cursor: ew-resize;
+}
+
+input[type="range"]::-moz-range-track {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
 }
 
 .inspector-row select {

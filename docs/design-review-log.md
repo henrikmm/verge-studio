@@ -223,3 +223,54 @@ Findings fixed during the pass:
   colorless clouds fall back to height-ramp coloring.
 - `result.npz` entry is `confidence.npy`, not `conf.npy`.
 - worker-report keys are `inference_gpu_seconds` / `peak_vram_bytes` / `wall_seconds`.
+
+---
+
+## 2026-08-04 — P2 pass (commit `e26aa79` + two fixes), 1280×800
+
+Full re-grade after the P2 session (cloud control plane, run registry, per-clip targets, pane
+focus/hide, neutral colour system). Layout reset to default before grading.
+
+1. Background ≤ `#151517`, no white surfaces, no default blue — **FAIL → fixed**, see below.
+1b. No status signalled by hue alone (new item) — PASS (`●` current · `◐` working · `○` idle ·
+   `▲` failure, on pane status rows, control rows and node footers; green absent from the app).
+2. Panes with tabs, drag-resize — PASS (6 panes in 4 groups tiling 1280×695 exactly).
+3. Chrome density — PASS (tab strip 26px measured, labels 11px).
+4. Cloud + orbit + count + gizmo — PASS (drag visibly rotated the room; gizmo turned with it;
+   1,000,000 pts reported).
+5. Turbo depth with metric legend — PASS (0.52–2.66 m).
+6. Live status rows everywhere — PASS, including the new Runs pane (`3 runs · — on disk`).
+7. No horizontal scroll, gaps ≤ 4px — PASS (`scrollWidth == clientWidth`; sashes 4px, group
+   gaps 0).
+8. Type scale — PASS (only `<script>`/`<style>`/`<title>` exceed 14px, none rendered).
+9. Squint test vs `docs/reference/` — PASS. Comparable darkness and density. The deliberate
+   divergence is that Sentinel uses green for `Running` and we now use a neutral `●`; our red is
+   confined to slider thumbs, which is where the reference uses it too.
+10. Inspector exposes inference params with mixed controls — PASS (selection-bound by design).
+11. VRAM in inspector and status bar — PASS.
+12. Unmeasured predictions as a labelled range — N/A, needs a loaded clip (unchanged).
+13. Capped frame plan explains itself — N/A, needs a loaded clip (unchanged).
+14. Mock readouts labelled — PASS (`NVIDIA L4 (mock)` in pane status and GPU Device).
+
+### Findings, both fixed in the same session
+
+- ⚠️ **Item 1 FAIL: five unstyled `input[type=range]`** in the Depth 2D brush/frame toolbars —
+  `background-color: rgb(255,255,255)` with `accent-color: auto`, i.e. a white track and the OS
+  accent (system blue on macOS) on the filled portion. Both are explicitly forbidden by item 1.
+  **Pre-existing since M3b**: only `.inspector-row input[type="range"]` was ever styled, so every
+  slider outside the inspector fell back to the UA control. Fixed by styling the ELEMENT rather
+  than a container, so the next toolbar cannot reintroduce it; `-moz-` track/thumb rules added
+  alongside the `-webkit-` ones. Verified: all five now report `rgb(42,42,46)` and the page has
+  **0 white surfaces**.
+- **Minor: Reset activated the wrong tab.** The right group showed *Runs* rather than Inspector,
+  because Runs is added last and nothing claimed the group. `buildDefaultLayout` now sets
+  Inspector active explicitly.
+
+### Worth remembering
+
+- A **custom Dockview tab component silently breaks click-to-activate** — it replaces the default
+  tab, which is what normally calls `setActive()`. Caught in-browser when clicking Inspector did
+  nothing. Check this before adding any other custom Dockview renderer.
+- **Screenshots taken immediately after a reload can show a stale graph fit.** The refit is
+  debounced 90 ms; a screenshot inside that window shows the pre-fit transform and looks like the
+  thumbnail-in-the-corner bug. Measure `.react-flow__viewport`'s transform before concluding.

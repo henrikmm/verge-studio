@@ -168,6 +168,9 @@ function buildDefaultLayout(): void {
   for (const pane of PANES) addPane(pane);
   api.getPanel("graph")?.api.setSize({ height: Math.round(window.innerHeight * 0.38) });
   api.getPanel("inspector")?.api.setSize({ width: 280 });
+  // Inspector, not whichever tab was added last. Runs is added after it and would otherwise
+  // win the group by accident, which is not a default anyone chose.
+  api.getPanel("inspector")?.api.setActive();
   api.getPanel("viewport")?.api.setActive();
   rebuilding = false;
   saveLayout();
