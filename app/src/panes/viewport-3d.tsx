@@ -37,6 +37,14 @@ export function Viewport3D() {
 
   const [frameMs, setFrameMs] = useState(0);
   const [paused, setPaused] = useState(false);
+  /**
+   * Read inside the render loop, which is created once and must not be torn down and rebuilt
+   * every time Pause is clicked — that would drop the WebGL context and the whole scene with it.
+   * Until 2026-08-04 the Pause button set state that nothing consumed, so the loop kept running
+   * and the control did nothing at all.
+   */
+  const pausedRef = useRef(false);
+  pausedRef.current = paused;
   const [output, setOutput] = useState("points");
 
   const graph = useGraph();
@@ -83,6 +91,13 @@ export function Viewport3D() {
     const animate = () => {
       raf = requestAnimationFrame(animate);
       const now = performance.now();
+      // Paused still schedules the next frame so resuming is instant, but does no work: no
+      // controls update, no render, no timing sample. `last` still advances, or the first
+      // frame after a resume would report the length of the pause as a frame time.
+      if (pausedRef.current) {
+        last = now;
+        return;
+      }
       emaMs = emaMs * 0.95 + (now - last) * 0.05;
       last = now;
       if (++tick % 30 === 0) setFrameMs(emaMs);

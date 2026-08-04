@@ -20,7 +20,6 @@
   --port-plane: #f3c969;
   --port-selection: #fb7185;
   --port-measurement: #e8a95b;
-  --port-splat: #c084fc;
   --port-camera: #e879a0;
   --port-scalar: #f59e0b;
 }
@@ -96,6 +95,11 @@ body {
 
 .pane-status .ok {
   color: var(--accent-run);
+}
+
+/* Blind mode is a deliberate, visible state — it must not look like an ordinary pane. */
+.pane-status .busy {
+  color: var(--accent-busy);
 }
 
 .pane-status .hint {
@@ -645,9 +649,10 @@ body {
   }
 }
 
+/* Not a currency figure — the app has no billing data. See costLabel() in app.tsx. */
 .status-bar .cost {
   margin-left: auto;
-  color: var(--accent-run);
+  color: var(--text-dim);
 }
 
 /* Viewport overlays */
@@ -809,7 +814,10 @@ canvas {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  /* Wraps rather than clipping: the Objects pane is routinely docked narrow, and a control
+     that silently leaves the viewport is worse than one on a second line. */
+  flex-wrap: wrap;
+  gap: 4px 8px;
   padding: 5px 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-header);
@@ -944,6 +952,30 @@ canvas {
 .reading-grid b {
   color: var(--text);
   text-align: right;
+}
+
+.reading-grid small {
+  grid-column: 1 / -1;
+  color: var(--text-dim);
+  font-size: 9px;
+  line-height: 1.35;
+}
+
+/*
+  The uncertainty budget. Boxed away from the raw reading on purpose: these numbers are of a
+  different kind, and the M3b display that ran them together is what let a patch roughness be
+  read as a total error bar.
+*/
+.budget-block {
+  margin: 0 7px 5px;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--accent-run);
+  background: #0d0d0f;
+}
+
+.budget-block .honesty-note {
+  display: block;
+  padding: 0 7px 6px;
 }
 
 .evidence-warning {

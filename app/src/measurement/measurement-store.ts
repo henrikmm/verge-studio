@@ -114,6 +114,14 @@ export interface MeasurementObservation {
   floorBelowFraction: number;
   gravityCoherence: number;
   capturedAt: string;
+  /**
+   * Which sitting produced this trial. Constant for one page load.
+   *
+   * Repeats taken back-to-back bound almost nothing: P0 measured 1–6 mm within a sitting while
+   * the same objects moved 21–133 mm between sittings. Only trials with DIFFERENT sitting ids
+   * can support a claim about operator repeatability.
+   */
+  sittingId: string;
   /** Frozen at Record time. Absent on rows migrated from schema 0.1.0, which predate snapshots. */
   mask?: MaskSnapshot;
   /** First stroke after the last clear/record → Record. Absent when the mask was not painted this session. */
@@ -134,17 +142,33 @@ export interface TrialStats {
   medianM: number;
   minM: number;
   maxM: number;
-  /** max − min. The honest spread statement at the n=3..5 counts this study actually reaches. */
+  /** max − min over ALL trials, whatever sitting they came from. */
   rangeM: number;
   /** Robust dispersion; only meaningful from n≥3, NaN below that. */
   nmadM: number;
   medianPaintMs: number;
+  /** How many distinct sittings contributed. One sitting cannot bound the operator. */
+  sittingCount: number;
+  /** Worst max−min inside a single sitting. NaN when no sitting has two trials. */
+  withinSittingRangeM: number;
+  /**
+   * Range of the per-sitting means — **the only figure here that may be called an operator
+   * bound**. NaN below two sittings, because there is nothing to compare.
+   */
+  betweenSittingRangeM: number;
 }
 
 /** Below this, a spread number describes one accident rather than a tendency. */
 export const MIN_TRIALS_FOR_SPREAD = 3;
 
 export interface MeasurementUiState {
+  /**
+   * Hide every reading in the Objects pane.
+   *
+   * A repeat trial painted while the previous answer is on screen is not independent — the
+   * operator converges on it. This is the mechanism that makes a second sitting worth taking.
+   */
+  blind: boolean;
   activeObjectId: string;
   canonicalFrame: number;
   brushSize: number;
@@ -156,10 +180,34 @@ export interface MeasurementUiState {
   observations: MeasurementObservation[];
 }
 
-export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.2.0";
-const STORAGE_KEY = "verge.m3b.measurement-session/0.2.0";
-/** 0.1.0 kept one row per (object, setting, frame) and destroyed repeat trials on record. */
-const LEGACY_STORAGE_KEY = "verge.m3b.measurement-session/0.1.0";
+export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.3.0";
+const STORAGE_KEY = "verge.m3b.measurement-session/0.3.0";
+/**
+ * Older keys, newest first. 0.2.0 added repeat trials and frozen masks; 0.1.0 kept one row per
+ * (object, setting, frame) and destroyed repeat trials on record.
+ */
+const LEGACY_STORAGE_KEYS = [
+  "verge.m3b.measurement-session/0.2.0",
+  "verge.m3b.measurement-session/0.1.0",
+];
+
+/**
+ * Every trial recorded before sittings were tracked came from the single 2026-08-04 study —
+ * nine trials, one afternoon, one operator. Tagging them with one shared id is accurate, and it
+ * is what makes them count as ONE sitting rather than nine independent ones.
+ */
+export const LEGACY_SITTING_ID = "legacy-2026-08-04";
+
+/**
+ * This page load's sitting. Not persisted: reloading the app IS the separation that makes a
+ * second sitting meaningful, so a sitting id that survived a reload would defeat its purpose.
+ */
+const SITTING_ID = `sitting-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+export function currentSittingId(): string {
+  return SITTING_ID;
+}
+
 const first = MEASUREMENT_OBJECTS[0];
 
 function encodeMask(mask: MaskRecord): number[] {
@@ -191,6 +239,10 @@ function decodeMask(value: { width: number; height: number; revision: number; ru
  * lives under a working key that has almost certainly been repainted since. Those rows are
  * carried forward as trial 1 with `mask` absent, which is the truthful state: the number
  * survives, the evidence behind it does not.
+ *
+ * A pre-0.3.0 row has no sitting either. It gets `LEGACY_SITTING_ID`, not this page load's id:
+ * claiming an old trial for the current sitting would manufacture a between-sitting comparison
+ * out of nothing, which is the exact number this schema exists to make trustworthy.
  */
 export function migrateObservations(rows: readonly MeasurementObservation[]): MeasurementObservation[] {
   const counters = new Map<string, number>();
@@ -198,7 +250,12 @@ export function migrateObservations(rows: readonly MeasurementObservation[]): Me
     const group = `${row.objectId}:${row.setting}`;
     const trialIndex = (counters.get(group) ?? 0) + 1;
     counters.set(group, trialIndex);
-    return { ...row, trialIndex, id: `${group}#${trialIndex}` };
+    return {
+      ...row,
+      trialIndex,
+      id: `${group}#${trialIndex}`,
+      sittingId: row.sittingId ?? LEGACY_SITTING_ID,
+    };
   });
 }
 
@@ -206,9 +263,11 @@ function restoreSession(): Partial<MeasurementUiState> {
   if (typeof window === "undefined" || !window.localStorage) return {};
   try {
     const raw =
-      window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_STORAGE_KEY);
+      window.localStorage.getItem(STORAGE_KEY) ??
+      LEGACY_STORAGE_KEYS.map((key) => window.localStorage.getItem(key)).find(Boolean);
     if (!raw) return {};
     const saved = JSON.parse(raw) as {
+      blind?: boolean;
       activeObjectId?: string;
       canonicalFrame?: number;
       confidencePercentile?: number;
@@ -216,6 +275,7 @@ function restoreSession(): Partial<MeasurementUiState> {
       observations?: MeasurementObservation[];
     };
     return {
+      blind: saved.blind ?? false,
       activeObjectId: saved.activeObjectId,
       canonicalFrame: saved.canonicalFrame,
       confidencePercentile: saved.confidencePercentile,
@@ -231,6 +291,7 @@ function restoreSession(): Partial<MeasurementUiState> {
 
 const restored = restoreSession();
 const state: MeasurementUiState = {
+  blind: false,
   activeObjectId: first.id,
   canonicalFrame: first.suggestedFrame,
   brushSize: 28,
@@ -280,6 +341,7 @@ function persistSession(): void {
   window.localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify({
+      blind: state.blind,
       activeObjectId: state.activeObjectId,
       canonicalFrame: state.canonicalFrame,
       confidencePercentile: state.confidencePercentile,
@@ -320,6 +382,11 @@ export function setActiveMeasurementObject(objectId: string): void {
   if (!object) return;
   state.activeObjectId = object.id;
   state.canonicalFrame = object.suggestedFrame;
+  commit();
+}
+
+export function setBlind(blind: boolean): void {
+  state.blind = blind;
   commit();
 }
 
@@ -484,7 +551,10 @@ function snapshotMask(objectId: string, canonicalFrame: number): MaskSnapshot | 
  * budget, so the spread across trials is evidence, not clutter.
  */
 export function addObservation(
-  observation: Omit<MeasurementObservation, "id" | "capturedAt" | "trialIndex" | "mask" | "paintDurationMs">,
+  observation: Omit<
+    MeasurementObservation,
+    "id" | "capturedAt" | "trialIndex" | "mask" | "paintDurationMs" | "sittingId"
+  >,
 ): MeasurementObservation {
   const group = `${observation.objectId}:${observation.setting}`;
   const trialIndex =
@@ -497,6 +567,7 @@ export function addObservation(
     ...observation,
     id: `${group}#${trialIndex}`,
     trialIndex,
+    sittingId: SITTING_ID,
     capturedAt: new Date().toISOString(),
     mask: snapshotMask(observation.objectId, observation.canonicalFrame),
     paintDurationMs: startedAt === undefined ? undefined : Date.now() - startedAt,
@@ -562,23 +633,43 @@ const EMPTY_STATS: TrialStats = {
   rangeM: NaN,
   nmadM: NaN,
   medianPaintMs: NaN,
+  sittingCount: 0,
+  withinSittingRangeM: NaN,
+  betweenSittingRangeM: NaN,
 };
+
+function mean(values: readonly number[]): number {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
 
 export function trialStats(
   observations: readonly MeasurementObservation[],
   objectId: string,
   setting?: FixtureSetting,
 ): TrialStats {
-  const values = trialsFor(observations, objectId, setting)
-    .map((item) => item.rawM)
-    .filter((value) => Number.isFinite(value));
-  if (!values.length) return EMPTY_STATS;
-  const durations = trialsFor(observations, objectId, setting)
+  const rows = trialsFor(observations, objectId, setting).filter((item) =>
+    Number.isFinite(item.rawM),
+  );
+  if (!rows.length) return EMPTY_STATS;
+  const values = rows.map((item) => item.rawM);
+  const durations = rows
     .map((item) => item.paintDurationMs)
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+
+  // Split by sitting. Back-to-back repeats and repeats a week apart are different evidence:
+  // P0 measured 1–6 mm within a sitting and 21–133 mm between, so pooling them would report
+  // the smaller number and call it the operator bound.
+  const bySitting = new Map<string, number[]>();
+  for (const row of rows) {
+    const key = row.sittingId ?? LEGACY_SITTING_ID;
+    bySitting.set(key, [...(bySitting.get(key) ?? []), row.rawM]);
+  }
+  const repeatedSittings = [...bySitting.values()].filter((group) => group.length >= 2);
+  const sittingMeans = [...bySitting.values()].map(mean);
+
   return {
     n: values.length,
-    meanM: values.reduce((sum, value) => sum + value, 0) / values.length,
+    meanM: mean(values),
     medianM: median(values),
     minM: Math.min(...values),
     maxM: Math.max(...values),
@@ -586,6 +677,12 @@ export function trialStats(
     // NMAD of two points is just their half-separation dressed up as robust statistics.
     nmadM: values.length >= MIN_TRIALS_FOR_SPREAD ? nmad(values) : NaN,
     medianPaintMs: durations.length ? median(durations) : NaN,
+    sittingCount: bySitting.size,
+    withinSittingRangeM: repeatedSittings.length
+      ? Math.max(...repeatedSittings.map((group) => Math.max(...group) - Math.min(...group)))
+      : NaN,
+    betweenSittingRangeM:
+      bySitting.size >= 2 ? Math.max(...sittingMeans) - Math.min(...sittingMeans) : NaN,
   };
 }
 
@@ -612,6 +709,10 @@ export function exportMeasurementSession(): string {
     {
       schemaVersion: SESSION_SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
+      exportedBySitting: SITTING_ID,
+      // Which sittings the trials came from, so a reader can tell a repeatability claim from
+      // three measurements taken in the same five minutes.
+      sittings: [...new Set(state.observations.map((item) => item.sittingId ?? LEGACY_SITTING_ID))],
       definitions: MEASUREMENT_OBJECTS,
       // Every trial, each carrying the mask it was measured from. This is the evidence.
       observations: state.observations,

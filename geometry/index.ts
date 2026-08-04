@@ -17,3 +17,4 @@ export * from "./plane";
 export * from "./backproject";
 export * from "./measure";
 export * from "./calibrate";
+export * from "./uncertainty";

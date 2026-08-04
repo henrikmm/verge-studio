@@ -3,7 +3,9 @@ import {
   addObservation,
   clearActiveMask,
   clearObservations,
+  currentSittingId,
   duplicateMaskTrialIds,
+  LEGACY_SITTING_ID,
   ensureMask,
   exportMeasurementSession,
   getMask,
@@ -155,7 +157,7 @@ describe("measurement store", () => {
       repeatability: Array<{ objectId: string; setting: string; n: number; rangeM: number }>;
       workingMasks: Record<string, { paintedPixels: number; runs: number[] }>;
     };
-    expect(exported.schemaVersion).toBe("verge.measurement-session/0.2.0");
+    expect(exported.schemaVersion).toBe("verge.measurement-session/0.3.0");
     expect(exported.definitions.find((item) => item.id === "door-leaf")).toMatchObject({
       mode: "vertical_extent",
       definition: "physical leaf, bottom edge to top edge",
@@ -192,6 +194,47 @@ describe("measurement store", () => {
     expect(flagged.has(unrepainted.id)).toBe(true);
     expect(flagged.has(first.id)).toBe(false);
     expect(flagged.has(repainted.id)).toBe(false);
+  });
+
+  it("stamps new trials with this page load's sitting", () => {
+    const trial = addObservation({ ...BASE, rawM: 2.0 });
+    expect(trial.sittingId).toBe(currentSittingId());
+    expect(trial.sittingId).not.toBe(LEGACY_SITTING_ID);
+  });
+
+  it("hands pre-0.3.0 rows to the legacy sitting, never to this one", () => {
+    // Claiming an old trial for the current page load would manufacture a between-sitting
+    // comparison out of a single afternoon's work.
+    const migrated = migrateObservations([
+      { ...BASE, rawM: 2.0, capturedAt: "2026-08-04T12:00:00Z" } as MeasurementObservation,
+    ]);
+    expect(migrated[0].sittingId).toBe(LEGACY_SITTING_ID);
+    expect(migrated[0].sittingId).not.toBe(currentSittingId());
+  });
+
+  it("separates within-sitting repeats from between-sitting movement", () => {
+    // The real P0 shape: tight back-to-back trials, a much larger shift on returning later.
+    const rows = [
+      { ...BASE, id: "a1", trialIndex: 1, sittingId: "s1", rawM: 2.02, capturedAt: "" },
+      { ...BASE, id: "a2", trialIndex: 2, sittingId: "s1", rawM: 2.024, capturedAt: "" },
+      { ...BASE, id: "b1", trialIndex: 3, sittingId: "s2", rawM: 1.89, capturedAt: "" },
+      { ...BASE, id: "b2", trialIndex: 4, sittingId: "s2", rawM: 1.894, capturedAt: "" },
+    ] as MeasurementObservation[];
+
+    const stats = trialStats(rows, "door-leaf", "356px-256f");
+    expect(stats.sittingCount).toBe(2);
+    expect(stats.withinSittingRangeM).toBeCloseTo(0.004, 6);
+    // Between-sitting movement is ~32× the within-sitting spread and must not be averaged away.
+    expect(stats.betweenSittingRangeM).toBeCloseTo(0.13, 6);
+  });
+
+  it("withholds the between-sitting figure until a second sitting exists", () => {
+    addObservation({ ...BASE, rawM: 2.0 });
+    addObservation({ ...BASE, rawM: 2.01 });
+    const stats = trialStats(getMeasurementUi().observations, "door-leaf", "356px-256f");
+    expect(stats.sittingCount).toBe(1);
+    expect(stats.betweenSittingRangeM).toBeNaN();
+    expect(stats.withinSittingRangeM).toBeCloseTo(0.01, 6);
   });
 
   it("drops a single mistaken trial without disturbing the rest", () => {

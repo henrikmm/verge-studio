@@ -1,5 +1,6 @@
 import {
   backprojectMask,
+  composeUncertainty,
   estimateGravity,
   fitGroundPlaneRobust,
   fitErrorModel,
@@ -70,6 +71,12 @@ export interface ScaleCheckValue {
   correctionFactor: number;
   verdict: ReturnType<typeof scaleVerdict>;
   model: ErrorModel;
+  /**
+   * The random half-width this verdict was judged against — patch roughness only, because a
+   * single node sees one measurement and cannot know the operator spread or the clip's scale.
+   * The full budget is composed in the Objects pane, which has the trials and the error model.
+   */
+  randomM: number;
 }
 
 /** Apply a row-major 4x4 affine transform to flat xyz positions. */
@@ -492,7 +499,15 @@ export const scaleCheckSpec: NodeSpec = {
     const measurement = inputs.measurement?.value as MeasurementValue | undefined;
     if (!measurement) throw new Error("scale check has no measurement");
     const truthM = Number(params.truthM);
-    const observation = { id: measurement.objectId, truth: truthM, predicted: measurement.rawM, uncertainty: measurement.internalSpreadM };
+    // What this verdict answers is "is the error explainable by point noise, or is it bias?" —
+    // NOT "is the measurement accurate". Until 2026-08-04 the patch roughness was passed here
+    // and then displayed elsewhere as if it were the total uncertainty, which is how a 1.887 m
+    // door came to sit beside a ±0.037 m that covered none of its 0.213 m error.
+    const { randomM } = composeUncertainty({
+      valueM: measurement.rawM,
+      patchRoughnessM: measurement.internalSpreadM,
+    });
+    const observation = { id: measurement.objectId, truth: truthM, predicted: measurement.rawM, uncertainty: randomM };
     const model = fitErrorModel([observation]);
     const value: ScaleCheckValue = {
       truthM,
@@ -502,6 +517,7 @@ export const scaleCheckSpec: NodeSpec = {
       correctionFactor: model.scaleFactor,
       verdict: scaleVerdict(observation),
       model,
+      randomM,
     };
     return {
       check: {

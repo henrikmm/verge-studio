@@ -1,5 +1,11 @@
 import { useMemo } from "react";
-import { fitErrorModel } from "../../../geometry";
+import {
+  composeUncertainty,
+  fitErrorModel,
+  UNCERTAINTY_LIMITATION,
+  type ErrorModel,
+  type UncertaintyBudget,
+} from "../../../geometry";
 import { invalidateFrom, isNodeStale, runAuto, setNodeParam, setNodeParams, useGraph } from "../graph/graph-store";
 import {
   BRUSH_SELECTION_ID,
@@ -17,11 +23,13 @@ import {
   MIN_TRIALS_FOR_SPREAD,
   activeMeasurementObject,
   addObservation,
+  currentSittingId,
   duplicateMaskTrialIds,
   exportMeasurementSession,
   getMask,
   removeObservation,
   setActiveMeasurementObject,
+  setBlind,
   trialStats,
   trialsFor,
   useMeasurementUi,
@@ -46,6 +54,52 @@ function mean(values: number[]): number {
  */
 function objectMean(observations: readonly MeasurementObservation[], objectId: string, setting?: FixtureSetting): number {
   return trialStats(observations, objectId, setting).meanM;
+}
+
+/**
+ * The uncertainty budget for one object at one setting.
+ *
+ * Deliberately built from the object's TRIALS rather than from the live measurement: patch
+ * roughness alone was what the app used to display, and it is the smallest term in this
+ * project by an order of magnitude. `model` carries the clip's fitted scale, which is where
+ * nearly all of the remaining error lives.
+ */
+function objectBudget(
+  observations: readonly MeasurementObservation[],
+  objectId: string,
+  setting: FixtureSetting,
+  model?: ErrorModel,
+): UncertaintyBudget {
+  const stats = trialStats(observations, objectId, setting);
+  const trials = trialsFor(observations, objectId, setting);
+  return composeUncertainty({
+    valueM: stats.meanM,
+    patchRoughnessM: mean(trials.map((trial) => trial.internalSpreadM)),
+    operatorRangeM: stats.n >= MIN_TRIALS_FOR_SPREAD ? stats.rangeM : undefined,
+    model,
+  });
+}
+
+/** The ± a reading may honestly carry: post-calibration total, or the random term alone. */
+function statedUncertainty(budget: UncertaintyBudget): number {
+  return budget.calibrated ? budget.calibratedUncertaintyM : budget.randomM;
+}
+
+/**
+ * Blind mode's stand-in for a reading.
+ *
+ * A repeat trial painted with the previous answer on screen converges on it, so nothing derived
+ * from a measurement may be displayed while blind. Truths stay visible: the operator measured
+ * them with their own tape and hiding them would be theatre, not independence.
+ */
+const VEILED = "•••";
+
+function veil(blind: boolean, text: string): string {
+  return blind ? VEILED : text;
+}
+
+function formatPercent(value: number): string {
+  return Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)}%` : "—";
 }
 
 function formatDuration(ms: number): string {
@@ -93,12 +147,22 @@ function downloadSession(): void {
   URL.revokeObjectURL(url);
 }
 
-function EvidenceRow({ object, setting }: { object: MeasurementObject; setting: FixtureSetting }) {
+function EvidenceRow({
+  object,
+  setting,
+  model,
+}: {
+  object: MeasurementObject;
+  setting: FixtureSetting;
+  model?: ErrorModel;
+}) {
   const ui = useMeasurementUi();
   const active = ui.activeObjectId === object.id;
   const stats = trialStats(ui.observations, object.id, setting);
   const absError = Number.isFinite(stats.meanM) ? Math.abs(stats.meanM - object.truthM) : NaN;
   const thin = stats.n > 0 && stats.n < MIN_TRIALS_FOR_SPREAD;
+  const budget = objectBudget(ui.observations, object.id, setting, model);
+  const stated = statedUncertainty(budget);
 
   return (
     <button className={`object-row${active ? " active" : ""}`} onClick={() => selectObject(object)}>
@@ -108,11 +172,13 @@ function EvidenceRow({ object, setting }: { object: MeasurementObject; setting: 
         <small>{object.definition}</small>
       </span>
       <span className="object-reading">
-        <b>{formatM(stats.meanM)}</b>
-        <small>
+        <b>{veil(ui.blind, formatM(stats.meanM))}</b>
+        <small title={budget.basis}>
           {stats.n === 0
             ? `truth ${object.truthM.toFixed(3)} m`
-            : `|e| ${absError.toFixed(3)} · n${stats.n}${stats.n > 1 ? ` ±${stats.rangeM.toFixed(3)}` : ""}`}
+            : ui.blind
+              ? `n${stats.n} · ${stats.sittingCount} sitting${stats.sittingCount === 1 ? "" : "s"}`
+              : `|e| ${absError.toFixed(3)} · n${stats.n}${Number.isFinite(stated) ? ` · ±${stated.toFixed(3)}` : ""}`}
         </small>
       </span>
       {thin && <span className="trial-flag" title={`${MIN_TRIALS_FOR_SPREAD} trials needed before the spread means anything`}>{stats.n}/{MIN_TRIALS_FOR_SPREAD}</span>}
@@ -157,6 +223,26 @@ export function ObjectsPane() {
     [setting, ui.observations],
   );
 
+  // The clip's scale, fitted over every graded object in this setting. Two points minimum:
+  // one object yields a ratio, not a line, and a ratio cannot be applied to another length.
+  const clipModel = useMemo(
+    () => (errorModelPoints.length >= 2 ? fitErrorModel(errorModelPoints) : undefined),
+    [errorModelPoints],
+  );
+
+  // Falls back to the recorded trials when nothing is painted, so the budget describes the
+  // object's actual evidence instead of going blank the moment the mask is cleared.
+  const liveBudget = measurement
+    ? composeUncertainty({
+        valueM: measurement.rawM,
+        patchRoughnessM: measurement.internalSpreadM,
+        operatorRangeM: activeStats.n >= MIN_TRIALS_FOR_SPREAD ? activeStats.rangeM : undefined,
+        model: clipModel,
+      })
+    : activeStats.n > 0
+      ? objectBudget(ui.observations, object.id, setting, clipModel)
+      : undefined;
+
   const resolutionRows = useMemo(
     () =>
       FIXTURE_SETTINGS.map((candidate) => {
@@ -198,6 +284,15 @@ export function ObjectsPane() {
     });
   };
 
+  /**
+   * Local rebuild only — it does NOT rerun DA3, reload the video or bill anything.
+   *
+   * The old label said "Recompute from source", which read as if it went back to the GPU. It
+   * discards cached results at `GroundPlane`/`BrushSelection` and reruns the CPU measurement
+   * branch: floor, mask→3D points, extent, scale check and the 3D overlay. Painting or changing
+   * object/source already invalidates those nodes, so this is a recovery action, not a step in
+   * the normal evidence workflow.
+   */
   const recompute = async () => {
     invalidateFrom([GROUND_PLANE_ID, BRUSH_SELECTION_ID]);
     await runAuto();
@@ -206,7 +301,7 @@ export function ObjectsPane() {
   return (
     <div className="pane">
       <div className="pane-status">
-        <span className="ok">M3b evidence</span>
+        <span className={ui.blind ? "busy" : "ok"}>{ui.blind ? "BLIND" : "M3b evidence"}</span>
         <span>{ui.observations.length} trials</span>
         <span className="hint">{sourceMode === "recorded" ? "recorded DA3 evidence" : "live DA3 exploration"}</span>
       </div>
@@ -243,11 +338,24 @@ export function ObjectsPane() {
             </select>
           </label>
           <span>{sourceMode === "recorded" ? `GPU ${GPU_TIMES[setting].toFixed(2)} s` : "run DA3 manually"}</span>
+          {/* Lives here, not in the status row: that row is nowrap+overflow:hidden and clips
+              its right edge in a narrow pane, which is no place for a mode control. */}
+          <button
+            className={`chip-toggle${ui.blind ? " on" : ""}`}
+            title={
+              ui.blind
+                ? "Reveal readings. Any trial painted after this point is no longer independent of what you have seen."
+                : "Hide every reading so a repeat trial cannot converge on the previous answer."
+            }
+            onClick={() => setBlind(!ui.blind)}
+          >
+            {ui.blind ? "BLIND ON" : "Blind"}
+          </button>
         </section>
 
         <section className="object-list" aria-label="Measurement objects">
           {MEASUREMENT_OBJECTS.map((item) => (
-            <EvidenceRow key={item.id} object={item} setting={setting} />
+            <EvidenceRow key={item.id} object={item} setting={setting} model={clipModel} />
           ))}
         </section>
 
@@ -258,10 +366,48 @@ export function ObjectsPane() {
           </div>
           <p>{object.definition}</p>
           <div className="reading-grid">
-            <span>RAW DA3</span><b>{measurement ? formatM(measurement.rawM) : "—"}</b>
-            <span>INTERNAL SPREAD</span><b>{measurement ? `±${measurement.internalSpreadM.toFixed(3)} m` : "—"}</b>
-            <span>{object.id === "door-leaf" ? "CALIBRATION TARGET" : "DOOR-SCALE CHECK"}</span><b>{formatM(corrected)}</b>
+            <span>RAW DA3</span><b>{veil(ui.blind, measurement ? formatM(measurement.rawM) : "—")}</b>
             <span>SELECTED</span><b>{selection ? `${selection.diagnostics.pointCount.toLocaleString()} pts` : "—"}</b>
+            <span>{object.id === "door-leaf" ? "CALIBRATION TARGET" : "DOOR-SCALE CHECK"}</span><b>{veil(ui.blind, formatM(corrected))}</b>
+          </div>
+
+          {/*
+            The uncertainty budget, split by kind. Until 2026-08-04 this box showed a single
+            "INTERNAL SPREAD ±0.003 m" beside errors of 0.02–0.08 m. P0 measured the terms and
+            found the residual is systematic scale, not scatter — so the bias is now stated and
+            corrected rather than hidden inside a ± that never covered it.
+          */}
+          <div className="budget-block">
+            <div className="reading-grid">
+              <span>CLIP SCALE BIAS</span>
+              <b>{veil(ui.blind, liveBudget?.calibrated ? formatPercent(liveBudget.biasRelative) : "—")}</b>
+              <span>CALIBRATED</span>
+              <b>
+                {veil(
+                  ui.blind,
+                  liveBudget?.calibrated
+                    ? `${formatM(liveBudget.calibratedM)} ± ${liveBudget.calibratedUncertaintyM.toFixed(3)}`
+                    : "—",
+                )}
+              </b>
+              <span>RANDOM · one sitting</span>
+              <b>{veil(ui.blind, liveBudget && Number.isFinite(liveBudget.randomM) ? `±${liveBudget.randomM.toFixed(3)} m` : "—")}</b>
+              <span>SYSTEMATIC · after correction</span>
+              <b>{veil(ui.blind, liveBudget?.calibrated ? `±${liveBudget.systematicM.toFixed(3)} m` : "—")}</b>
+              {liveBudget && (
+                <small>
+                  {measurement ? "live measurement" : `${activeStats.n}-trial mean`} · {liveBudget.basis}
+                  {liveBudget.dominant !== "unknown" && ` — limited by ${liveBudget.dominant}`}
+                </small>
+              )}
+            </div>
+            {liveBudget && !liveBudget.calibrated && (
+              <div className="evidence-warning">
+                No calibration basis in this setting: record at least two different objects before
+                any bias figure can be quoted. The raw reading stands alone until then.
+              </div>
+            )}
+            <small className="honesty-note">⚠️ {UNCERTAINTY_LIMITATION}</small>
           </div>
           {measurementError && <div className="evidence-warning">{measurementError}</div>}
           {object.availabilityNote && <div className="evidence-warning">{object.availabilityNote}</div>}
@@ -271,7 +417,7 @@ export function ObjectsPane() {
           {object.id === "monitor-top" && (
             <div className="composition-check">
               <span>Composition B2 + B4</span>
-              <b>{formatM(derivedMonitorTop)}</b>
+              <b>{veil(ui.blind, formatM(derivedMonitorTop))}</b>
               <small>Cross-check only; it is not a fifth independent object.</small>
             </div>
           )}
@@ -282,23 +428,61 @@ export function ObjectsPane() {
                 <b>{activeStats.n}</b>
               </div>
               <div>
-                <span>OPERATOR SPREAD</span>
-                <b className={activeStats.n >= MIN_TRIALS_FOR_SPREAD ? "" : "unproven"}>
-                  {activeStats.n > 1 ? `${activeStats.rangeM.toFixed(3)} m` : "—"}
-                </b>
+                <span>SITTINGS</span>
+                <b className={activeStats.sittingCount >= 2 ? "" : "unproven"}>{activeStats.sittingCount}</b>
               </div>
               <div>
                 <span>MEDIAN PAINT</span>
                 <b>{formatDuration(activeStats.medianPaintMs)}</b>
               </div>
+              <div>
+                <span>IN-SITTING</span>
+                <b
+                  className={activeStats.n >= MIN_TRIALS_FOR_SPREAD ? "" : "unproven"}
+                  title="Back-to-back repeats. Measured at 1–6 mm in P0 — small, and not an operator bound."
+                >
+                  {veil(
+                    ui.blind,
+                    Number.isFinite(activeStats.withinSittingRangeM)
+                      ? `${activeStats.withinSittingRangeM.toFixed(3)} m`
+                      : "—",
+                  )}
+                </b>
+              </div>
+              <div>
+                <span>CROSS-SITTING</span>
+                <b
+                  className={activeStats.sittingCount >= 2 ? "" : "unproven"}
+                  title="Range of the per-sitting means. The only figure here that bounds the operator."
+                >
+                  {veil(
+                    ui.blind,
+                    Number.isFinite(activeStats.betweenSittingRangeM)
+                      ? `${activeStats.betweenSittingRangeM.toFixed(3)} m`
+                      : "—",
+                  )}
+                </b>
+              </div>
             </div>
+            {activeStats.n > 0 && activeStats.sittingCount < 2 && (
+              <div className="evidence-warning">
+                One sitting — not yet an operator bound. Back-to-back repeats measured 1–6 mm in
+                P0, while the same objects moved 21–133 mm between sittings. Come back later, turn
+                blind mode on, and repaint before reading the previous answer.
+              </div>
+            )}
             {activeTrials.length > 0 && (
               <ol className="trial-list">
                 {activeTrials.map((trial) => (
                   <li key={trial.id} className={repeatedMasks.has(trial.id) ? "repeated-mask" : ""}>
                     <span className="mono">#{trial.trialIndex}</span>
-                    <b>{trial.rawM.toFixed(3)} m</b>
-                    <span className="mono">{(trial.rawM - object.truthM >= 0 ? "+" : "") + (trial.rawM - object.truthM).toFixed(3)}</span>
+                    <b>{veil(ui.blind, `${trial.rawM.toFixed(3)} m`)}</b>
+                    <span className="mono">
+                      {veil(
+                        ui.blind,
+                        (trial.rawM - object.truthM >= 0 ? "+" : "") + (trial.rawM - object.truthM).toFixed(3),
+                      )}
+                    </span>
                     <span className="mono">
                       {repeatedMasks.has(trial.id)
                         ? "same mask as an earlier trial"
@@ -332,12 +516,20 @@ export function ObjectsPane() {
             <button disabled={sourceMode !== "recorded" || !measurement || !selection || !ground} onClick={capture}>
               Record trial {activeStats.n + 1}
             </button>
-            <button disabled={graph.running} onClick={() => void recompute()}>
-              {graph.running ? "Recomputing…" : "Recompute from source"}
+            <button
+              disabled={graph.running}
+              title="Discards cached results from GroundPlane and BrushSelection down, then reruns the local CPU branch. DA3 is not run and nothing is billed."
+              onClick={() => void recompute()}
+            >
+              {graph.running ? "Rebuilding…" : "Rebuild measurement"}
             </button>
           </div>
           <small className="honesty-note">Masks are operator evidence. Review the pink RGB/depth edges and 3D highlight before accepting a row.</small>
           <small className="honesty-note"><b>Paint:</b> {object.maskInstruction}</small>
+          <small className="honesty-note">
+            Sitting <span className="mono">{currentSittingId().slice(-6)}</span> — trials recorded
+            now carry this id. A separated repeat means reloading later, not recording again.
+          </small>
         </section>
 
         <section className="resolution-card">
@@ -347,8 +539,8 @@ export function ObjectsPane() {
             <div className="resolution-row" key={row.setting}>
               <span>{row.setting}</span>
               <span>{row.views}/3</span>
-              <span>{formatM(row.rawMae)}</span>
-              <span>{formatM(row.correctedMae)}</span>
+              <span>{veil(ui.blind, formatM(row.rawMae))}</span>
+              <span>{veil(ui.blind, formatM(row.correctedMae))}</span>
             </div>
           ))}
           <p>
@@ -358,10 +550,11 @@ export function ObjectsPane() {
 
         <section className="error-model-card">
           <h3>Current-run raw error model</h3>
-          {errorModelPoints.length >= 2 ? (() => {
-            const model = fitErrorModel(errorModelPoints);
-            return <div className="reading-grid"><span>SLOPE</span><b>{model.slope.toFixed(3)}</b><span>INTERCEPT</span><b>{model.intercept.toFixed(3)} m</b><span>RESIDUAL RMS</span><b>{model.residualRms.toFixed(3)} m</b><span>MEAN ABSREL</span><b>{(model.meanAbsRel * 100).toFixed(1)}%</b><span>MAX ERROR</span><b>{model.maxAbsError.toFixed(3)} m</b></div>;
-          })() : <p>Record at least two distinct truths.</p>}
+          {ui.blind ? (
+            <p>Hidden while blind mode is on.</p>
+          ) : clipModel ? (
+            <div className="reading-grid"><span>SLOPE</span><b>{clipModel.slope.toFixed(3)}</b><span>INTERCEPT</span><b>{clipModel.intercept.toFixed(3)} m</b><span>RESIDUAL RMS</span><b>{clipModel.residualRms.toFixed(3)} m</b><span>SCALE FACTOR</span><b>×{clipModel.scaleFactor.toFixed(3)}</b><span>MEAN ABSREL</span><b>{(clipModel.meanAbsRel * 100).toFixed(1)}%</b><span>MAX ERROR</span><b>{clipModel.maxAbsError.toFixed(3)} m</b></div>
+          ) : <p>Record at least two distinct truths.</p>}
           <small className="honesty-note">
             Fitted over {errorModelPoints.length} object{errorModelPoints.length === 1 ? "" : "s"} from{" "}
             {currentRunObservations.length} trial{currentRunObservations.length === 1 ? "" : "s"}. Each object
