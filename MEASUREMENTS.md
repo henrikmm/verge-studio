@@ -95,9 +95,14 @@ endpoint would make the table more complete and the evidence less honest.
 
 ⚠️ **Every cell above is n=1** — one painting of one mask, kept because the app until
 2026-08-04 discarded the previous row whenever a new one was recorded. The ± is patch
-roughness, not repeatability. The rows are reproducible from their reconstruction, but none of
-them carries a claim about how much the number moves when the same object is measured again.
-The trial protocol below replaces them.
+roughness, not repeatability.
+
+**The 504px column is superseded** by the three-trial means in the next section: B1 **2.020**,
+B2 **0.698**, B3 **0.427**. The B1 row above (1.887 m) is the largest single distortion in this
+file — it made DA3's scale error look ~11% when three trials put it near 3%. The historical rows
+are kept because the resolution verdict below was computed from them, not because they are the
+best estimate. B5 has not been re-measured under the trial protocol and its 356/252px columns
+are still n=1 throughout.
 
 **Operator refinement on 2026-08-03:** the user repainted the 504px door endpoints and the app
 reported approximately **2.0 m**, about **0.10 m / 4.8%** below the 2.10 m truth. This is the
@@ -137,17 +142,78 @@ ungraded (occluded stand contact) and B5's truth is derived from B2 + B4, so nei
 independent trial subject. A small number of 356px door trials are worth adding as a check that
 spread is not itself resolution-dependent.
 
-| Object | Truth | n | Mean | Median | Spread (max−min) | Median time |
-|---|---:|---:|---:|---:|---:|---:|
-| B1 door-leaf extent | 2.100 | — | — | — | — | — |
-| B2 floor → table | 0.750 | — | — | — | — | — |
-| B3 tower extent | 0.450 | — | — | — | — | — |
+**Collected 2026-08-04**, 504px · 112f, nine trials, three per object, each with its own mask
+(nine distinct digests — no trial reused an earlier mask). Source:
+`verge-m3b-measurements-2.json`, schema 0.2.0.
 
-*Not yet collected.* The store, the per-trial mask evidence, the timer and the export shipped
-on 2026-08-04 and are covered by unit tests plus a browser run; the trials themselves are
-operator work and cannot be simulated — a mask painted by an agent is not a sample of this
-operator's endpoint judgement. Export the session JSON and fill this table from
-`repeatability[]` once the trials exist.
+| Object | Truth | n | Mean | Median | Spread (max−min) | NMAD | Median time | Error |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| B1 door-leaf extent | 2.100 | 3 | 2.0197 | 2.0184 | **0.0059** | 0.0013 | 5 s | −0.080 (−3.8%) |
+| B2 floor → table | 0.750 | 3 | 0.6983 | 0.6971 | **0.0041** | 0.0005 | 10 s | −0.052 (−6.9%) |
+| B3 tower extent | 0.450 | 3 | 0.4275 | 0.4276 | **0.0009** | 0.0005 | 5 s | −0.023 (−5.0%) |
+
+#### Finding 1 — operator placement is not the noise term. The hypothesis was wrong.
+
+The premise for this study was that the 1.887 m → ≈2.0 m door swing was operator jitter of order
+0.1 m. It is not. Within a sitting, the same operator reproduces an endpoint to **1–6 mm**, which
+is 15–90× *smaller* than the residual error against truth. Endpoint placement is one of the most
+repeatable parts of this pipeline, not the least.
+
+#### Finding 2 — the swing was real, but it lives between sittings, not within one
+
+Comparing the three-trial means against the frozen n=1 rows from 2026-08-03, same setting:
+
+| Object | Frozen (n=1) | Trial mean | Shift | Within-session spread | Ratio |
+|---|---:|---:|---:|---:|---:|
+| B1 | 1.887 | 2.020 | **+0.133** | 0.0059 | **23×** |
+| B2 | 0.704 | 0.698 | −0.006 | 0.0041 | 1× |
+| B3 | 0.407 | 0.427 | **+0.021** | 0.0009 | **24×** |
+
+B1 and B3 moved by 23–24× their own within-session spread. Three trials painted back to back
+therefore measure short-term consistency and **cannot see** the variation that actually matters:
+how the endpoints get interpreted on a different day, at a different zoom, after looking at a
+different frame. A spread of 0.0009 m on B3 would be a false precision claim if quoted as *the*
+operator uncertainty — the same operator moved that object 0.021 m between sittings.
+
+⚠️ **Do not quote these spreads as the measurement uncertainty.** They bound one sitting.
+Widely-separated repeats are what would bound the operator, and this study does not contain them.
+
+#### Finding 3 — what is left is bias, and bias is correctable
+
+All three errors are negative and of similar relative size (−3.8%, −6.9%, −5.0%). With the noise
+this small, the residual is dominated by systematic scale, which is exactly the error type the
+error model is built to remove:
+
+| | Frozen 2026-08-03 (n=1) | Trial means 2026-08-04 |
+|---|---:|---:|
+| slope `a` | 0.893 | **0.969** |
+| offset `b` | +0.024 m | −0.018 m |
+| residual RMS | 0.016 m | 0.008 m |
+| B1 scale factor | 1.113 | **1.040** |
+| raw MAE, B2+B3 only | 0.0445 m | **0.0371 m** |
+| door-scaled MAE, B2+B3 | — | **0.0147 m** |
+
+The slope moving 0.893 → 0.969 is the substantive change: with the door measured as an extent
+at 2.020 m rather than 1.887 m, **DA3's raw metric scale on this clip is ~3% low, not ~11% low.**
+The frozen door row was carrying most of the apparent scale error.
+
+The residual RMS of 0.008 m is **not** a noise floor: three points fitted with two parameters
+leaves one degree of freedom. It is a consistency statement, nothing more.
+
+#### Finding 4 — the floor fit is deterministic on real data
+
+All nine trials report byte-identical floor diagnostics (support 0.145536, tilt 11.84694728°,
+RMSE 0.01231087 m, below-floor 0, gravity coherence 0.94942707). M3a asserted determinism with a
+unit test; nine independent user-driven recordings confirm it end to end. `confidenceThreshold`
+varies per object (2.13 / 4.57 / 3.84) and is constant across each object's three trials, as
+expected for a percentile taken over the selected pixels.
+
+#### Consequence for M3c
+
+Automatic selection was going to be justified by making endpoints more repeatable. At 1–6 mm and
+a 5–10 s median paint, there is almost no headroom on either axis. The case for M3c has to be
+made on ease and on scenes where a brush is impractical, not on precision — and the measured
+baseline it must beat is in the table above.
 
 ### Resolution/frame-count verdict
 
@@ -156,9 +222,12 @@ every predicted length by the B1 truth/raw factor. That is the mathematically co
 of a scale correction: translation-independent extents are still lengths. The correction
 remains secondary evidence—raw DA3 is still the primary output.
 
-The door-scaled columns below still use the frozen 1.887 m door observation. They are reproducible
-for the saved benchmark, but provisional as a product conclusion: the exact refined door mask
-must be recorded before recalculating its scale factor.
+⚠️ **The door-scaled columns below still use the frozen 1.887 m door observation**, which the
+2026-08-04 trials superseded with 2.020 m. The 504px scale factor is really **1.040**, not 1.113.
+The three-run *ranking* is unaffected — only 504px has been re-measured under the trial protocol,
+and it was already the winner on both raw and corrected error — but the 504px door-scaled figure
+below is stale. Recomputing the 356/252px rows honestly needs their doors re-measured too, which
+is another nine trials nobody has painted yet.
 
 | Setting | GPU | B1 scale factor | Raw holdout MAE | Door-scaled MAE |
 |---|---:|---:|---:|---:|
@@ -198,9 +267,13 @@ result against tape measurements. At 504px, the best observed errors are roughly
 the evidence selection rather than replacing the geometry pipeline.
 
 **Not established yet:** a universal accuracy figure across new rooms, phones, camera motion,
-floor visibility, or outdoor terrain. The benchmark currently contains one primary clip and one
-operator. Before claiming repeatability, record multiple independent redraws of each endpoint and
-run a second capture with changed camera orientation and path.
+floor visibility, or outdoor terrain. The benchmark contains one primary clip and one operator.
+
+**Updated 2026-08-04 by the trial study:** short-term repeatability *is* now established, and it
+is excellent (1–6 mm). What is still not established is between-sitting repeatability — the
+B1/B3 shifts of 23–24× the within-sitting spread show that variation exists and that back-to-back
+trials cannot measure it. A second capture with changed camera orientation and path remains
+untested, and remains the larger risk.
 
 ---
 

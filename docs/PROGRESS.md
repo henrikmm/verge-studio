@@ -6,11 +6,11 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-04 · The repeatability store (P0) is built and verified: trials now
-accumulate instead of overwriting, each carries its own frozen mask, and operator spread is
-reported separately from patch roughness. **The trials themselves are not collected yet** —
-that is operator work. M3b remains working end to end on the primary door clip; 504px/112f
-remains the operating point; B4 remains honestly ungraded because its lower endpoint is occluded.
+Last updated: 2026-08-04 · P0 done: the repeatability store shipped and nine trials were painted
+and analysed. **The result overturned its own premise** — operator endpoint placement repeats to
+1–6 mm within a sitting, so it is not the missing noise term; the residual error is systematic
+bias, and DA3's raw scale on clip B is ~3% low rather than the ~11% the frozen n=1 door row
+implied. 504px/112f remains the operating point. B4 remains ungraded (occluded endpoint).
 
 ---
 
@@ -25,8 +25,8 @@ remains the operating point; B4 remains honestly ungraded because its lower endp
 | M3.0 — Door-clip fixture (one warm session) | **done** (3 fixtures local, service deleted) |
 | M3a — Geometry core (offline) | **done** (89 geometry/fixture tests) |
 | M3b — Mask → measurement → grading | **done on clip B** |
-| P0 — Repeatability store | **built + verified**; trials NOT yet painted (operator work) |
-| M3c — Automatic evidence selection | next, once the trials exist |
+| P0 — Repeatability study | **done**; spread 1–6 mm, premise refuted, see findings below |
+| M3c — Automatic evidence selection | next, but its precision case is now gone |
 | M3d — Field/raster regime (vegetation) | planned after M3c proof |
 | M4 — Productization + evidence hardening | not started; splats dropped from roadmap |
 
@@ -665,7 +665,11 @@ Final local gate: production build green; `verify.sh` green with **207 unit/fixt
 the fixture smoke. The optional server-contract check reported its explicit no-FastAPI skip in
 this shell; no server code changed in M3b. No cloud resource was created or billed.
 
-### P0 — Repeatability store ✅ built 2026-08-04 (trials still to be painted)
+### P0 — Repeatability ✅ store built and study run, 2026-08-04
+
+Raw evidence committed at `docs/measurement-trials-2026-08-04.json` (140 KB, nine trials with
+their masks). It is the reproducibility anchor: any future claim about these numbers can be
+checked against the exact masks that produced them.
 
 The blocker in front of M3c was that the app **could not hold a repeat measurement**.
 `addObservation` filtered out any prior row for the same (object, setting, frame) before
@@ -698,20 +702,49 @@ captured as data.
       correctly removed, an 18 s paint duration captured from a real stroke. `verify.sh` green
       with **213 tests**; production build green.
 
-**NOT done — this is operator work and cannot be simulated.** A mask painted by an agent is not
-a sample of this operator's endpoint judgement, so the study is empty until the user paints it:
+- [x] **Trials painted and analysed 2026-08-04** — nine trials, three each on B1/B2/B3 at
+      504px · 112f, nine distinct mask digests, all with durations. Full analysis in
+      `MEASUREMENTS.md`; source export `~/Downloads/verge-m3b-measurements-2.json`.
 
-- [ ] Three independent redraws each of B1/B2/B3 at 504px · 112f, clearing the mask between
-      trials. A few 356px door trials as a check that spread is not resolution-dependent.
-- [ ] Export the session JSON, fill the repeatability table in `MEASUREMENTS.md` from
-      `repeatability[]`, and retire the n=1 frozen rows.
-- [ ] Recalculate the door-derived scale factor from the trial mean, not the stale 1.887 m.
-- [ ] Feed the resulting spread into the reported uncertainty, so the app stops showing a
-      patch-roughness ± an order of magnitude tighter than its real error.
+### What the trials found — the hypothesis behind P0 was wrong
 
-⚠️ The user's own browser may still hold a 0.1.0 session containing the refined ~2.0 m door.
-It will migrate to trial 1 with **no mask evidence** — the value survives, the mask behind it
-does not. Export it before painting over it.
+**Operator placement is not the noise term.** Within a sitting the same operator reproduces an
+endpoint to **1–6 mm** — 15–90× smaller than the residual error against truth. The premise that
+the 1.887 → ≈2.0 door swing was ~0.1 m of operator jitter is refuted.
+
+**The swing is real but lives between sittings.** Against the frozen n=1 rows: B1 moved +0.133 m
+(23× its within-session spread) and B3 +0.021 m (24×). Back-to-back trials measure short-term
+consistency and are blind to the variation that matters. **Do not quote these spreads as the
+measurement uncertainty** — they bound one sitting, not the operator.
+
+**What remains is bias, which is correctable.** All errors negative and similar in relative size
+(−3.8%, −6.9%, −5.0%). The error model moved from slope 0.893 / offset +0.024 to **0.969 /
+−0.018**, and the door factor from 1.113 to **1.040**: with the door correctly at 2.020 m,
+**DA3's raw scale on this clip is ~3% low, not ~11%.** The frozen door row was carrying most of
+the apparent scale error. Raw MAE on B2+B3 like-for-like: 0.0445 → 0.0371 m; door-scaled 0.0147 m.
+The 0.008 m residual RMS is *not* a noise floor — three points, two parameters, one dof.
+
+**Floor determinism confirmed on real data.** All nine trials report byte-identical floor
+diagnostics (support 0.145536, tilt 11.84694728°, RMSE 0.01231087 m, coherence 0.94942707).
+M3a asserted this with a unit test; nine user-driven recordings confirm it end to end.
+
+**Consequence for M3c:** automation was to be justified by better repeatability. At 1–6 mm and a
+5–10 s median paint there is almost no headroom on either axis. The case for M3c must now rest on
+ease of use and on scenes where a brush is impractical — not on precision.
+
+### P0 follow-ups still open
+
+- [ ] **Separated repeats, not back-to-back ones.** The only way to bound the operator is trials
+      taken in different sittings, without the previous number visible. B1 and B3 already show
+      23–24× more between-sitting movement than within.
+- [ ] **The displayed ± is still wrong, and repeatability did not fix it.** The app shows patch
+      roughness (±0.003–0.043 m) beside errors of 0.02–0.08 m. Since the residual is now known to
+      be bias rather than scatter, the honest display is a calibrated value plus a stated
+      systematic term — not a spread.
+- [ ] Re-measure B5 under the trial protocol; it is still n=1.
+- [ ] 356/252px doors are still n=1 at 1.408 / 1.125 m, so their door-scaled MAE columns are
+      stale. The 504px ranking is unaffected — it won on raw error, which needs no door.
+- [ ] Recompute the resolution verdict table once those exist.
 
 ### M3c — Automatic evidence selection (mask source swap only)
 
