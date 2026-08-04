@@ -43,10 +43,28 @@ All panes draggable/resizable/closable via Dockview. Graph row ~40% height; Insp
 | `--border` | `#2a2a2e` | 1px borders everywhere |
 | `--text` | `#d4d4d8` | primary text |
 | `--text-dim` | `#8a8a90` | labels, hints, units |
-| `--accent-run` | `#4ade80` | running/ok status, cost readouts |
-| `--accent-busy` | `#f59e0b` | pending/stale/warm-up states |
-| `--accent-err` | `#ef4444` | errors, destructive buttons |
-| `--slider` | `#e05252` | slider thumbs/filled tracks (Sentinel red) |
+| `--emph-hi` | `#f4f4f6` | the highlighted thing: ok/current/selected/accepted |
+| `--emph` | `#c7c7cd` | secondary emphasis: truths, budget rule, VRAM fill |
+| `--emph-dim` | `#8a8a90` | de-emphasised state |
+| `--accent-busy` | `#f59e0b` | pending/stale/warm-up/experimental — the one state hue |
+| `--accent-err` | `#b4574f` | hard failure only; destructive buttons |
+| `--slider` | `#e05252` | slider thumbs/filled tracks (Sentinel red) — marks *controls*, not state |
+
+**Colour rule: hue encodes data *type*, never *status*.** The port colours below are a type
+legend and are load-bearing — a wire's colour tells you what flows through it. Status rides the
+neutral `--emph*` ramp plus a **status glyph**, so state survives desaturation, colour blindness
+and a grayscale screenshot:
+
+| Glyph | Meaning |
+|---|---|
+| `●` | current / ok / warm / accepted |
+| `◐` | working / stale / pending review |
+| `○` | idle / paused / cold |
+| `▲` | hard failure |
+
+Two deliberate exceptions, both because the mark sits on photographic content where a neutral
+would disappear: the **2D mask overlay** (amber unreviewed, teal accepted, pink brush) and the
+**port hues** themselves. Clip B's room is white walls — a white mask would vanish on the door.
 | `--font-ui` | `"Inter", system-ui` | labels, 11–12px |
 | `--font-mono` | `"JetBrains Mono", ui-monospace` | numbers, readouts, terminal |
 
@@ -105,8 +123,8 @@ Sections are numerous and tightly stacked (reference shows 6+ visible at once). 
 mirrors node port/param order. A `▾ Output Routing` section and a `Presets` section with
 `+ Save New` sit at the bottom.
 
-**Status bar** (bottom, 24px) — left: GPU instance chip (`GPU: cold` gray / `warming…`/`busy`
-amber pulse / `warm` green), then live VRAM (`VRAM 8.53 GiB / 24.00 GiB`), then last-run summary
+**Status bar** (bottom, 24px) — left: GPU instance chip with a hollow dot when cold, filled
+neutral when warm, filled amber pulsing when busy, then live VRAM (`VRAM 8.53 GiB / 24.00 GiB`), then last-run summary
 (`16f · 7.7s GPU`); right: session cost ticker in mono (`$0.14`). The reference's terminal pane
 carries the same idea for the agent (`32% · $22.85`) — cost and capacity are always on screen.
 
@@ -133,6 +151,9 @@ These are design constraints, not just copy guidelines:
 ## Acceptance checklist (design-review QA runs this)
 
 1. App background ≤ `#151517`; no white surfaces; no default-blue links or focus rings.
+1b. **No status is signalled by hue alone.** Grayscale the app and every state must still be
+    readable from its glyph, weight or position. Green is absent entirely; red appears only on
+    hard failure and on slider thumbs.
 2. Four panes present (Depth 2D, Viewport 3D, Graph, Inspector) with Dockview tabs; drag-resize works.
 3. Pane tab strip ≤ 28px; labels 11–12px; density comparable to reference screenshot.
 4. Viewport 3D renders the fixture point cloud; drag-orbit visibly changes the view; overlay shows point count; axis gizmo visible.

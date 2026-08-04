@@ -7,9 +7,23 @@
   --border: #2a2a2e;
   --text: #d4d4d8;
   --text-dim: #8a8a90;
-  --accent-run: #4ade80;
+
+  /*
+    Colour encodes data TYPE (the port hues below), never status.
+    Status rides a neutral luminance ramp plus a shape glyph, so the interface still
+    reads when hue is unavailable — desaturated, colour-blind, or in a screenshot.
+    The old green `--accent-run` is gone: it was carrying "ok", "current", "selected",
+    "warm" and "truth" at once, which is more meaning than one hue can hold.
+  */
+  --emph-hi: #f4f4f6;
+  --emph: #c7c7cd;
+  --emph-dim: #8a8a90;
+
+  /* Amber is the one state hue we keep: stale, pending, needs-attention. */
   --accent-busy: #f59e0b;
-  --accent-err: #ef4444;
+  /* Desaturated on purpose — reserved for hard failure, never for "experimental". */
+  --accent-err: #b4574f;
+  /* Sentinel red, and the only red in the reference: it marks CONTROLS, not state. */
   --slider: #e05252;
   --font-ui: "Inter", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -93,13 +107,27 @@ body {
   overflow: hidden;
 }
 
+/*
+  Status glyphs. One convention across the whole app, so state survives the loss of hue:
+    ●  current / ok / warm      ○  idle / paused / cold
+    ◐  working / stale          ▲  hard failure
+  The glyph is the signal; luminance and amber only reinforce it.
+*/
 .pane-status .ok {
-  color: var(--accent-run);
+  color: var(--emph-hi);
+}
+
+.pane-status .ok::before {
+  content: "● ";
 }
 
 /* Blind mode is a deliberate, visible state — it must not look like an ordinary pane. */
 .pane-status .busy {
   color: var(--accent-busy);
+}
+
+.pane-status .busy::before {
+  content: "◐ ";
 }
 
 .pane-status .hint {
@@ -131,11 +159,19 @@ body {
 }
 
 .pane-controls .running {
-  color: var(--accent-run);
+  color: var(--emph-hi);
+}
+
+.pane-controls .running::before {
+  content: "● ";
 }
 
 .pane-controls .paused {
   color: var(--accent-busy);
+}
+
+.pane-controls .paused::before {
+  content: "○ ";
 }
 
 .pane-controls .spacer {
@@ -291,7 +327,7 @@ body {
 }
 
 .node-card.selected {
-  outline: 1px solid var(--accent-run);
+  outline: 1px solid var(--emph-hi);
   outline-offset: -1px;
 }
 
@@ -340,7 +376,8 @@ body {
 }
 
 .node-badge.on {
-  color: var(--accent-run);
+  color: var(--emph-hi);
+  border-color: #ffffff5c;
 }
 
 .node-run {
@@ -627,19 +664,24 @@ body {
   color: var(--text-dim);
 }
 
+/* Hollow = cold, filled = warm, filled + pulse = busy. Shape carries it, not hue. */
 .chip .dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--text-dim);
+  border: 1px solid var(--text-dim);
+  background: transparent;
+  box-sizing: border-box;
 }
 
 .chip.warm .dot {
-  background: var(--accent-run);
+  background: var(--emph-hi);
+  border-color: var(--emph-hi);
 }
 
 .chip.busy .dot {
   background: var(--accent-busy);
+  border-color: var(--accent-busy);
   animation: pulse 1s ease-in-out infinite;
 }
 
@@ -757,17 +799,19 @@ canvas {
 }
 
 .segment-toolbar .busy {
-  color: #fbbf24;
+  color: var(--accent-busy);
 }
 
+/* "Experimental" is a caution, not a failure — amber, and never the error red. */
 .segment-toolbar .segment-warning {
-  color: var(--accent-err);
+  color: var(--accent-busy);
 }
 
+/* Amber while unreviewed, bright neutral once accepted: pending vs settled. */
 .chip-toggle.accepted {
-  border-color: #2dd4bf88;
-  background: #2dd4bf20;
-  color: #5eead4;
+  border-color: #f4f4f688;
+  background: #f4f4f614;
+  color: var(--emph-hi);
 }
 
 .brush-toolbar input[type="range"] {
@@ -788,10 +832,12 @@ canvas {
   margin-right: 2px;
 }
 
+/* These are identifiers (B1, the active object), not selections — they take the
+   emphasis ramp. --port-selection stays reserved for the selection PORT type. */
 .tool-context b,
 .object-code,
 .evidence-title b {
-  color: var(--port-selection);
+  color: var(--emph-hi);
   font-family: var(--font-mono);
 }
 
@@ -839,9 +885,9 @@ canvas {
   height: fit-content;
   margin-left: -150px;
   padding: 2px 6px;
-  border: 1px solid #fb718566;
+  border: 1px solid #ffffff33;
   background: #0a0a0ccc;
-  color: var(--port-selection);
+  color: var(--emph-hi);
   font-family: var(--font-mono);
   font-size: 10px;
   pointer-events: none;
@@ -915,7 +961,7 @@ canvas {
 }
 
 .object-row.active {
-  box-shadow: inset 2px 0 var(--port-selection);
+  box-shadow: inset 2px 0 var(--emph-hi);
 }
 
 .object-copy,
@@ -966,8 +1012,9 @@ canvas {
   font-size: 11px;
 }
 
+/* A tape truth is reference data, not a verdict — it sits below the reading it grades. */
 .truth {
-  color: var(--accent-run);
+  color: var(--emph);
   font-family: var(--font-mono);
 }
 
@@ -1014,7 +1061,7 @@ canvas {
 .budget-block {
   margin: 0 7px 5px;
   border: 1px solid var(--border);
-  border-left: 2px solid var(--accent-run);
+  border-left: 2px solid var(--emph);
   background: #0d0d0f;
 }
 
@@ -1039,7 +1086,7 @@ canvas {
   gap: 2px 8px;
   margin: 0 7px 5px;
   padding: 5px 6px;
-  border: 1px solid #e8a95b44;
+  border: 1px solid #ffffff26;
   font-family: var(--font-mono);
   font-size: 10px;
 }
@@ -1158,7 +1205,7 @@ canvas {
 }
 
 .evidence-actions button:first-child:not(:disabled) {
-  border-color: #4ade8066;
+  border-color: #f4f4f666;
 }
 
 .evidence-actions button:disabled {

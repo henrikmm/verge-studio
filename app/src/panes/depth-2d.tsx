@@ -249,6 +249,9 @@ export function Depth2D() {
     if (currentMask && currentMask.width === canvas.width && currentMask.height === canvas.height) {
       const overlay = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const alpha = ui.overlayOpacity;
+      // The one place hue is not negotiable: this overlay lies on photographic content,
+      // and clip B's room is white walls. A neutral mask would vanish exactly where the
+      // door is. Amber still means unreviewed, matching the rest of the app.
       const overlayColor = currentMask.segmentation
         ? currentMask.segmentation.accepted
           ? [45, 212, 191]
@@ -268,16 +271,19 @@ export function Depth2D() {
       const y = prompt.y * canvas.height;
       ctx.beginPath();
       ctx.arc(x, y, 8, 0, Math.PI * 2);
-      ctx.fillStyle = prompt.label === 1 ? "#2dd4bf" : "#fb7185";
+      // Include vs exclude reads as light vs dark, not as two hues. The white ring is
+      // what separates either from the scene underneath.
+      const positive = prompt.label === 1;
+      ctx.fillStyle = positive ? "#f4f4f6" : "#17171a";
       ctx.fill();
       ctx.lineWidth = 2;
       ctx.strokeStyle = "#ffffff";
       ctx.stroke();
-      ctx.fillStyle = "#07100f";
+      ctx.fillStyle = positive ? "#17171a" : "#f4f4f6";
       ctx.font = "bold 14px ui-monospace";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText(prompt.label === 1 ? "+" : "−", x, y + 0.5);
+      ctx.fillText(positive ? "+" : "−", x, y + 0.5);
     }
   }, [arrays, descriptor, image, output, prompts, ui.masks, ui.overlayOpacity]);
 

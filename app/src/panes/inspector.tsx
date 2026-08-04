@@ -40,7 +40,10 @@ function Row({ k, v, title }: { k: string; v: string; title?: string }) {
   );
 }
 
-/** Fraction of the measured L4 budget, drawn as a bar that turns amber then red. */
+/**
+ * Fraction of the measured L4 budget. Neutral while there is headroom, amber past 75%,
+ * red past 92% — the two thresholds that matter are the only ones that take a hue.
+ */
 function VramBar({ used, total, label }: { used: number; total: number; label: string }) {
   const fraction = total > 0 ? Math.min(1, used / total) : 0;
   const tone =
@@ -48,7 +51,7 @@ function VramBar({ used, total, label }: { used: number; total: number; label: s
       ? "var(--accent-err)"
       : fraction > 0.75
         ? "var(--accent-busy)"
-        : "var(--accent-run)";
+        : "var(--emph)";
   return (
     <div className="vram">
       <div className="vram-head">

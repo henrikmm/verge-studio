@@ -28,8 +28,21 @@ const STATUS_COLOR: Record<NodeStatus, string> = {
   stale: "var(--accent-busy)",
   blocked: "var(--text-dim)",
   running: "var(--accent-busy)",
-  ok: "var(--accent-run)",
+  ok: "var(--emph-hi)",
   error: "var(--accent-err)",
+};
+
+/**
+ * The glyph, not the colour, is what says which state this is — the footer is 10px mono
+ * and the palette is deliberately near-neutral, so hue alone could not carry six states.
+ */
+const STATUS_GLYPH: Record<NodeStatus, string> = {
+  idle: "○",
+  stale: "◐",
+  blocked: "○",
+  running: "◐",
+  ok: "●",
+  error: "▲",
 };
 
 function PortRow({ port, side }: { port: PortSpec; side: "in" | "out" }) {
@@ -166,8 +179,8 @@ export function NodeCard({ id, selected }: NodeProps) {
       </div>
 
       <div className="node-foot">
-        <span className="ms" style={{ color: STATUS_COLOR[status] }}>
-          {runtime.elapsedMs.toFixed(1)}ms
+        <span className="ms" style={{ color: STATUS_COLOR[status] }} title={status}>
+          {STATUS_GLYPH[status]} {runtime.elapsedMs.toFixed(1)}ms
         </span>
         {shown?.summary && shown.thumbnailUrl && <span className="node-sum">{shown.summary}</span>}
         {runtime.status === "error" && (
