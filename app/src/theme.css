@@ -708,7 +708,8 @@ canvas {
 
 /* M3b measurement canvas — Sentinel-style compact tool rows, evidence on image. */
 .brush-toolbar,
-.frame-toolbar {
+.frame-toolbar,
+.segment-toolbar {
   flex: none;
   display: flex;
   align-items: center;
@@ -727,6 +728,26 @@ canvas {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+}
+
+.segment-toolbar {
+  justify-content: space-between;
+  background: #0d1514;
+  color: var(--text-dim);
+}
+
+.segment-toolbar .busy {
+  color: #fbbf24;
+}
+
+.segment-toolbar .segment-warning {
+  color: var(--accent-err);
+}
+
+.chip-toggle.accepted {
+  border-color: #2dd4bf88;
+  background: #2dd4bf20;
+  color: #5eead4;
 }
 
 .brush-toolbar input[type="range"] {
@@ -784,6 +805,10 @@ canvas {
 
 .depth-canvas-frame canvas.erasing {
   cursor: cell;
+}
+
+.depth-canvas-frame canvas.segmenting {
+  cursor: copy;
 }
 
 .mask-readout {

@@ -6,11 +6,11 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-04 (second session) · **Backlog audit + honesty fixes.** Every unchecked
-box in this file was graded against the code. Three were already done and never ticked, one
-whole block was decorative history, and the rest are now either fixed, verified, or written
-down below as a real task. The headline code change: the app no longer displays patch roughness
-as if it were the measurement uncertainty — bias and random error are now reported separately.
+Last updated: 2026-08-04 (third session) · **M3c automatic-selection prototype implemented.**
+Pinned SlimSAM now runs locally through browser WebGPU, accepts positive/negative clicks, remains
+brush-editable, records model/click/latency/abstention provenance, and withholds height until the
+operator accepts the mask. The first real-door result is useful but does **not** pass the milestone's
+acceptance benchmark yet; N=1 cannot establish variation or a failure rate.
 
 Earlier that day · P0 done: the repeatability store shipped and nine trials were painted
 and analysed. **The result overturned its own premise** — operator endpoint placement repeats to
@@ -45,7 +45,7 @@ implied. 504px/112f remains the operating point. B4 remains ungraded (occluded e
 | M3b — Mask → measurement → grading | **done on clip B** |
 | P0 — Repeatability study | **done**; spread 1–6 mm, premise refuted, see findings below |
 | P0.1 — Honesty fixes + backlog audit | **done 2026-08-04**; uncertainty split, sittings, blind mode |
-| M3c — Automatic evidence selection on the door | **next** — judged on ease of use, not precision |
+| M3c — Automatic evidence selection on the door | **prototype implemented**; acceptance study still open |
 | M3d — Field/raster regime (vegetation) | planned after M3c proves out on the door |
 | P1 — Floor challenge set | **queued after M3 completes** — see its own section below |
 | M4 — Productization + evidence hardening | not started; splats dropped from roadmap |
@@ -80,13 +80,13 @@ before any grass work. The floor challenge set (P1) is queued for after M3 compl
 1. ~~**P0 — Freeze repeatability before adding another model.**~~ **Done 2026-08-04**: the store
    ships, nine trials are painted and analysed, and the premise was refuted. The remaining
    painting work (B5, the 356/252px doors, separated sittings) is listed under "P0 follow-ups".
-2. **M3c — automatic evidence selection, on clip B's door first.** One canonical frame,
-   click-prompted endpoint/object selection, brush correction retained. Grade by measurement
-   difference from the frozen manual trials, failure/abstention rate, correction clicks and
-   operator time — not mask IoU. Multi-frame propagation only if one frame cannot supply
-   reliable endpoints. **Its precision case is gone** (see the P0 findings): at 1–6 mm spread and
-   a 5–10 s median paint there is no headroom, so it must win on ease of use and on scenes where
-   a brush is impractical.
+2. **M3c acceptance study — implementation done, evidence still thin.** Repeat the canonical-door
+   interaction enough times to estimate failure/abstention and operator time; the first N=1 run is
+   recorded below. Grade by measurement difference from the frozen manual trials, terminal
+   abstention/failure, correction clicks and total interaction time — not mask IoU. Multi-frame
+   propagation only if one frame cannot supply reliable endpoints. **Its precision case is gone**
+   (see the P0 findings): at 1–6 mm spread and a 5–10 s median paint there is no headroom, so it
+   must win on ease of use and on scenes where a brush is impractical.
 3. **M3d — transfer the proven geometry to grass**, once the door proves out. Grass is not a
    door repeated many times: use a local ground raster and per-cell vegetation height
    percentiles, with point-count and confidence gates. Track tape/reference error, valid-area
@@ -801,11 +801,12 @@ cross-sitting figure appear and correctly flipped the budget's limiting term to 
 
 ### M3c — Automatic evidence selection, **proven on the door first**
 
-Nothing downstream changes: a brush mask and a model mask are the same bytes, and `setMaskData()`
-in `measurement-store.ts` already exists as the seam — it writes a mask programmatically and
-deliberately clears the paint clock, so a model mask cannot be credited with operator time.
-**No cloud cost — this runs in the browser.** The first goal is repeatable measurement endpoints
-on one canonical frame of clip B, not perfect outlines or propagation across the entire video.
+A brush mask and a model mask are the same pixel bytes at the backprojection seam, but **not the
+same measurement distribution**. The P0 brush protocol paints compact endpoint patches; SlimSAM
+returns the whole door, so unchanged P2/P98 shaves both ends inward. M3c now retains the existing
+mask → confidence/depth gates → backprojection path, then converts automatic full-object points to
+balanced lower/upper 10% endpoint evidence before the same robust P2/P98 extent estimator runs.
+Manual brush measurements are unchanged. **No inference cloud cost — this runs in browser WebGPU.**
 
 **Scope decision, 2026-08-04 (user):** prove click-prompted selection on **the door** before any
 grass work. And read the P0 findings first — the precision argument for this milestone is gone.
@@ -818,17 +819,50 @@ confident, healthy-looking 1.887 m with no reported statistic distinguishing it 
 - [x] ~~Freeze the manual-repeatability benchmark first.~~ **Done by P0 on 2026-08-04**: nine
       trials, three each on B1/B2/B3 at 504px, nine distinct mask digests, committed as
       `docs/measurement-trials-2026-08-04.json`. Automation now has a fixed target to beat.
-- [ ] Prototype click-prompted selection with editable brush output. Accept it only if it reduces
-      endpoint measurement variation or operator time without hiding failures.
-- [ ] Report measurement delta, abstention/failure rate, correction clicks and latency. Mask IoU
-      is diagnostic, not the product metric.
-
-- [ ] MobileSAM or EfficientSAM (both Apache-2.0, ~10 MB ONNX) via ONNX Runtime Web /
-      transformers.js: encode the frame once, decode a mask per click (~200 ms)
+- [x] **Browser-local SlimSAM runtime.** `@huggingface/transformers@3.8.1` and
+      `Xenova/slimsam-77-uniform` are pinned to model revision
+      `e6e86e6feaa8b1f8f325e81403e149ff76ce51bb`; fp16 encoder + decoder are about 20.8 MB.
+      WebGPU is required explicitly — there is no quiet CPU/WASM fallback that freezes the UI.
+- [x] **Click-prompted, editable evidence.** Left click is positive, right click is negative;
+      every click re-decodes three candidates from one cached frame embedding. The chosen mask is
+      amber while unreviewed, teal when accepted, and still editable with Brush/Erase. A brush
+      correction withdraws height and requires acceptance again.
+- [x] **Honest acceptance/abstention path.** Height is withheld before explicit acceptance.
+      Low score (<0.70), near-tied candidates (<0.015 margin), excessive frame-boundary contact,
+      insufficient 3D support (<40 points at either endpoint), non-B1 objects, and unavailable
+      WebGPU all refuse rather than guess. B1-only is deliberate until another definition is
+      validated: segmenting a tabletop alone cannot satisfy “floor to tabletop”.
+- [x] **Reproducible evidence schema 0.4.0.** Working masks and frozen trials carry source
+      (`brush`, `model`, `model+brush`), model/revision/runtime, normalized prompts, all candidate
+      scores, selected candidate, boundary fraction, load/encode/decode/selection latency,
+      correction strokes and acceptance. A separate attempt log retains proposed, accepted,
+      abstained and failed runs even when no measurement row is recorded; the Objects pane and
+      exported JSON report the terminal counts.
+- [x] **Real 504px door smoke test in the in-app browser.** One positive click: score 0.96,
+      margin 0.04, 225,763 mask pixels → 50,964 accepted 3D points, full-mask control 1.852 m,
+      endpoint-adapted height **1.941 m**. Adding one negative background click changed it only
+      4 mm to **1.937 m** (score 0.96, margin 0.03, 50,967 points). On the cached-weight run:
+      model setup 1.4 s, frame encode 9.2 s, click refinement 0.94 s. The displayed attempt log
+      ended at 1/1 accepted, 0 abstained, 0 failed; that N is a wiring proof, not a rate estimate.
+- [x] **Measurement delta reported honestly.** The frozen P0 manual B1 mean is 2.020 m, so the
+      first automatic result is **−0.079 m vs manual** and −0.159 m vs 2.100 m tape truth. The
+      endpoint adapter itself adds +0.089 m versus blindly measuring the dense full mask. This is
+      easier selection, not a precision win, and cold operator time is not yet better than the
+      5–10 s manual benchmark.
+- [x] **Verification:** fixture smoke, strict typecheck, production Vite build, and all **231 tests**
+      pass; the real browser flow was visually checked in RGB + registered 3D. `server/` was not
+      touched and the server-contract subcheck was skipped because this workspace has no FastAPI
+      venv. `npm audit --omit=dev` reports two high advisories inherited through Transformers.js'
+      Node-only `sharp` dependency with no upstream fix. Verge's browser build neither executes nor
+      ships Sharp, but the repository audit stays non-zero and must not be described as clean.
+- [ ] **Acceptance benchmark remains.** Run at least ten independently restarted door attempts
+      (do not recycle one accepted mask), including deliberate bad clicks/background prompts, and
+      report median/P95 total time, terminal failure/abstention, correction clicks, and height
+      spread. M3c is not “proven” until this exists; do not advance to grass on N=1.
 - [ ] SAM 2 (Apache-2.0) mask propagation across frames — **but** its memory bank is documented
-      as uncorrectable once wrong: one bad mask poisons everything after it and quality degrades
-      with depth into the clip. Verify per clip; `SAM2Long`-style hypothesis search is the known
-      fix if drift shows up.
+      as stateful and drift-prone. It can be corrected with prompts, but a bad propagated state can
+      contaminate later frames. Verify per clip; `SAM2Long`-style hypothesis search is the known
+      fix if drift shows up. Do not add propagation unless the one-frame endpoint evidence fails.
 - [ ] Licence trap to avoid: Ultralytics YOLO is AGPL-3.0 and YOLO-World is GPL-3.0. Grounded
       SAM (Grounding DINO + SAM) is Apache-2.0 throughout and gives the same open-vocabulary
       capability. Mask2Former's *weights* are CC-BY-NC-4.0 — same licence as DA3, no new

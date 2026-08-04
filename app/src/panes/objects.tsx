@@ -30,6 +30,7 @@ import {
   removeObservation,
   setActiveMeasurementObject,
   setBlind,
+  segmentationAttemptStats,
   trialStats,
   trialsFor,
   useMeasurementUi,
@@ -210,6 +211,7 @@ export function ObjectsPane() {
   const activeStats = trialStats(ui.observations, object.id, setting);
   const activeTrials = trialsFor(ui.observations, object.id, setting);
   const repeatedMasks = duplicateMaskTrialIds(ui.observations, object.id, setting);
+  const automaticStats = segmentationAttemptStats(ui.segmentationAttempts);
 
   // One point per object, at its trial mean. Feeding every trial in would let a thrice-measured
   // door outvote a once-measured table and shrink the residual by repetition alone.
@@ -301,7 +303,7 @@ export function ObjectsPane() {
   return (
     <div className="pane">
       <div className="pane-status">
-        <span className={ui.blind ? "busy" : "ok"}>{ui.blind ? "BLIND" : "M3b evidence"}</span>
+        <span className={ui.blind ? "busy" : "ok"}>{ui.blind ? "BLIND" : "M3c evidence"}</span>
         <span>{ui.observations.length} trials</span>
         <span className="hint">{sourceMode === "recorded" ? "recorded DA3 evidence" : "live DA3 exploration"}</span>
       </div>
@@ -368,6 +370,25 @@ export function ObjectsPane() {
           <div className="reading-grid">
             <span>RAW DA3</span><b>{veil(ui.blind, measurement ? formatM(measurement.rawM) : "—")}</b>
             <span>SELECTED</span><b>{selection ? `${selection.diagnostics.pointCount.toLocaleString()} pts` : "—"}</b>
+            <span>SELECTION</span><b>{selection?.maskSource ?? "—"}</b>
+            {selection?.segmentation && (
+              <>
+                <span>AUTOMATIC REVIEW</span>
+                <b>{selection.segmentation.accepted ? `accepted · ${selection.segmentation.prompts.length} clicks` : "height withheld"}</b>
+              </>
+            )}
+            {selection?.segmentation && measurement && Number.isFinite(measurement.details.fullMaskControlM) && (
+              <>
+                <span>FULL-MASK CONTROL</span><b>{formatM(measurement.details.fullMaskControlM)}</b>
+                <span>ENDPOINT ADAPTER</span><b>{formatM(measurement.details.endpointAdapterDeltaM)}</b>
+              </>
+            )}
+            {automaticStats.total > 0 && (
+              <>
+                <span>AUTO ATTEMPTS</span><b>{automaticStats.accepted}/{automaticStats.total} accepted</b>
+                <span>ABSTAIN / FAIL</span><b>{automaticStats.abstained} / {automaticStats.failed}</b>
+              </>
+            )}
             <span>{object.id === "door-leaf" ? "CALIBRATION TARGET" : "DOOR-SCALE CHECK"}</span><b>{veil(ui.blind, formatM(corrected))}</b>
           </div>
 
@@ -487,7 +508,7 @@ export function ObjectsPane() {
                       {repeatedMasks.has(trial.id)
                         ? "same mask as an earlier trial"
                         : trial.mask
-                          ? `${trial.mask.paintedPixels.toLocaleString()} px · ${trial.mask.digest.slice(0, 8)}`
+                          ? `${trial.mask.source ?? "brush"} · ${trial.mask.paintedPixels.toLocaleString()} px · ${trial.mask.digest.slice(0, 8)}${trial.mask.segmentation ? ` · ${trial.mask.segmentation.prompts.length} clicks/${trial.mask.segmentation.correctionStrokes} edits · ${((trial.mask.segmentation.selectionDurationMs ?? 0) / 1000).toFixed(1)}s` : ""}`
                           : "no mask evidence"}
                     </span>
                     <span className="mono">{formatDuration(trial.paintDurationMs ?? NaN)}</span>
@@ -524,7 +545,7 @@ export function ObjectsPane() {
               {graph.running ? "Rebuilding…" : "Rebuild measurement"}
             </button>
           </div>
-          <small className="honesty-note">Masks are operator evidence. Review the pink RGB/depth edges and 3D highlight before accepting a row.</small>
+          <small className="honesty-note">Masks are evidence. Automatic proposals stay amber and expose no height until reviewed; accepted masks turn teal, and later brush edits require acceptance again.</small>
           <small className="honesty-note"><b>Paint:</b> {object.maskInstruction}</small>
           <small className="honesty-note">
             Sitting <span className="mono">{currentSittingId().slice(-6)}</span> — trials recorded

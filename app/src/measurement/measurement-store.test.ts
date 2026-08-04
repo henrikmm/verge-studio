@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  acceptActiveModelMask,
   addObservation,
+  automaticMaskReviewIssue,
+  beginMaskCorrection,
   clearActiveMask,
   clearObservations,
   currentSittingId,
@@ -15,6 +18,8 @@ import {
   paintMask,
   paintMaskStroke,
   removeObservation,
+  recordSegmentationAttempt,
+  segmentationAttemptStats,
   setActiveMeasurementObject,
   setMaskData,
   setMeasurementFrame,
@@ -157,7 +162,7 @@ describe("measurement store", () => {
       repeatability: Array<{ objectId: string; setting: string; n: number; rangeM: number }>;
       workingMasks: Record<string, { paintedPixels: number; runs: number[] }>;
     };
-    expect(exported.schemaVersion).toBe("verge.measurement-session/0.3.0");
+    expect(exported.schemaVersion).toBe("verge.measurement-session/0.4.0");
     expect(exported.definitions.find((item) => item.id === "door-leaf")).toMatchObject({
       mode: "vertical_extent",
       definition: "physical leaf, bottom edge to top edge",
@@ -194,6 +199,101 @@ describe("measurement store", () => {
     expect(flagged.has(unrepainted.id)).toBe(true);
     expect(flagged.has(first.id)).toBe(false);
     expect(flagged.has(repainted.id)).toBe(false);
+  });
+
+  it("withholds model evidence until review and preserves corrections in provenance", () => {
+    const data = new Uint8Array(24 * 20);
+    data.fill(1, 50, 300);
+    setMaskData("door-leaf", 1, 24, 20, data, {
+      source: "model",
+      segmentation: {
+        attemptId: "attempt-good",
+        modelId: "Xenova/slimsam-77-uniform",
+        modelRevision: "pinned",
+        runtime: "transformers.js",
+        device: "webgpu",
+        prompts: [{ x: 0.5, y: 0.5, label: 1 }],
+        candidateScores: [0.96, 0.81, 0.2],
+        selectedCandidate: 0,
+        score: 0.96,
+        scoreMargin: 0.15,
+        boundaryFraction: 0,
+        modelLoadMs: 800,
+        frameEncodeMs: 5000,
+        lastDecodeMs: 700,
+        correctionStrokes: 0,
+        accepted: false,
+      },
+    });
+
+    expect(automaticMaskReviewIssue(getMask())).toBeUndefined();
+    expect(getMask()?.segmentation?.accepted).toBe(false);
+    acceptActiveModelMask(7200);
+    expect(getMask()?.segmentation).toMatchObject({ accepted: true, selectionDurationMs: 7200 });
+
+    beginMaskCorrection();
+    paintMaskStroke({ x: 2, y: 2 }, { x: 20, y: 2 }, 3, false);
+    expect(getMask()).toMatchObject({ source: "model+brush" });
+    expect(getMask()?.segmentation).toMatchObject({ accepted: false, correctionStrokes: 1 });
+
+    acceptActiveModelMask(9100);
+    const trial = addObservation({ ...BASE, rawM: 2.03 });
+    expect(trial.mask).toMatchObject({ source: "model+brush" });
+    expect(trial.mask?.segmentation).toMatchObject({
+      accepted: true,
+      correctionStrokes: 1,
+      selectionDurationMs: 9100,
+    });
+  });
+
+  it("refuses to accept an ambiguous untouched model proposal", () => {
+    setMaskData("door-leaf", 1, 24, 20, new Uint8Array(24 * 20).fill(1), {
+      source: "model",
+      segmentation: {
+        attemptId: "attempt-ambiguous",
+        modelId: "test",
+        modelRevision: "test",
+        runtime: "test",
+        device: "webgpu",
+        prompts: [{ x: 0.5, y: 0.5, label: 1 }],
+        candidateScores: [0.91, 0.9, 0.1],
+        selectedCandidate: 0,
+        score: 0.91,
+        scoreMargin: 0.01,
+        boundaryFraction: 0,
+        modelLoadMs: 1,
+        frameEncodeMs: 1,
+        lastDecodeMs: 1,
+        correctionStrokes: 0,
+        accepted: false,
+      },
+    });
+    expect(() => acceptActiveModelMask(10)).toThrow(/nearly equal masks/);
+  });
+
+  it("keeps abstained and failed automatic attempts in the exported evidence", () => {
+    const common = {
+      objectId: "door-leaf",
+      canonicalFrame: 1,
+      modelId: "test",
+      modelRevision: "pinned",
+      promptCount: 1,
+      positivePrompts: 1,
+      correctionStrokes: 0,
+    };
+    recordSegmentationAttempt({ ...common, id: "a", outcome: "abstained", reason: "ambiguous" });
+    recordSegmentationAttempt({ ...common, id: "b", outcome: "failed", reason: "WebGPU unavailable" });
+    recordSegmentationAttempt({ ...common, id: "a", outcome: "accepted" });
+
+    expect(segmentationAttemptStats()).toEqual({
+      total: 2,
+      proposed: 0,
+      accepted: 1,
+      abstained: 0,
+      failed: 1,
+    });
+    const exported = JSON.parse(exportMeasurementSession()) as { segmentationAttempts: unknown[] };
+    expect(exported.segmentationAttempts).toHaveLength(2);
   });
 
   it("stamps new trials with this page load's sitting", () => {

@@ -4,6 +4,65 @@ import { sha256Hex } from "../graph/cache-key";
 import type { FixtureSetting } from "./depth-field";
 
 export type MeasurementMode = "top_above_floor" | "vertical_extent";
+export type MaskSource = "brush" | "model" | "model+brush";
+
+export interface SegmentationPromptRecord {
+  x: number;
+  y: number;
+  label: 0 | 1;
+}
+
+/** Reproducible evidence for a browser-generated mask. */
+export interface SegmentationProvenance {
+  attemptId: string;
+  modelId: string;
+  modelRevision: string;
+  runtime: string;
+  device: "webgpu";
+  prompts: SegmentationPromptRecord[];
+  candidateScores: number[];
+  selectedCandidate: number;
+  score: number;
+  scoreMargin: number;
+  boundaryFraction: number;
+  modelLoadMs: number;
+  frameEncodeMs: number;
+  lastDecodeMs: number;
+  selectionDurationMs?: number;
+  correctionStrokes: number;
+  accepted: boolean;
+}
+
+export type SegmentationAttemptOutcome = "proposed" | "accepted" | "abstained" | "failed";
+
+/** One automatic-selection attempt, including attempts that never became measurements. */
+export interface SegmentationAttempt {
+  id: string;
+  objectId: string;
+  canonicalFrame: number;
+  outcome: SegmentationAttemptOutcome;
+  reason?: string;
+  updatedAt: string;
+  modelId: string;
+  modelRevision: string;
+  promptCount: number;
+  positivePrompts: number;
+  correctionStrokes: number;
+  score?: number;
+  scoreMargin?: number;
+  modelLoadMs?: number;
+  frameEncodeMs?: number;
+  lastDecodeMs?: number;
+  selectionDurationMs?: number;
+}
+
+export interface SegmentationAttemptStats {
+  total: number;
+  proposed: number;
+  accepted: number;
+  abstained: number;
+  failed: number;
+}
 
 export interface MeasurementObject {
   id: string;
@@ -77,6 +136,8 @@ export interface MaskRecord {
   height: number;
   data: Uint8Array;
   revision: number;
+  source: MaskSource;
+  segmentation?: SegmentationProvenance;
 }
 
 /**
@@ -94,6 +155,8 @@ export interface MaskSnapshot {
   paintedPixels: number;
   digest: string;
   runs: number[];
+  source: MaskSource;
+  segmentation?: SegmentationProvenance;
 }
 
 export interface MeasurementObservation {
@@ -178,15 +241,17 @@ export interface MeasurementUiState {
   zoom: number;
   masks: Record<string, MaskRecord>;
   observations: MeasurementObservation[];
+  segmentationAttempts: SegmentationAttempt[];
 }
 
-export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.3.0";
-const STORAGE_KEY = "verge.m3b.measurement-session/0.3.0";
+export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.4.0";
+const STORAGE_KEY = "verge.m3c.measurement-session/0.4.0";
 /**
- * Older keys, newest first. 0.2.0 added repeat trials and frozen masks; 0.1.0 kept one row per
- * (object, setting, frame) and destroyed repeat trials on record.
+ * Older keys, newest first. 0.3.0 added sittings; 0.2.0 added repeat trials and frozen masks;
+ * 0.1.0 kept one row per (object, setting, frame) and destroyed repeat trials on record.
  */
 const LEGACY_STORAGE_KEYS = [
+  "verge.m3b.measurement-session/0.3.0",
   "verge.m3b.measurement-session/0.2.0",
   "verge.m3b.measurement-session/0.1.0",
 ];
@@ -224,12 +289,28 @@ function encodeMask(mask: MaskRecord): number[] {
   return runs;
 }
 
-function decodeMask(value: { width: number; height: number; revision: number; runs: number[] }): MaskRecord {
+interface EncodedMask {
+  width: number;
+  height: number;
+  revision: number;
+  runs: number[];
+  source?: MaskSource;
+  segmentation?: SegmentationProvenance;
+}
+
+function decodeMask(value: EncodedMask): MaskRecord {
   const data = new Uint8Array(value.width * value.height);
   for (let i = 0; i + 1 < value.runs.length; i += 2) {
     data.fill(1, value.runs[i], value.runs[i] + value.runs[i + 1]);
   }
-  return { width: value.width, height: value.height, revision: value.revision, data };
+  return {
+    width: value.width,
+    height: value.height,
+    revision: value.revision,
+    data,
+    source: value.source ?? "brush",
+    segmentation: value.segmentation,
+  };
 }
 
 /**
@@ -255,6 +336,9 @@ export function migrateObservations(rows: readonly MeasurementObservation[]): Me
       trialIndex,
       id: `${group}#${trialIndex}`,
       sittingId: row.sittingId ?? LEGACY_SITTING_ID,
+      mask: row.mask
+        ? { ...row.mask, source: row.mask.source ?? "brush", segmentation: row.mask.segmentation }
+        : undefined,
     };
   });
 }
@@ -271,8 +355,9 @@ function restoreSession(): Partial<MeasurementUiState> {
       activeObjectId?: string;
       canonicalFrame?: number;
       confidencePercentile?: number;
-      masks?: Record<string, { width: number; height: number; revision: number; runs: number[] }>;
+      masks?: Record<string, EncodedMask>;
       observations?: MeasurementObservation[];
+      segmentationAttempts?: SegmentationAttempt[];
     };
     return {
       blind: saved.blind ?? false,
@@ -283,6 +368,7 @@ function restoreSession(): Partial<MeasurementUiState> {
         Object.entries(saved.masks ?? {}).map(([key, mask]) => [key, decodeMask(mask)]),
       ),
       observations: migrateObservations(saved.observations ?? []),
+      segmentationAttempts: saved.segmentationAttempts ?? [],
     };
   } catch {
     return {};
@@ -301,6 +387,7 @@ const state: MeasurementUiState = {
   zoom: 1,
   masks: {},
   observations: [],
+  segmentationAttempts: [],
   ...restored,
 };
 
@@ -335,7 +422,14 @@ function persistSession(): void {
   const masks = Object.fromEntries(
     Object.entries(state.masks).map(([key, mask]) => [
       key,
-      { width: mask.width, height: mask.height, revision: mask.revision, runs: encodeMask(mask) },
+      {
+        width: mask.width,
+        height: mask.height,
+        revision: mask.revision,
+        source: mask.source,
+        segmentation: mask.segmentation,
+        runs: encodeMask(mask),
+      },
     ]),
   );
   window.localStorage.setItem(
@@ -347,6 +441,7 @@ function persistSession(): void {
       confidencePercentile: state.confidencePercentile,
       masks,
       observations: state.observations,
+      segmentationAttempts: state.segmentationAttempts,
     }),
   );
 }
@@ -433,7 +528,13 @@ export function ensureMask(width: number, height: number): MaskRecord {
   const key = maskKey();
   const existing = state.masks[key];
   if (existing && existing.width === width && existing.height === height) return existing;
-  const created = { width, height, data: new Uint8Array(width * height), revision: 0 };
+  const created: MaskRecord = {
+    width,
+    height,
+    data: new Uint8Array(width * height),
+    revision: 0,
+    source: "brush",
+  };
   state.masks = { ...state.masks, [key]: created };
   commit();
   return created;
@@ -456,7 +557,13 @@ export function paintMask(x: number, y: number, radius: number, erase: boolean):
       }
     }
   }
-  const next = { ...current, data, revision: current.revision + 1 };
+  const next: MaskRecord = {
+    ...current,
+    data,
+    revision: current.revision + 1,
+    source: current.segmentation ? "model+brush" : "brush",
+    segmentation: current.segmentation ? { ...current.segmentation, accepted: false } : undefined,
+  };
   state.masks = { ...state.masks, [maskKey()]: next };
   commit();
   return next;
@@ -491,7 +598,13 @@ export function paintMaskStroke(
       }
     }
   }
-  const next = { ...current, data, revision: current.revision + 1 };
+  const next: MaskRecord = {
+    ...current,
+    data,
+    revision: current.revision + 1,
+    source: current.segmentation ? "model+brush" : "brush",
+    segmentation: current.segmentation ? { ...current.segmentation, accepted: false } : undefined,
+  };
   state.masks = { ...state.masks, [maskKey()]: next };
   commit();
   return next;
@@ -503,9 +616,40 @@ export function clearActiveMask(): void {
   paintClocks.delete(maskKey());
   state.masks = {
     ...state.masks,
-    [maskKey()]: { ...current, data: new Uint8Array(current.data.length), revision: current.revision + 1 },
+    [maskKey()]: {
+      ...current,
+      data: new Uint8Array(current.data.length),
+      revision: current.revision + 1,
+      source: "brush",
+      segmentation: undefined,
+    },
   };
   commit();
+}
+
+/** Count one pointer-down edit, rather than every interpolated point in the stroke. */
+export function beginMaskCorrection(): void {
+  const current = getMask();
+  if (!current?.segmentation) return;
+  startPaintClock(maskKey());
+  state.masks = {
+    ...state.masks,
+    [maskKey()]: {
+      ...current,
+      source: "model+brush",
+      segmentation: {
+        ...current.segmentation,
+        accepted: false,
+        correctionStrokes: current.segmentation.correctionStrokes + 1,
+      },
+    },
+  };
+  commit();
+}
+
+export interface SetMaskMetadata {
+  source?: MaskSource;
+  segmentation?: SegmentationProvenance;
 }
 
 export function setMaskData(
@@ -514,6 +658,7 @@ export function setMaskData(
   width: number,
   height: number,
   data: Uint8Array,
+  metadata: SetMaskMetadata = {},
 ): void {
   if (data.length !== width * height) throw new Error("mask dimensions do not match its data");
   const key = maskKey(objectId, canonicalFrame);
@@ -521,8 +666,85 @@ export function setMaskData(
   // follow start a fresh clock, which is exactly what M3c needs to measure.
   paintClocks.delete(key);
   const revision = (state.masks[key]?.revision ?? 0) + 1;
-  state.masks = { ...state.masks, [key]: { width, height, data: data.slice(), revision } };
+  state.masks = {
+    ...state.masks,
+    [key]: {
+      width,
+      height,
+      data: data.slice(),
+      revision,
+      source: metadata.source ?? "brush",
+      segmentation: metadata.segmentation,
+    },
+  };
   commit();
+}
+
+export const MIN_MODEL_MASK_SCORE = 0.7;
+export const MIN_MODEL_MASK_MARGIN = 0.015;
+export const MAX_MODEL_BOUNDARY_FRACTION = 0.04;
+
+/** A cheap 2D review gate. The 3D endpoint-support gate runs after backprojection. */
+export function automaticMaskReviewIssue(mask: MaskRecord | undefined): string | undefined {
+  const evidence = mask?.segmentation;
+  if (!evidence) return undefined;
+  if (!evidence.prompts.some((prompt) => prompt.label === 1)) return "Add a positive click on the object.";
+  // A brush-corrected proposal is being accepted on the operator's review, not on the
+  // model's score. The original score stays in provenance; it must not impersonate a
+  // calibrated score for pixels the operator has since changed.
+  if (mask?.source === "model+brush") return undefined;
+  if (evidence.score < MIN_MODEL_MASK_SCORE) {
+    return `Low mask confidence (${evidence.score.toFixed(2)}). Add positive/negative clicks or use the brush.`;
+  }
+  if (evidence.scoreMargin < MIN_MODEL_MASK_MARGIN) {
+    return "The model has two nearly equal masks. Add another click to disambiguate them.";
+  }
+  if (evidence.boundaryFraction > MAX_MODEL_BOUNDARY_FRACTION) {
+    return "The mask reaches too much of the image boundary. Exclude the background with negative clicks.";
+  }
+  return undefined;
+}
+
+/** Accept a reviewed model mask; height remains withheld until this explicit action. */
+export function acceptActiveModelMask(selectionDurationMs: number): MaskRecord {
+  const key = maskKey();
+  const current = state.masks[key];
+  if (!current?.segmentation) throw new Error("There is no automatic mask to accept.");
+  const issue = automaticMaskReviewIssue(current);
+  if (issue) throw new Error(issue);
+  const next: MaskRecord = {
+    ...current,
+    revision: current.revision + 1,
+    segmentation: {
+      ...current.segmentation,
+      accepted: true,
+      selectionDurationMs: Math.max(0, selectionDurationMs),
+    },
+  };
+  state.masks = { ...state.masks, [key]: next };
+  commit();
+  return next;
+}
+
+export function recordSegmentationAttempt(
+  attempt: Omit<SegmentationAttempt, "updatedAt">,
+): SegmentationAttempt {
+  const record: SegmentationAttempt = { ...attempt, updatedAt: new Date().toISOString() };
+  const existing = state.segmentationAttempts.findIndex((item) => item.id === record.id);
+  state.segmentationAttempts = existing < 0
+    ? [...state.segmentationAttempts, record]
+    : state.segmentationAttempts.map((item, index) => (index === existing ? record : item));
+  commit();
+  return record;
+}
+
+export function segmentationAttemptStats(
+  attempts: readonly SegmentationAttempt[] = state.segmentationAttempts,
+): SegmentationAttemptStats {
+  return attempts.reduce<SegmentationAttemptStats>(
+    (stats, attempt) => ({ ...stats, [attempt.outcome]: stats[attempt.outcome] + 1, total: stats.total + 1 }),
+    { total: 0, proposed: 0, accepted: 0, abstained: 0, failed: 0 },
+  );
 }
 
 function snapshotMask(objectId: string, canonicalFrame: number): MaskSnapshot | undefined {
@@ -538,6 +760,8 @@ function snapshotMask(objectId: string, canonicalFrame: number): MaskSnapshot | 
     // with the exported JSON, which is what a later run would be diffed against.
     digest: sha256Hex(`${mask.width}x${mask.height}:${runs.join(",")}`).slice(0, 16),
     runs,
+    source: mask.source,
+    segmentation: mask.segmentation ? { ...mask.segmentation, prompts: [...mask.segmentation.prompts] } : undefined,
   };
 }
 
@@ -586,6 +810,7 @@ export function removeObservation(id: string): void {
 
 export function clearObservations(): void {
   state.observations = [];
+  state.segmentationAttempts = [];
   paintClocks.clear();
   commit();
 }
@@ -694,6 +919,8 @@ export function exportMeasurementSession(): string {
         width: mask.width,
         height: mask.height,
         revision: mask.revision,
+        source: mask.source,
+        segmentation: mask.segmentation,
         paintedPixels: mask.data.reduce((a, b) => a + b, 0),
         runs: encodeMask(mask),
       },
@@ -716,8 +943,9 @@ export function exportMeasurementSession(): string {
       definitions: MEASUREMENT_OBJECTS,
       // Every trial, each carrying the mask it was measured from. This is the evidence.
       observations: state.observations,
+      segmentationAttempts: state.segmentationAttempts,
       repeatability,
-      // The live brush state, kept for convenience. It is NOT evidence: it moves as you paint.
+      // The live selection state, kept for convenience. It is NOT evidence: it moves as you edit.
       workingMasks,
     },
     null,

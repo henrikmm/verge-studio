@@ -71,6 +71,20 @@ export interface VerticalExtentOptions {
   endBand?: number;
 }
 
+export interface EndpointEvidenceOptions {
+  /** Fraction retained at each end of the full-object height distribution. */
+  tailFraction?: number;
+  /** Refuse an automatic measurement unless each physical endpoint has this support. */
+  minPointsPerEnd?: number;
+}
+
+export interface EndpointEvidence {
+  points: Float32Array;
+  sourcePointCount: number;
+  pointsPerEnd: number;
+  tailFraction: number;
+}
+
 export class InsufficientSupportError extends Error {
   constructor(message: string) {
     super(message);
@@ -113,6 +127,54 @@ export function heightsAbovePlane(points: ArrayLike<number>, plane: Plane): Floa
     out[i] = signedHeight(plane, [points[b], points[b + 1], points[b + 2]]);
   }
   return out;
+}
+
+/**
+ * Convert a full-object segmentation into balanced endpoint evidence.
+ *
+ * The brush protocol historically painted compact patches at the top and bottom. A
+ * full door mask is a different distribution: P2/P98 land several centimetres inside
+ * the leaf simply because most points are in its middle. Keeping equal tails restores
+ * the endpoint-focused evidence without letting the much larger middle dominate, while
+ * the existing P2/P98 estimator still rejects the noisiest pixels inside each tail.
+ */
+export function selectEndpointEvidence(
+  points: ArrayLike<number>,
+  plane: Plane,
+  options: EndpointEvidenceOptions = {},
+): EndpointEvidence {
+  const tailFraction = options.tailFraction ?? 0.1;
+  const minPointsPerEnd = options.minPointsPerEnd ?? 40;
+  if (!(tailFraction > 0 && tailFraction <= 0.25)) {
+    throw new Error("selectEndpointEvidence: tailFraction must be in (0, 0.25]");
+  }
+  const ranked: Array<{ index: number; height: number }> = [];
+  for (let index = 0; index + 2 < points.length; index += 3) {
+    const height = signedHeight(plane, [points[index], points[index + 1], points[index + 2]]);
+    if (Number.isFinite(height)) ranked.push({ index, height });
+  }
+  if (ranked.length < minPointsPerEnd * 2) {
+    throw new InsufficientSupportError(
+      `automatic mask has ${ranked.length} usable points, but needs at least ${minPointsPerEnd} at each endpoint. ` +
+        "Refine the mask, lower the confidence threshold, or use a clearer frame.",
+    );
+  }
+  ranked.sort((a, b) => a.height - b.height);
+  const pointsPerEnd = Math.min(
+    Math.floor(ranked.length / 2),
+    Math.max(minPointsPerEnd, Math.floor(ranked.length * tailFraction)),
+  );
+  const selected = [
+    ...ranked.slice(0, pointsPerEnd),
+    ...ranked.slice(ranked.length - pointsPerEnd),
+  ];
+  const out = new Float32Array(selected.length * 3);
+  selected.forEach((entry, outputIndex) => {
+    out[outputIndex * 3] = points[entry.index];
+    out[outputIndex * 3 + 1] = points[entry.index + 1];
+    out[outputIndex * 3 + 2] = points[entry.index + 2];
+  });
+  return { points: out, sourcePointCount: ranked.length, pointsPerEnd, tailFraction };
 }
 
 /**

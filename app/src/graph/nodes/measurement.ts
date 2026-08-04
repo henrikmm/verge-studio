@@ -9,6 +9,7 @@ import {
   normalize,
   percentile,
   scaleVerdict,
+  selectEndpointEvidence,
   signedHeight,
   type BackprojectResult,
   type ErrorModel,
@@ -23,7 +24,12 @@ import {
   type DepthFieldValue,
   type DepthFrameDescriptor,
 } from "../../measurement/depth-field";
-import { getMask, type MeasurementMode } from "../../measurement/measurement-store";
+import {
+  getMask,
+  type MaskSource,
+  type MeasurementMode,
+  type SegmentationProvenance,
+} from "../../measurement/measurement-store";
 import type { NodeSpec } from "../types";
 import type { PointCloudValue } from "./point-cloud";
 
@@ -50,6 +56,8 @@ export interface SelectionValue {
   diagnostics: BackprojectResult;
   confidenceThreshold: number;
   maskRevision: number;
+  maskSource: MaskSource;
+  segmentation?: SegmentationProvenance;
 }
 
 export interface MeasurementValue {
@@ -309,7 +317,7 @@ export const brushSelectionSpec: NodeSpec = {
   type: "brush-selection",
   label: "Brush Selection",
   category: "analysis",
-  version: "0.3.0",
+  version: "0.4.0",
   execution: "auto",
   inputs: [
     { id: "depth", label: "Depth Field", type: "depth_field", required: true },
@@ -359,6 +367,7 @@ export const brushSelectionSpec: NodeSpec = {
             diagnostics: empty,
             confidenceThreshold: 0,
             maskRevision: Number(params.maskRevision),
+            maskSource: "brush",
           } satisfies SelectionValue,
           summary: "paint a mask in Depth 2D",
         },
@@ -382,12 +391,14 @@ export const brushSelectionSpec: NodeSpec = {
       diagnostics: result,
       confidenceThreshold: threshold,
       maskRevision: mask.revision,
+      maskSource: mask.source,
+      segmentation: mask.segmentation,
     };
     return {
       selection: {
         type: "selection",
         value,
-        summary: `${result.pointCount.toLocaleString()} pts · frame ${descriptor.canonicalIndex}`,
+        summary: `${result.pointCount.toLocaleString()} pts · ${mask.source} · frame ${descriptor.canonicalIndex}`,
       },
     };
   },
@@ -397,7 +408,7 @@ export const measureHeightSpec: NodeSpec = {
   type: "measure-height",
   label: "Measure Height",
   category: "geometry",
-  version: "0.3.0",
+  version: "0.4.0",
   execution: "auto",
   inputs: [
     { id: "selection", label: "Selection", type: "selection", required: true },
@@ -424,7 +435,43 @@ export const measureHeightSpec: NodeSpec = {
     const ground = inputs.plane?.value as GroundPlaneValue | undefined;
     if (!selection || !ground) throw new Error("measurement needs a selection and a floor");
     if (selection.points.length === 0) throw new Error("paint an object mask before measuring");
+    if (selection.segmentation && !selection.segmentation.accepted) {
+      return {
+        measurement: {
+          type: "measurement",
+          value: null,
+          summary: "height withheld · accept the automatic mask",
+        },
+      };
+    }
+    if (selection.segmentation && selection.objectId !== "door-leaf") {
+      return {
+        measurement: {
+          type: "measurement",
+          value: null,
+          summary: "automatic height unavailable · use the brush protocol",
+        },
+      };
+    }
     const mode = String(params.mode) as MeasurementMode;
+    let measurementPoints = selection.points;
+    let endpointPointCount = 0;
+    let pointsPerEnd = 0;
+    let fullMaskControlM = NaN;
+    if (selection.segmentation && mode === "vertical_extent") {
+      fullMaskControlM = measureVerticalExtent(selection.points, ground.plane, {
+        lowerPercentile: Number(params.lowerPercentile),
+        upperPercentile: Number(params.percentile),
+        minPoints: Number(params.minPoints),
+      }).height;
+      const endpointEvidence = selectEndpointEvidence(selection.points, ground.plane, {
+        tailFraction: 0.1,
+        minPointsPerEnd: 40,
+      });
+      measurementPoints = endpointEvidence.points;
+      endpointPointCount = endpointEvidence.points.length / 3;
+      pointsPerEnd = endpointEvidence.pointsPerEnd;
+    }
     let rawM: number;
     let internalSpreadM: number;
     let topHeight: number;
@@ -433,7 +480,7 @@ export const measureHeightSpec: NodeSpec = {
     let rulerKind: MeasurementValue["rulerKind"];
     let details: Record<string, number>;
     if (mode === "vertical_extent") {
-      const result = measureVerticalExtent(selection.points, ground.plane, {
+      const result = measureVerticalExtent(measurementPoints, ground.plane, {
         lowerPercentile: Number(params.lowerPercentile),
         upperPercentile: Number(params.percentile),
         minPoints: Number(params.minPoints),
@@ -442,15 +489,28 @@ export const measureHeightSpec: NodeSpec = {
       internalSpreadM = result.uncertainty;
       bottomHeight = result.bottom;
       topHeight = result.top;
-      const bottomCentroid = pointBandCentroid(selection.points, ground.plane, result.bottom);
-      const topCentroid = pointBandCentroid(selection.points, ground.plane, result.top);
+      const bottomCentroid = pointBandCentroid(measurementPoints, ground.plane, result.bottom);
+      const topCentroid = pointBandCentroid(measurementPoints, ground.plane, result.top);
       rulerAnchor = [
         (bottomCentroid[0] + topCentroid[0]) / 2,
         (bottomCentroid[1] + topCentroid[1]) / 2,
         (bottomCentroid[2] + topCentroid[2]) / 2,
       ];
       rulerKind = "extent";
-      details = { bottomM: result.bottom, topM: result.top, bottomRoughnessM: result.bottomRoughness, topRoughnessM: result.topRoughness };
+      details = {
+        bottomM: result.bottom,
+        topM: result.top,
+        bottomRoughnessM: result.bottomRoughness,
+        topRoughnessM: result.topRoughness,
+        ...(endpointPointCount > 0
+          ? {
+              endpointPointCount,
+              pointsPerEnd,
+              fullMaskControlM,
+              endpointAdapterDeltaM: result.height - fullMaskControlM,
+            }
+          : {}),
+      };
     } else {
       const result = measureHeight(selection.points, ground.plane, {
         percentile: Number(params.percentile),
@@ -497,7 +557,11 @@ export const scaleCheckSpec: NodeSpec = {
   controls: [{ kind: "slider", key: "truthM", label: "Known truth", min: 0.05, max: 3, step: 0.001, suffix: " m" }],
   execute: async ({ inputs, params }) => {
     const measurement = inputs.measurement?.value as MeasurementValue | undefined;
-    if (!measurement) throw new Error("scale check has no measurement");
+    if (!measurement) {
+      return {
+        check: { type: "measurement", value: null, summary: "height withheld" },
+      };
+    }
     const truthM = Number(params.truthM);
     // What this verdict answers is "is the error explainable by point noise, or is it bias?" —
     // NOT "is the measurement accurate". Until 2026-08-04 the patch roughness was passed here

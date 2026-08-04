@@ -12,6 +12,7 @@ import {
   measureDistance,
   measureHeight,
   measureVerticalExtent,
+  selectEndpointEvidence,
   median,
   nmad,
   percentile,
@@ -167,6 +168,28 @@ describe("measureVerticalExtent", () => {
     expect(() =>
       measureVerticalExtent(slab(1, 300), FLOOR, { lowerPercentile: 99, upperPercentile: 2 }),
     ).toThrow(/lower percentile/);
+  });
+});
+
+describe("selectEndpointEvidence", () => {
+  it("turns a dense full-object mask into balanced top and bottom evidence", () => {
+    const points: number[] = [];
+    for (let i = 0; i < 1000; i++) points.push(i % 10, (2 * i) / 999, 0);
+    const full = measureVerticalExtent(points, FLOOR, { minPoints: 80 });
+    const evidence = selectEndpointEvidence(points, FLOOR);
+    const endpoint = measureVerticalExtent(evidence.points, FLOOR, { minPoints: 80 });
+
+    expect(evidence.pointsPerEnd).toBe(100);
+    expect(full.height).toBeLessThan(1.94);
+    expect(endpoint.height).toBeGreaterThan(1.98);
+  });
+
+  it("refuses an automatic mask without independent support at both ends", () => {
+    const points: number[] = [];
+    for (let i = 0; i < 70; i++) points.push(0, i / 70, 0);
+    expect(() => selectEndpointEvidence(points, FLOOR, { minPointsPerEnd: 40 })).toThrow(
+      /at least 40 at each endpoint/,
+    );
   });
 });
 
