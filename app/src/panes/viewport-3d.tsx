@@ -283,6 +283,7 @@ export function Viewport3D() {
         status={cloud ? "Running" : "Idle"}
         elapsedMs={frameMs}
         paused={paused}
+        paneId="viewport"
         onPause={() => setPaused((p) => !p)}
         extra={<span className="pane-note">{status}</span>}
       />

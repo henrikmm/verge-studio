@@ -83,6 +83,61 @@ body {
   --dv-tabs-and-actions-container-font-size: 11px;
 }
 
+/* Custom pane tab: title + hide. Double-click toggles focus. */
+.pane-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 8px;
+  font-size: 11px;
+  user-select: none;
+}
+
+.pane-tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A focused pane names itself, so the state is never inferred from the layout alone. */
+.pane-tab.focused .pane-tab-title::after {
+  content: " · focused";
+  color: var(--text-dim);
+}
+
+.pane-tab-hide {
+  flex: none;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.pane-tab-hide:hover {
+  color: var(--emph-hi);
+}
+
+/* View bar — the way back from a hidden pane. */
+.view-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.chip-toggle.focused {
+  border-color: var(--emph-hi);
+}
+
+.pane-btn.on {
+  color: var(--emph-hi);
+  border-color: var(--emph-hi);
+}
+
 /* Pane internals */
 .pane {
   display: flex;

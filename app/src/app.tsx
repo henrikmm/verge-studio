@@ -1,11 +1,26 @@
 import { useEffect } from "react";
-import { DockviewReact, type DockviewReadyEvent, type IDockviewPanelProps } from "dockview";
+import {
+  DockviewReact,
+  type DockviewReadyEvent,
+  type IDockviewPanelHeaderProps,
+  type IDockviewPanelProps,
+} from "dockview";
 import { Depth2D } from "./panes/depth-2d";
 import { GraphPane } from "./panes/graph-pane";
 import { Inspector } from "./panes/inspector";
 import { ObjectsPane } from "./panes/objects";
 import { Viewport3D } from "./panes/viewport-3d";
 import { formatBytes, type InferManifest } from "./lib/contract";
+import {
+  PANES,
+  exitFocus,
+  hidePane,
+  registerDock,
+  resetLayout,
+  toggleFocus,
+  togglePane,
+  useDock,
+} from "./lib/dock-store";
 import { useSession } from "./lib/session-store";
 import { runAuto } from "./graph/graph-store";
 
@@ -17,36 +32,78 @@ const components = {
   objects: (_props: IDockviewPanelProps) => <ObjectsPane />,
 };
 
+/**
+ * Custom tab, so every pane carries both verbs — including Graph, Inspector and Objects,
+ * which have no control row. It cannot live in `.pane-status`: that row is nowrap +
+ * overflow:hidden and silently eats controls on its right edge in a narrow pane.
+ *
+ * Double-click toggles focus, matching the convention every tiling editor already uses.
+ */
+function PaneTab(props: IDockviewPanelHeaderProps) {
+  const id = props.api.id;
+  const dock = useDock();
+  return (
+    <div
+      className={`pane-tab${dock.focusedId === id ? " focused" : ""}`}
+      onDoubleClick={() => toggleFocus(id)}
+      title="Double-click to focus this pane"
+    >
+      <span className="pane-tab-title">{props.api.title ?? id}</span>
+      <button
+        className="pane-tab-hide"
+        title="Hide this pane; the rest take its space. Reopen it from the view bar."
+        onClick={(event) => {
+          event.stopPropagation();
+          hidePane(id);
+        }}
+      >
+        ✕
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Layout construction, restoration and persistence all live in the dock store — the panes
+ * are data there, so adding one does not mean editing this file and a hidden pane has a
+ * described place to come back to.
+ */
 function onReady(event: DockviewReadyEvent) {
-  const api = event.api;
-  api.addPanel({ id: "depth", component: "depth-2d", title: "Depth 2D" });
-  api.addPanel({
-    id: "viewport",
-    component: "viewport-3d",
-    title: "Viewport 3D",
-    position: { referencePanel: "depth", direction: "right" },
-  });
-  const graph = api.addPanel({
-    id: "graph",
-    component: "graph",
-    title: "Graph",
-    position: { direction: "below" },
-  });
-  const inspector = api.addPanel({
-    id: "inspector",
-    component: "inspector",
-    title: "Inspector",
-    position: { direction: "right" },
-  });
-  api.addPanel({
-    id: "objects",
-    component: "objects",
-    title: "Objects",
-    position: { referencePanel: "inspector" },
-  });
-  graph.api.setSize({ height: Math.round(window.innerHeight * 0.38) });
-  inspector.api.setSize({ width: 280 });
-  api.getPanel("viewport")?.api.setActive();
+  const host = document.querySelector<HTMLElement>(".app-dock");
+  if (host) registerDock(event.api, host);
+}
+
+/**
+ * The view bar. A hidden pane is unmounted, so without this row it is unreachable short of
+ * a reload — which is what closing a tab used to mean.
+ */
+function ViewBar() {
+  const dock = useDock();
+  return (
+    <span className="view-bar">
+      {PANES.map((pane) => {
+        const visible = dock.visible.includes(pane.id);
+        const focused = dock.focusedId === pane.id;
+        return (
+          <button
+            key={pane.id}
+            className={`chip-toggle${visible ? " on" : ""}${focused ? " focused" : ""}`}
+            title={
+              visible
+                ? `Hide ${pane.title} — the others take its space. Reopening remounts it.`
+                : `Show ${pane.title}`
+            }
+            onClick={() => togglePane(pane.id)}
+          >
+            {pane.title}
+          </button>
+        );
+      })}
+      <button className="chip-toggle" title="Rebuild the default arrangement" onClick={resetLayout}>
+        Reset
+      </button>
+    </span>
+  );
 }
 
 /**
@@ -85,10 +142,25 @@ export function App() {
     void runAuto();
   }, []);
 
+  // Escape leaves a focused pane. Focus hides the rest of the app, so it needs an exit
+  // that does not require finding the control that started it.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") exitFocus();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   return (
     <div className="app-shell">
       <div className="app-dock">
-        <DockviewReact className="dockview-theme-dark" components={components} onReady={onReady} />
+        <DockviewReact
+          className="dockview-theme-dark"
+          components={components}
+          defaultTabComponent={PaneTab}
+          onReady={onReady}
+        />
       </div>
       <div className="status-bar">
         <span className={`chip ${gpuState}`}>
@@ -105,6 +177,7 @@ export function App() {
             {lastRun.frames.count}f · {lastRun.timing.gpuSeconds.toFixed(1)}s GPU
           </span>
         )}
+        <ViewBar />
         <span className="cost" title={COST_NOTE}>{costLabel(lastRun)}</span>
       </div>
     </div>

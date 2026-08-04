@@ -484,6 +484,7 @@ export function Depth2D() {
         status={field ? (arrays ? "Running" : "Loading") : "Idle"}
         elapsedMs={elapsedMs}
         paused={paused}
+        paneId="depth"
         onPause={() => setPaused((value) => !value)}
         extra={
           error ? (
