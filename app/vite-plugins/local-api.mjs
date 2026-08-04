@@ -12,9 +12,27 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { extractFrames, probeVideo } from "../../scripts/extract-frames.mjs";
+import {
+  RUNS_ROOT,
+  deleteRun,
+  listRuns,
+  registerRun,
+  resolveRunArtifact,
+  saveRun,
+} from "./runs.mjs";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+const MIME = {
+  ".json": "application/json",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".glb": "model/gltf-binary",
+  ".npz": "application/octet-stream",
+  ".ply": "application/octet-stream",
+};
 
 const FIXTURE_DIR = new URL("../../fixtures/roadside/", import.meta.url);
 
@@ -116,6 +134,19 @@ export function localApi() {
         if (!url.pathname.startsWith("/api/")) return next();
 
         try {
+          // Per-run routes carry an id in the path, so they cannot be exact-matched below.
+          const runRoute = /^\/api\/runs\/([^/]+)(\/save)?$/.exec(url.pathname);
+          if (runRoute) {
+            const id = decodeURIComponent(runRoute[1]);
+            if (req.method === "POST" && runRoute[2] === "/save") {
+              return json(res, 200, await saveRun(REPO_ROOT, id));
+            }
+            if (req.method === "DELETE" && !runRoute[2]) {
+              await deleteRun(id);
+              return json(res, 200, { deleted: id });
+            }
+          }
+
           switch (`${req.method} ${url.pathname}`) {
             case "GET /api/healthz":
               return json(res, 200, {
@@ -222,6 +253,43 @@ export function localApi() {
               res.statusCode = 200;
               res.setHeader("content-type", "image/jpeg");
               res.setHeader("cache-control", "no-store");
+              return res.end(bytes);
+            }
+
+            case "GET /api/runs":
+              return json(res, 200, { root: RUNS_ROOT, runs: await listRuns() });
+
+            case "POST /api/runs":
+              return json(res, 200, await registerRun(await readJsonBody(req)));
+
+            /**
+             * Serve a saved run's bytes. Runs live outside the project (~/verge-runs) so
+             * Vite's publicDir cannot reach them. Range is honoured because the npz is ~108 MB
+             * and the browser fetches it in 24 MiB chunks.
+             */
+            case "GET /api/run-artifact": {
+              const requested = resolveRunArtifact(url.searchParams.get("path") ?? "");
+              if (!requested) return json(res, 403, { detail: "path is outside the runs root" });
+              let bytes;
+              try {
+                bytes = await readFile(requested);
+              } catch {
+                return json(res, 404, { detail: "no such artifact" });
+              }
+              const ext = requested.slice(requested.lastIndexOf("."));
+              res.setHeader("content-type", MIME[ext] ?? "application/octet-stream");
+              res.setHeader("accept-ranges", "bytes");
+              res.setHeader("cache-control", "no-store");
+
+              const range = /^bytes=(\d+)-(\d+)?$/.exec(String(req.headers.range ?? ""));
+              if (range) {
+                const start = Number(range[1]);
+                const end = Math.min(range[2] ? Number(range[2]) : bytes.length - 1, bytes.length - 1);
+                res.statusCode = 206;
+                res.setHeader("content-range", `bytes ${start}-${end}/${bytes.length}`);
+                return res.end(bytes.subarray(start, end + 1));
+              }
+              res.statusCode = 200;
               return res.end(bytes);
             }
 

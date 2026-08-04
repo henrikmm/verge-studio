@@ -9,6 +9,7 @@ import { Depth2D } from "./panes/depth-2d";
 import { GraphPane } from "./panes/graph-pane";
 import { Inspector } from "./panes/inspector";
 import { ObjectsPane } from "./panes/objects";
+import { RunsPane } from "./panes/runs";
 import { Viewport3D } from "./panes/viewport-3d";
 import { formatBytes } from "./lib/contract";
 import {
@@ -38,6 +39,7 @@ const components = {
   graph: (_props: IDockviewPanelProps) => <GraphPane />,
   inspector: (_props: IDockviewPanelProps) => <Inspector />,
   objects: (_props: IDockviewPanelProps) => <ObjectsPane />,
+  runs: (_props: IDockviewPanelProps) => <RunsPane />,
 };
 
 /**

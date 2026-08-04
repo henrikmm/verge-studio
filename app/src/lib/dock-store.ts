@@ -79,12 +79,18 @@ export const PANES: readonly PaneDef[] = [
     title: "Objects",
     anchors: [{ referencePanel: "inspector", direction: "within" }, { direction: "right" }],
   },
+  {
+    id: "runs",
+    component: "runs",
+    title: "Runs",
+    anchors: [{ referencePanel: "inspector", direction: "within" }, { direction: "right" }],
+  },
 ] as const;
 
 const PANE_BY_ID = new Map(PANES.map((pane) => [pane.id, pane]));
 
 /** Versioned: a layout referring to components this build no longer has must not be restored. */
-const LAYOUT_KEY = "verge.dock-layout/1";
+const LAYOUT_KEY = "verge.dock-layout/2";
 
 export interface DockState {
   /** Panel ids currently mounted in the dock. */

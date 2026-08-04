@@ -15,6 +15,9 @@ import { artifactUrl, fetchFrameBlob, infer } from "../../lib/infer-client";
 import type { InferManifest, ProcessResMethod, RefViewStrategy } from "../../lib/contract";
 import { DEFAULT_MAX_FRAMES } from "../../lib/contract";
 import { depthFieldFromRun } from "../../measurement/depth-field";
+import { inferBase } from "../../lib/cloud-store";
+import { registerRun } from "../../lib/runs";
+import { refreshRuns } from "../../lib/runs-store";
 import { update } from "../../lib/session-store";
 import type { NodeSpec } from "../types";
 import type { FramesValue } from "./frame-source";
@@ -74,6 +77,36 @@ export const da3DepthSpec: NodeSpec = {
     // The status bar's last-run chip reads this. Nothing set it until 2026-08-04, so the chip
     // never rendered — and this node is the only place a real run actually happens.
     update({ lastRun: manifest });
+
+    /**
+     * Register the run — a manifest stub, nothing large.
+     *
+     * This is the whole "transient by default" policy in one place: the run becomes a
+     * first-class, selectable, measurable thing immediately, while its ~135 MB of artifacts
+     * stay on the Cloud Run instance until someone presses Save in the Runs pane. A mock run
+     * is skipped: the fixture-backed mock returns the roadside artifacts, which are not
+     * evidence of anything and must never look like a saved run.
+     */
+    if (!manifest.mock) {
+      try {
+        await registerRun({
+          id: manifest.runId,
+          label: `${frames.clipName || "clip"} · ${manifest.params.processRes} px · ${manifest.frames.count}f`,
+          clipName: frames.clipName,
+          clipSha256: frames.clipSha256,
+          frameCount: manifest.frames.count,
+          processRes: manifest.params.processRes,
+          gpuSeconds: manifest.timing.gpuSeconds,
+          serviceUrl: inferBase(),
+          manifest,
+          framePaths: frames.paths.slice(0, manifest.frames.count),
+        });
+        void refreshRuns();
+      } catch {
+        // A registry failure must not destroy a run that has already been paid for. The
+        // manifest is still in the graph and the artifacts are still on the instance.
+      }
+    }
 
     const preview = manifest.artifacts.find((a) => a.kind === "depth_preview");
     const field = depthFieldFromRun(manifest, frames);

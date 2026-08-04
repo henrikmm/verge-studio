@@ -7,6 +7,7 @@ import {
   type UncertaintyBudget,
 } from "../../../geometry";
 import { invalidateFrom, isNodeStale, runAuto, setNodeParam, setNodeParams, useGraph } from "../graph/graph-store";
+import { DEFAULT_RUN_ID } from "../graph/nodes/fixture-run";
 import {
   BRUSH_SELECTION_ID,
   FIXTURE_RUN_ID,
@@ -17,7 +18,9 @@ import {
   type MeasurementValue,
   type SelectionValue,
 } from "../graph/nodes";
-import { FIXTURE_SETTINGS, type FixtureSetting } from "../measurement/depth-field";
+import { FIXTURE_SETTINGS, builtinRunId } from "../measurement/depth-field";
+import type { RunId } from "../lib/runs";
+import { useRuns } from "../lib/runs-store";
 import {
   MEASUREMENT_OBJECTS,
   MIN_TRIALS_FOR_SPREAD,
@@ -38,12 +41,6 @@ import {
   type MeasurementObject,
 } from "../measurement/measurement-store";
 
-const GPU_TIMES: Record<FixtureSetting, number> = {
-  "504px-112f": 31.27,
-  "356px-256f": 40.83,
-  "252px-256f": 16.47,
-};
-
 function mean(values: number[]): number {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : NaN;
 }
@@ -53,8 +50,8 @@ function mean(values: number[]): number {
  * recording. With one trial this is the old behaviour; with three it is the number the
  * repeatability study exists to produce.
  */
-function objectMean(observations: readonly MeasurementObservation[], objectId: string, setting?: FixtureSetting): number {
-  return trialStats(observations, objectId, setting).meanM;
+function objectMean(observations: readonly MeasurementObservation[], objectId: string, runId?: RunId): number {
+  return trialStats(observations, objectId, runId).meanM;
 }
 
 /**
@@ -68,11 +65,11 @@ function objectMean(observations: readonly MeasurementObservation[], objectId: s
 function objectBudget(
   observations: readonly MeasurementObservation[],
   objectId: string,
-  setting: FixtureSetting,
+  runId: RunId,
   model?: ErrorModel,
 ): UncertaintyBudget {
-  const stats = trialStats(observations, objectId, setting);
-  const trials = trialsFor(observations, objectId, setting);
+  const stats = trialStats(observations, objectId, runId);
+  const trials = trialsFor(observations, objectId, runId);
   return composeUncertainty({
     valueM: stats.meanM,
     patchRoughnessM: mean(trials.map((trial) => trial.internalSpreadM)),
@@ -109,8 +106,8 @@ function formatDuration(ms: number): string {
   return seconds < 60 ? `${seconds.toFixed(0)}s` : `${Math.floor(seconds / 60)}m ${(seconds % 60).toFixed(0)}s`;
 }
 
-function doorFactor(observations: readonly MeasurementObservation[], setting: FixtureSetting): number {
-  const raw = objectMean(observations, "door-leaf", setting);
+function doorFactor(observations: readonly MeasurementObservation[], runId: RunId): number {
+  const raw = objectMean(observations, "door-leaf", runId);
   return Number.isFinite(raw) && raw > 0 ? 2.1 / raw : NaN;
 }
 
@@ -150,19 +147,19 @@ function downloadSession(): void {
 
 function EvidenceRow({
   object,
-  setting,
+  runId,
   model,
 }: {
   object: MeasurementObject;
-  setting: FixtureSetting;
+  runId: RunId;
   model?: ErrorModel;
 }) {
   const ui = useMeasurementUi();
   const active = ui.activeObjectId === object.id;
-  const stats = trialStats(ui.observations, object.id, setting);
+  const stats = trialStats(ui.observations, object.id, runId);
   const absError = Number.isFinite(stats.meanM) ? Math.abs(stats.meanM - object.truthM) : NaN;
   const thin = stats.n > 0 && stats.n < MIN_TRIALS_FOR_SPREAD;
-  const budget = objectBudget(ui.observations, object.id, setting, model);
+  const budget = objectBudget(ui.observations, object.id, runId, model);
   const stated = statedUncertainty(budget);
 
   return (
@@ -191,9 +188,16 @@ export function ObjectsPane() {
   const graph = useGraph();
   const ui = useMeasurementUi();
   const object = activeMeasurementObject();
+  const runs = useRuns();
   const fixture = graph.nodes.find((node) => node.id === FIXTURE_RUN_ID);
   const sourceMode = String(fixture?.params.source ?? "recorded") as "recorded" | "live";
-  const setting = String(fixture?.params.setting ?? "504px-112f") as FixtureSetting;
+  /**
+   * Measurements are keyed by RUN, not by one of three fixture directory names. That is what
+   * lets a saved cloud run hold trials at all — before this, `Record trial` was disabled for
+   * anything but the built-in door settings because there was no stable key for a live run.
+   */
+  const runId = String(fixture?.params.runId ?? DEFAULT_RUN_ID) as RunId;
+  const activeRun = runs.runs.find((item) => item.id === runId);
   const currentValue = <T,>(nodeId: string, portId: string): T | undefined => {
     const runtime = graph.runtime[nodeId];
     if (runtime?.status !== "ok" || isNodeStale(graph, nodeId)) return undefined;
@@ -204,13 +208,13 @@ export function ObjectsPane() {
   const measurement = currentValue<MeasurementValue>(MEASURE_HEIGHT_ID, "measurement");
   const measurementError = graph.runtime[MEASURE_HEIGHT_ID]?.error;
 
-  const factor = doorFactor(ui.observations, setting);
+  const factor = doorFactor(ui.observations, runId);
   const corrected = measurement ? correctedValue(measurement.rawM, factor) : NaN;
-  const derivedMonitorTop = objectMean(ui.observations, "table-top", setting) + objectMean(ui.observations, "monitor-own", setting);
-  const currentRunObservations = ui.observations.filter((item) => item.setting === setting);
-  const activeStats = trialStats(ui.observations, object.id, setting);
-  const activeTrials = trialsFor(ui.observations, object.id, setting);
-  const repeatedMasks = duplicateMaskTrialIds(ui.observations, object.id, setting);
+  const derivedMonitorTop = objectMean(ui.observations, "table-top", runId) + objectMean(ui.observations, "monitor-own", runId);
+  const currentRunObservations = ui.observations.filter((item) => item.runId === runId);
+  const activeStats = trialStats(ui.observations, object.id, runId);
+  const activeTrials = trialsFor(ui.observations, object.id, runId);
+  const repeatedMasks = duplicateMaskTrialIds(ui.observations, object.id, runId);
   const automaticStats = segmentationAttemptStats(
     ui.segmentationAttempts.filter((attempt) => attempt.objectId === object.id),
   );
@@ -227,11 +231,11 @@ export function ObjectsPane() {
   const errorModelPoints = useMemo(
     () =>
       MEASUREMENT_OBJECTS.map((item) => {
-        const stats = trialStats(ui.observations, item.id, setting);
-        const spreads = trialsFor(ui.observations, item.id, setting).map((trial) => trial.internalSpreadM);
+        const stats = trialStats(ui.observations, item.id, runId);
+        const spreads = trialsFor(ui.observations, item.id, runId).map((trial) => trial.internalSpreadM);
         return { id: item.id, truth: item.truthM, predicted: stats.meanM, uncertainty: mean(spreads) };
       }).filter((point) => Number.isFinite(point.predicted)),
-    [setting, ui.observations],
+    [runId, ui.observations],
   );
 
   // The clip's scale, fitted over every graded object in this setting. Two points minimum:
@@ -251,12 +255,13 @@ export function ObjectsPane() {
         model: clipModel,
       })
     : activeStats.n > 0
-      ? objectBudget(ui.observations, object.id, setting, clipModel)
+      ? objectBudget(ui.observations, object.id, runId, clipModel)
       : undefined;
 
   const resolutionRows = useMemo(
     () =>
-      FIXTURE_SETTINGS.map((candidate) => {
+      FIXTURE_SETTINGS.map((setting) => {
+        const candidate = builtinRunId(setting);
         const holdouts = MEASUREMENT_OBJECTS.filter(
           (item) => item.id !== "door-leaf" && !item.availabilityNote,
         )
@@ -271,7 +276,7 @@ export function ObjectsPane() {
               ),
             )
           : NaN;
-        return { setting: candidate, views: holdouts.length, rawMae, correctedMae, calibration };
+        return { setting, views: holdouts.length, rawMae, correctedMae, calibration };
       }),
     [ui.observations],
   );
@@ -280,7 +285,7 @@ export function ObjectsPane() {
     if (!measurement || !selection || !ground) return;
     addObservation({
       objectId: object.id,
-      setting,
+      runId,
       canonicalFrame: selection.frame.canonicalIndex,
       npzFrame: selection.frame.npzIndex + 1,
       rawM: measurement.rawM,
@@ -335,20 +340,31 @@ export function ObjectsPane() {
           <label>
             RUN
             <select
-              aria-label="Recorded fixture run"
-              value={setting}
+              aria-label="Recorded run"
+              value={runId}
               disabled={sourceMode !== "recorded"}
               onChange={(event) => {
-                setNodeParam(FIXTURE_RUN_ID, "setting", event.target.value);
+                setNodeParam(FIXTURE_RUN_ID, "runId", event.target.value);
                 void runAuto();
               }}
             >
-              <option value="504px-112f">504 px · 112f</option>
-              <option value="356px-256f">356 px · 256f</option>
-              <option value="252px-256f">252 px · 256f</option>
+              {runs.runs
+                // Only runs whose bytes are on this disk can be measured. A transient stub is
+                // listed in the Runs pane, but it has nothing to backproject.
+                .filter((item) => item.persisted)
+                .map((item) => (
+                  <option key={item.id} value={item.id} disabled={!item.available}>
+                    {item.label}
+                    {item.available ? "" : " (payload missing)"}
+                  </option>
+                ))}
             </select>
           </label>
-          <span>{sourceMode === "recorded" ? `recorded DA3 run ${GPU_TIMES[setting].toFixed(2)} s` : "run DA3 manually"}</span>
+          <span>
+            {sourceMode === "recorded"
+              ? `recorded DA3 run ${(activeRun?.gpuSeconds ?? 0).toFixed(2)} s`
+              : "run DA3 manually"}
+          </span>
           {/* Lives here, not in the status row: that row is nowrap+overflow:hidden and clips
               its right edge in a narrow pane, which is no place for a mode control. */}
           <button
@@ -366,7 +382,7 @@ export function ObjectsPane() {
 
         <section className="object-list" aria-label="Measurement objects">
           {MEASUREMENT_OBJECTS.map((item) => (
-            <EvidenceRow key={item.id} object={item} setting={setting} model={clipModel} />
+            <EvidenceRow key={item.id} object={item} runId={runId} model={clipModel} />
           ))}
         </section>
 
@@ -548,7 +564,29 @@ export function ObjectsPane() {
             )}
           </section>
           <div className="evidence-actions">
-            <button disabled={sourceMode !== "recorded" || !measurement || !selection || !ground} onClick={capture}>
+            {/*
+              Recording no longer requires one of three door fixtures. It requires a run with a
+              STABLE IDENTITY whose bytes are on disk — otherwise a recorded trial would point
+              at evidence that dies with a cloud instance, which is the reproducibility promise
+              the trial store exists to keep. Save the run first, then measure it.
+            */}
+            <button
+              disabled={
+                sourceMode !== "recorded" ||
+                !activeRun?.persisted ||
+                !measurement ||
+                !selection ||
+                !ground
+              }
+              title={
+                sourceMode !== "recorded"
+                  ? "Select a recorded run — a live output has no stable identity to key a trial to."
+                  : !activeRun?.persisted
+                    ? "Save this run to disk first. A trial recorded against a transient run would reference evidence that dies with the instance."
+                    : "Freeze this measurement and its mask as a numbered trial."
+              }
+              onClick={capture}
+            >
               Record trial {activeStats.n + 1}
             </button>
             <button

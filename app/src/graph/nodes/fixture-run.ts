@@ -1,20 +1,28 @@
-import {
-  loadFixtureDepthField,
-  type DepthFieldValue,
-  type FixtureSetting,
-} from "../../measurement/depth-field";
+/**
+ * Run Source — which recorded run the measurement branch reads, or the live DA3 output.
+ *
+ * The `setting` parameter used to be one of three hardcoded door fixture directories, which
+ * meant a live run could be measured but never recorded: there was no stable identity to key
+ * a measurement to. It is now a run id from the registry (`lib/runs.ts`), so a saved cloud run
+ * is selectable on exactly the same footing as the built-in door fixtures.
+ */
+
+import { getRun } from "../../lib/runs-store";
+import { loadRunDepthField, type DepthFieldValue } from "../../measurement/depth-field";
 import type { NodeSpec } from "../types";
+
+export const DEFAULT_RUN_ID = "door-504px-112f";
 
 export const fixtureRunSpec: NodeSpec = {
   type: "fixture-run",
   label: "Run Source",
   category: "source",
-  version: "0.3.0",
+  version: "0.4.0",
   execution: "auto",
   inputs: [{ id: "live", label: "Live DA3", type: "depth_field", required: false }],
   outputs: [{ id: "depth", label: "Depth Field", type: "depth_field" }],
-  defaults: { source: "recorded", setting: "504px-112f" },
-  activeInputs: (params) => String(params.source) === "live" ? ["live"] : [],
+  defaults: { source: "recorded", runId: DEFAULT_RUN_ID },
+  activeInputs: (params) => (String(params.source) === "live" ? ["live"] : []),
   controls: [
     {
       kind: "select",
@@ -25,16 +33,9 @@ export const fixtureRunSpec: NodeSpec = {
         { value: "live", label: "live DA3 output" },
       ],
     },
-    {
-      kind: "select",
-      key: "setting",
-      label: "Recorded run",
-      options: [
-        { value: "504px-112f", label: "504 px · 112 frames" },
-        { value: "356px-256f", label: "356 px · 256 frames" },
-        { value: "252px-256f", label: "252 px · 256 frames" },
-      ],
-    },
+    // The recorded run is chosen in the Runs pane, which knows what is on disk and how big
+    // it is. A static option list here could only ever describe the three built-ins.
+    { kind: "readout", key: "runId", label: "Recorded run" },
   ],
   execute: async ({ inputs, params }) => {
     if (String(params.source) === "live") {
@@ -48,14 +49,17 @@ export const fixtureRunSpec: NodeSpec = {
         },
       };
     }
-    const setting = String(params.setting) as FixtureSetting;
-    const field = await loadFixtureDepthField(setting);
+
+    const runId = String(params.runId || DEFAULT_RUN_ID);
+    const run = await getRun(runId);
+    if (!run) throw new Error(`run ${runId} is not in the registry`);
+    const field = await loadRunDepthField(run);
     return {
       depth: {
         type: "depth_field",
         value: field,
         thumbnailUrl: field.frames[Math.floor(field.frames.length / 2)]?.rgbUrl,
-        summary: `${field.manifest.frames.count}f · OFFLINE FIXTURE`,
+        summary: `${field.manifest.frames.count}f · ${run.builtin ? "BUILT-IN RUN" : "SAVED RUN"}`,
       },
     };
   },

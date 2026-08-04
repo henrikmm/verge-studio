@@ -4,8 +4,18 @@ import { artifactUrl, frameUrl, manifestFromWire, requestHeaders } from "../lib/
 import { parseNpz, type NpyArray } from "../lib/npz";
 import type { FramesValue } from "../graph/nodes/frame-source";
 
+/**
+ * The three recorded door settings, kept as a named list because M3's resolution-vs-frames
+ * verdict table is defined over exactly these. They are now the ids of BUILT-IN RUNS rather
+ * than the only addressable evidence — see `lib/runs.ts`.
+ */
 export const FIXTURE_SETTINGS = ["504px-112f", "356px-256f", "252px-256f"] as const;
 export type FixtureSetting = (typeof FIXTURE_SETTINGS)[number];
+
+/** Built-in run id for a recorded door setting. */
+export function builtinRunId(setting: FixtureSetting): string {
+  return `door-${setting}`;
+}
 
 export interface DepthFrameDescriptor {
   /** Index inside depth/confidence/intrinsics/extrinsics. */
@@ -81,30 +91,57 @@ export function canonicalFrameMap(frameCount: number, canonicalCount = 256): num
   );
 }
 
-function fixtureDescriptors(manifest: InferManifest): DepthFrameDescriptor[] {
+function recordedDescriptors(
+  manifest: InferManifest,
+  framesBase: string,
+): DepthFrameDescriptor[] {
   const map = canonicalFrameMap(manifest.frames.count);
   const fps = manifest.frames.effectiveFps ?? manifest.params.fps;
   return map.map((canonicalIndex, npzIndex) => ({
     npzIndex,
     canonicalIndex,
-    rgbUrl: `/door/frames/frame-${String(canonicalIndex).padStart(4, "0")}.jpg`,
+    rgbUrl: `${framesBase}frame-${String(canonicalIndex).padStart(4, "0")}.jpg`,
     timestampS: npzIndex / fps,
   }));
 }
 
-export async function loadFixtureDepthField(setting: FixtureSetting): Promise<DepthFieldValue> {
-  const response = await fetch(`/door/${setting}/manifest.json`);
-  if (!response.ok) throw new Error(`fixture manifest ${response.status}`);
+/**
+ * Load a persisted run's evidence.
+ *
+ * This used to be `loadFixtureDepthField(setting)`, hardcoded to `/door/<setting>/`, which is
+ * why recorded evidence could only ever be one of three door directories. The bases now come
+ * from the run record: built-ins resolve through Vite's publicDir, saved runs through
+ * `/api/run-artifact`, since they live outside the project at ~/verge-runs.
+ */
+export async function loadRunDepthField(run: {
+  id: string;
+  label: string;
+  artifactBase: string | null;
+  framesBase: string | null;
+  available: boolean;
+}): Promise<DepthFieldValue> {
+  if (!run.artifactBase || !run.framesBase) {
+    throw new Error(
+      `run ${run.id} is not saved to this disk — its artifacts are still only on the cloud instance`,
+    );
+  }
+  if (!run.available) {
+    throw new Error(`run ${run.id} is registered but its payloads are missing from this disk`);
+  }
+
+  const manifestUrl = `${run.artifactBase}manifest.json`;
+  const response = await fetch(manifestUrl);
+  if (!response.ok) throw new Error(`run manifest ${response.status}`);
   const manifest = manifestFromWire(await response.json());
   manifest.artifacts = manifest.artifacts.map((item) => ({
     ...item,
-    url: `/door/${setting}/${item.name}`,
+    url: `${run.artifactBase}${item.name}`,
   }));
   return {
     manifest,
     source: "fixture",
-    label: `DOOR FIXTURE · ${setting}`,
-    frames: fixtureDescriptors(manifest),
+    label: run.label,
+    frames: recordedDescriptors(manifest, run.framesBase),
     loadArrays: memoizedArrays(manifest),
   };
 }

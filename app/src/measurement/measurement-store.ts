@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { median, nmad } from "../../../geometry";
 import { sha256Hex } from "../graph/cache-key";
-import type { FixtureSetting } from "./depth-field";
+import type { RunId } from "../lib/runs";
 
 export type MeasurementMode = "top_above_floor" | "vertical_extent";
 export type MaskSource = "brush" | "model" | "model+brush";
@@ -164,8 +164,8 @@ export interface MaskSnapshot {
 export interface MeasurementObservation {
   id: string;
   objectId: string;
-  setting: FixtureSetting;
-  /** 1-based, counted within (objectId, setting). Repeat trials are kept, never replaced. */
+  runId: RunId;
+  /** 1-based, counted within (objectId, runId). Repeat trials are kept, never replaced. */
   trialIndex: number;
   canonicalFrame: number;
   npzFrame: number;
@@ -246,13 +246,15 @@ export interface MeasurementUiState {
   segmentationAttempts: SegmentationAttempt[];
 }
 
-export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.4.0";
-const STORAGE_KEY = "verge.m3c.measurement-session/0.4.0";
+export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.5.0";
+const STORAGE_KEY = "verge.m3c.measurement-session/0.5.0";
 /**
- * Older keys, newest first. 0.3.0 added sittings; 0.2.0 added repeat trials and frozen masks;
- * 0.1.0 kept one row per (object, setting, frame) and destroyed repeat trials on record.
+ * Older keys, newest first. 0.4.0 keyed trials by a three-value fixture `setting`; 0.3.0 added
+ * sittings; 0.2.0 added repeat trials and frozen masks; 0.1.0 kept one row per
+ * (object, setting, frame) and destroyed repeat trials on record.
  */
 const LEGACY_STORAGE_KEYS = [
+  "verge.m3c.measurement-session/0.4.0",
   "verge.m3b.measurement-session/0.3.0",
   "verge.m3b.measurement-session/0.2.0",
   "verge.m3b.measurement-session/0.1.0",
@@ -329,8 +331,16 @@ function decodeMask(value: EncodedMask): MaskRecord {
  */
 export function migrateObservations(rows: readonly MeasurementObservation[]): MeasurementObservation[] {
   const counters = new Map<string, number>();
-  return rows.map((row) => {
-    const group = `${row.objectId}:${row.setting}`;
+  return rows.map((raw) => {
+    // 0.5.0 re-keyed trials from a three-value fixture `setting` to a run id, so a saved run
+    // can hold measurements at all. The three old settings ARE the built-in door runs, so the
+    // mapping is exact and no trial loses its group.
+    const legacySetting = (raw as { setting?: string }).setting;
+    const row: MeasurementObservation =
+      raw.runId === undefined && legacySetting !== undefined
+        ? { ...raw, runId: `door-${legacySetting}` }
+        : raw;
+    const group = `${row.objectId}:${row.runId}`;
     const trialIndex = (counters.get(group) ?? 0) + 1;
     counters.set(group, trialIndex);
     return {
@@ -782,10 +792,10 @@ export function addObservation(
     "id" | "capturedAt" | "trialIndex" | "mask" | "paintDurationMs" | "sittingId"
   >,
 ): MeasurementObservation {
-  const group = `${observation.objectId}:${observation.setting}`;
+  const group = `${observation.objectId}:${observation.runId}`;
   const trialIndex =
     state.observations.filter(
-      (item) => item.objectId === observation.objectId && item.setting === observation.setting,
+      (item) => item.objectId === observation.objectId && item.runId === observation.runId,
     ).length + 1;
   const key = maskKey(observation.objectId, observation.canonicalFrame);
   const startedAt = paintClocks.get(key);
@@ -820,10 +830,10 @@ export function clearObservations(): void {
 export function trialsFor(
   observations: readonly MeasurementObservation[],
   objectId: string,
-  setting?: FixtureSetting,
+  runId?: RunId,
 ): MeasurementObservation[] {
   return observations
-    .filter((item) => item.objectId === objectId && (!setting || item.setting === setting))
+    .filter((item) => item.objectId === objectId && (!runId || item.runId === runId))
     .sort((a, b) => a.trialIndex - b.trialIndex);
 }
 
@@ -838,11 +848,11 @@ export function trialsFor(
 export function duplicateMaskTrialIds(
   observations: readonly MeasurementObservation[],
   objectId: string,
-  setting?: FixtureSetting,
+  runId?: RunId,
 ): Set<string> {
   const seen = new Set<string>();
   const duplicates = new Set<string>();
-  for (const trial of trialsFor(observations, objectId, setting)) {
+  for (const trial of trialsFor(observations, objectId, runId)) {
     const digest = trial.mask?.digest;
     if (!digest) continue;
     if (seen.has(digest)) duplicates.add(trial.id);
@@ -872,9 +882,9 @@ function mean(values: readonly number[]): number {
 export function trialStats(
   observations: readonly MeasurementObservation[],
   objectId: string,
-  setting?: FixtureSetting,
+  runId?: RunId,
 ): TrialStats {
-  const rows = trialsFor(observations, objectId, setting).filter((item) =>
+  const rows = trialsFor(observations, objectId, runId).filter((item) =>
     Number.isFinite(item.rawM),
   );
   if (!rows.length) return EMPTY_STATS;
@@ -928,10 +938,10 @@ export function exportMeasurementSession(): string {
       },
     ]),
   );
-  const settings = [...new Set(state.observations.map((item) => item.setting))];
+  const runIds = [...new Set(state.observations.map((item) => item.runId))];
   const repeatability = MEASUREMENT_OBJECTS.flatMap((object) =>
-    settings
-      .map((setting) => ({ objectId: object.id, code: object.code, setting, ...trialStats(state.observations, object.id, setting) }))
+    runIds
+      .map((runId) => ({ objectId: object.id, code: object.code, runId, ...trialStats(state.observations, object.id, runId) }))
       .filter((row) => row.n > 0),
   );
   return JSON.stringify(

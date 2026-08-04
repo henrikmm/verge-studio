@@ -13,6 +13,11 @@ export interface FramesValue {
   paths: string[];
   plan: FramePlan;
   probe: VideoProbe;
+  /** Clip identity, carried downstream so a registered run knows which video it measured.
+   *  Metric scale does not transfer between clips, so this decides which measurement
+   *  targets a run may legitimately be graded against. */
+  clipName: string;
+  clipSha256: string;
 }
 
 export const frameSourceSpec: NodeSpec = {
@@ -47,7 +52,13 @@ export const frameSourceSpec: NodeSpec = {
       Number(params.maxFrames),
     );
 
-    const value: FramesValue = { paths: frames, plan, probe };
+    const value: FramesValue = {
+      paths: frames,
+      plan,
+      probe,
+      clipName: String(params.videoName ?? ""),
+      clipSha256: String(params.videoSha256 ?? ""),
+    };
     return {
       frames: {
         type: "frames",

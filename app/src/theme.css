@@ -964,6 +964,89 @@ canvas {
   pointer-events: none;
 }
 
+/* Runs pane */
+.runs-pane {
+  overflow-y: auto;
+}
+
+.runs-root {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 9px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border-bottom: 1px solid #242428;
+}
+
+.run-row.active {
+  background: #ffffff08;
+  box-shadow: inset 2px 0 var(--emph-hi);
+}
+
+.run-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font-family: var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.run-pick:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.run-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.run-label b,
+.run-label small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.run-label small {
+  color: var(--text-dim);
+  font-size: 9px;
+}
+
+.run-state {
+  flex: none;
+  color: var(--text-dim);
+  font-size: 9px;
+}
+
+.run-actions {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}
+
+.pane-btn.danger {
+  color: var(--accent-err);
+}
+
 /* Objects / grading pane */
 .objects-pane {
   overflow-y: auto;
