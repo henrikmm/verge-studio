@@ -15,6 +15,7 @@ import { artifactUrl, fetchFrameBlob, infer } from "../../lib/infer-client";
 import type { InferManifest, ProcessResMethod, RefViewStrategy } from "../../lib/contract";
 import { DEFAULT_MAX_FRAMES } from "../../lib/contract";
 import { depthFieldFromRun } from "../../measurement/depth-field";
+import { update } from "../../lib/session-store";
 import type { NodeSpec } from "../types";
 import type { FramesValue } from "./frame-source";
 
@@ -69,6 +70,10 @@ export const da3DepthSpec: NodeSpec = {
       refViewStrategy: params.refViewStrategy as RefViewStrategy,
       maxFrames: Number(params.maxFrames),
     });
+
+    // The status bar's last-run chip reads this. Nothing set it until 2026-08-04, so the chip
+    // never rendered — and this node is the only place a real run actually happens.
+    update({ lastRun: manifest });
 
     const preview = manifest.artifacts.find((a) => a.kind === "depth_preview");
     const field = depthFieldFromRun(manifest, frames);

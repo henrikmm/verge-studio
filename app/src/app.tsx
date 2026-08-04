@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import {
   DockviewReact,
   type DockviewReadyEvent,
@@ -10,7 +10,15 @@ import { GraphPane } from "./panes/graph-pane";
 import { Inspector } from "./panes/inspector";
 import { ObjectsPane } from "./panes/objects";
 import { Viewport3D } from "./panes/viewport-3d";
-import { formatBytes, type InferManifest } from "./lib/contract";
+import { formatBytes } from "./lib/contract";
+import {
+  COST_BASIS,
+  formatElapsed,
+  getCloud,
+  instanceElapsedMs,
+  isBilling,
+  useCloud,
+} from "./lib/cloud-store";
 import {
   PANES,
   exitFocus,
@@ -45,6 +53,9 @@ function PaneTab(props: IDockviewPanelHeaderProps) {
   return (
     <div
       className={`pane-tab${dock.focusedId === id ? " focused" : ""}`}
+      // A custom tab replaces Dockview's default, which is what normally activates the panel
+      // on click. Without this, clicking a tab in a multi-tab group does nothing.
+      onClick={() => props.api.setActive()}
       onDoubleClick={() => toggleFocus(id)}
       title="Double-click to focus this pane"
     >
@@ -109,18 +120,36 @@ function ViewBar() {
 /**
  * The status bar's cost slot.
  *
- * It read a hardcoded `$0.00` from M0 until 2026-08-04. That was defensible while no cloud
- * session had ever run; after three warm sessions it was a fabricated number on screen. There is
- * still nothing local that knows what anything cost — Cloud Run bills the whole instance
- * lifetime, cold start and idle tail included, and the app never sees a bill. So the slot states
- * what it actually knows and no more. Real per-session accounting is an M4 item.
+ * It read a hardcoded `$0.00` from M0 until 2026-08-04, then a static label that was wired to
+ * `session.lastRun` — which nothing ever set, so it was permanently stuck on "cloud: none"
+ * even during a live run. It now reports the one cost fact the app can actually measure: how
+ * long an instance has been answering us. See COST_BASIS for why there is no currency figure.
  */
-const COST_NOTE =
-  "Cloud Run bills the instance lifetime, not inference seconds — cold start and idle tail included. The app has no billing data, so it reports none.";
+function CloudMeter() {
+  const cloud = useCloud();
+  const [, force] = useState(0);
 
-function costLabel(lastRun: InferManifest | null): string {
-  if (!lastRun) return "cloud: none";
-  return lastRun.mock ? "cloud: fixture" : "cloud: 1 run · billing not instrumented";
+  // Ticks locally. Watching the meter must never feed the meter.
+  useEffect(() => {
+    if (cloud.firstContactAt === null) return;
+    const timer = window.setInterval(() => force((n) => n + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [cloud.firstContactAt]);
+
+  if (cloud.deleted) return <span className="cost">cloud: service deleted</span>;
+  if (cloud.baseUrl === null && cloud.firstContactAt === null) {
+    return <span className="cost">cloud: local fixture</span>;
+  }
+  if (cloud.firstContactAt === null) return <span className="cost">cloud: connecting…</span>;
+
+  const elapsed = instanceElapsedMs(cloud) ?? 0;
+  return (
+    <span className="cost billing" title={COST_BASIS}>
+      ◐ instance {formatElapsed(elapsed)} · {cloud.runCount} run
+      {cloud.runCount === 1 ? "" : "s"}
+      {cloud.baseUrl === null ? " · disconnected, still alive" : ""}
+    </span>
+  );
 }
 
 let initialFixtureStarted = false;
@@ -152,6 +181,22 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  /**
+   * Last line of defence against the expensive mistake: closing the tab on a live instance.
+   * Cloud Run keeps billing an instance nobody is watching, and the app is the only thing that
+   * knows one was ever woken. Browsers show their own generic wording here — the point is the
+   * interruption, not the text.
+   */
+  useEffect(() => {
+    const onUnload = (event: BeforeUnloadEvent) => {
+      if (!isBilling(getCloud())) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, []);
+
   return (
     <div className="app-shell">
       <div className="app-dock">
@@ -178,7 +223,7 @@ export function App() {
           </span>
         )}
         <ViewBar />
-        <span className="cost" title={COST_NOTE}>{costLabel(lastRun)}</span>
+        <CloudMeter />
       </div>
     </div>
   );

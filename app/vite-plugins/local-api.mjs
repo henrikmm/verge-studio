@@ -4,11 +4,17 @@
 // can be built and reviewed offline at zero cost. Swapping to the real service is a
 // base-URL change, nothing more.
 
+import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
-import { basename, join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { extractFrames, probeVideo } from "../../scripts/extract-frames.mjs";
+
+const execFileAsync = promisify(execFile);
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 const FIXTURE_DIR = new URL("../../fixtures/roadside/", import.meta.url);
 
@@ -136,6 +142,28 @@ export function localApi() {
               state.modelLoaded = false;
               state.runPeak = 0;
               return json(res, 200, { status: "released" });
+
+            /**
+             * Delete the Cloud Run service — the only action that actually stops the meter.
+             *
+             * Releasing the model frees VRAM but leaves the instance alive, and Cloud Run
+             * bills instance lifetime, so without this the app could only ever *advise* the
+             * operator to go and run a script. Dev middleware only: this route does not
+             * exist on the deployed service and cannot be reached from anywhere but
+             * localhost, and it runs the repo's own teardown.sh rather than composing a
+             * gcloud command here, so the "keep the image" policy stays in one place.
+             */
+            case "POST /api/teardown": {
+              const script = join(REPO_ROOT, "scripts/teardown.sh");
+              // PURGE_IMAGE is never forwarded: deleting the ~12 GB image would cost the
+              // next session a 15-20 min rebuild, and no UI button should be able to.
+              const { stdout, stderr } = await execFileAsync(script, [], {
+                cwd: REPO_ROOT,
+                timeout: 180_000,
+                env: { ...process.env, PURGE_IMAGE: "0" },
+              });
+              return json(res, 200, { output: `${stdout}${stderr}`.trim() });
+            }
 
             // Real ffmpeg, running locally — this part is not mocked.
             case "POST /api/probe": {

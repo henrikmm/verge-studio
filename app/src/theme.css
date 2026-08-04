@@ -746,10 +746,26 @@ body {
   }
 }
 
-/* Not a currency figure — the app has no billing data. See costLabel() in app.tsx. */
+/* Not a currency figure — the app has no billing data. See COST_BASIS in lib/cloud-store.ts. */
 .status-bar .cost {
-  margin-left: auto;
   color: var(--text-dim);
+}
+
+/* A live instance is the one thing in this app that costs money while nobody looks at it. */
+.status-bar .cost.billing {
+  color: var(--accent-busy);
+}
+
+.inspector-row.control input[type="text"],
+.inspector-row.control input[type="password"] {
+  min-width: 0;
+  background: var(--bg-app);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 4px;
 }
 
 /* Viewport overlays */

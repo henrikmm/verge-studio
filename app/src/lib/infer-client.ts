@@ -7,6 +7,7 @@
  */
 
 import type { GpuSnapshot, InferManifest, InferParams } from "./contract";
+import { getCloud, inferBase, isRemote, noteRequest, noteRun } from "./cloud-store";
 
 /**
  * TWO bases, because the two halves of the pipeline live in different places.
@@ -15,22 +16,20 @@ import type { GpuSnapshot, InferManifest, InferParams } from "./contract";
  * work is ffmpeg on this Mac and must never go to the cloud (local-first), and the
  * deployed service has no such routes anyway.
  *
- * `INFER_BASE` is the GPU service: gpu, warmup, shutdown, infer. Point it at a deployed
- * Cloud Run URL (or a `gcloud run services proxy` on localhost) to use real hardware;
- * left unset it falls back to the fixture-backed mock on the same dev middleware.
+ * The GPU base — gpu, warmup, shutdown, infer — now lives in `cloud-store` and is chosen at
+ * RUNTIME. It used to be `import.meta.env.VITE_INFER_BASE`, fixed at dev-server start, which
+ * meant pointing at a real service required killing Vite, exporting a variable and restarting.
+ * That is a bad property for the one setting that decides whether a GPU is billing.
  *
- * These were one constant until 2026-08-01. Overriding it sent ffmpeg's own routes to
+ * These were a single constant until 2026-08-01. Overriding it sent ffmpeg's own routes to
  * Cloud Run, where they 404 — the first real browser-to-cloud run would have failed on
  * frame extraction before reaching the GPU at all.
  */
 const LOCAL_BASE = "/api";
-const INFER_BASE = import.meta.env.VITE_INFER_BASE ?? "/api";
 
-/** True when INFER_BASE points off-origin, i.e. at a real service rather than the mock. */
-const INFER_IS_REMOTE = /^https?:\/\//i.test(INFER_BASE);
-
-/** Cloud Run requires an identity token; the mock ignores it. */
-const AUTH_TOKEN = import.meta.env.VITE_INFER_TOKEN ?? "";
+/** Seeds the connect field only; it no longer decides anything by itself. */
+export const ENV_INFER_BASE: string = import.meta.env.VITE_INFER_BASE ?? "";
+export const ENV_INFER_TOKEN: string = import.meta.env.VITE_INFER_TOKEN ?? "";
 
 /**
  * Resolve an artifact URL from a manifest into something the browser can fetch.
@@ -47,11 +46,21 @@ export function artifactUrl(url: string): string {
       `artifact is in GCS (${url}) and needs a signed URL — the browser cannot fetch gs:// directly`,
     );
   }
-  return INFER_IS_REMOTE ? `${INFER_BASE.replace(/\/$/, "")}${url}` : url;
+  return isRemote() ? `${inferBase()}${url}` : url;
 }
 
 export function requestHeaders(extra: Record<string, string> = {}): Record<string, string> {
-  return AUTH_TOKEN ? { ...extra, authorization: `Bearer ${AUTH_TOKEN}` } : extra;
+  const token = getCloud().token;
+  return token ? { ...extra, authorization: `Bearer ${token}` } : extra;
+}
+
+/**
+ * Every GPU-service call goes through here so the instance timer and request count reflect
+ * reality. Local ffmpeg routes deliberately do not — they cost nothing and touch no instance.
+ */
+async function gpuFetch(path: string, init?: RequestInit): Promise<Response> {
+  noteRequest();
+  return fetch(`${inferBase()}${path}`, init);
 }
 
 async function expectOk(res: Response): Promise<unknown> {
@@ -145,18 +154,37 @@ export function manifestFromWire(w: any): InferManifest {
 }
 
 export async function getGpu(): Promise<GpuSnapshot> {
-  return toGpu((await expectOk(await fetch(`${INFER_BASE}/gpu`, { headers: requestHeaders() }))) as WireGpu);
+  return toGpu((await expectOk(await gpuFetch("/gpu", { headers: requestHeaders() }))) as WireGpu);
 }
 
 export async function warmup(): Promise<GpuSnapshot> {
   const body = (await expectOk(
-    await fetch(`${INFER_BASE}/warmup`, { method: "POST", headers: requestHeaders() }),
+    await gpuFetch("/warmup", { method: "POST", headers: requestHeaders() }),
   )) as { gpu: WireGpu };
   return toGpu(body.gpu);
 }
 
-export async function shutdown(): Promise<void> {
-  await expectOk(await fetch(`${INFER_BASE}/shutdown`, { method: "POST", headers: requestHeaders() }));
+/**
+ * Frees the model from VRAM. It does NOT delete the service and does NOT stop billing —
+ * see `scripts/teardown.sh` and `deleteService()` for the action that actually does.
+ */
+export async function releaseModel(): Promise<void> {
+  await expectOk(await gpuFetch("/shutdown", { method: "POST", headers: requestHeaders() }));
+}
+
+/**
+ * Deletes the Cloud Run service via the local dev middleware, which shells out to
+ * `scripts/teardown.sh`. This is the only action in the app that stops the meter. It keeps
+ * the ~12 GB image, so the next deploy still takes the build-skip branch (~1 min, not 20).
+ */
+export async function deleteService(): Promise<{ output: string }> {
+  return (await expectOk(
+    await fetch(`${LOCAL_BASE}/teardown`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    }),
+  )) as { output: string };
 }
 
 export interface VideoProbe {
@@ -239,10 +267,11 @@ export async function infer(
   frames: Blob[] | { frameCount: number },
   params: InferParams,
 ): Promise<InferManifest> {
+  noteRun();
   if (!Array.isArray(frames)) {
     return manifestFromWire(
       await expectOk(
-        await fetch(`${INFER_BASE}/infer`, {
+        await gpuFetch("/infer", {
           method: "POST",
           headers: requestHeaders({ "content-type": "application/json" }),
           body: JSON.stringify({
@@ -272,7 +301,7 @@ export async function infer(
   );
   return manifestFromWire(
     await expectOk(
-      await fetch(`${INFER_BASE}/infer`, { method: "POST", headers: requestHeaders(), body: form }),
+      await gpuFetch("/infer", { method: "POST", headers: requestHeaders(), body: form }),
     ),
   );
 }

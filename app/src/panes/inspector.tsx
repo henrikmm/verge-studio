@@ -15,7 +15,24 @@ import {
   predictVram,
   type InferManifest,
 } from "../lib/contract";
-import { getGpu, shutdown, warmup } from "../lib/infer-client";
+import {
+  COST_BASIS,
+  connectCloud,
+  disconnectCloud,
+  formatElapsed,
+  markServiceDeleted,
+  setCloudError,
+  setCloudState,
+  useCloud,
+} from "../lib/cloud-store";
+import {
+  ENV_INFER_BASE,
+  ENV_INFER_TOKEN,
+  deleteService,
+  getGpu,
+  releaseModel,
+  warmup,
+} from "../lib/infer-client";
 import { update, useSession } from "../lib/session-store";
 import {
   isNodeStale,
@@ -130,10 +147,27 @@ function Control({
   );
 }
 
+/**
+ * Live instance clock. Its own ticker rather than a poll: this counts local wall time since
+ * first contact and touches the network never, so watching the meter cannot feed the meter.
+ */
+function InstanceClock({ since }: { since: number }) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => force((n) => n + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  return <>{formatElapsed(Date.now() - since)}</>;
+}
+
 export function Inspector() {
   const session = useSession();
   const graph = useGraph();
+  const cloud = useCloud();
   const [busy, setBusy] = useState(false);
+  const [baseDraft, setBaseDraft] = useState(ENV_INFER_BASE);
+  const [tokenDraft, setTokenDraft] = useState(ENV_INFER_TOKEN);
+  const [teardownLog, setTeardownLog] = useState<string | null>(null);
 
   const selected = graph.selectedId ? nodeById(graph, graph.selectedId) : undefined;
   const spec = selected ? REGISTRY[selected.type] : undefined;
@@ -158,9 +192,21 @@ export function Inspector() {
 
   const { gpu } = session;
 
-  // Poll GPU telemetry: fast while a run is in flight so the bar actually moves,
-  // slow when idle so a warm cloud instance is not kept busy for nothing.
+  /**
+   * GPU telemetry polling — demand-driven, and this is a cost control, not a preference.
+   *
+   * This used to tick every 4 seconds forever. Against a real service that is a request every
+   * 4 s, and a Cloud Run instance with continuous traffic never scales to zero — so simply
+   * leaving the tab open kept an L4 billing indefinitely. Cloud Run bills instance lifetime,
+   * so an idle poll is not "cheap", it is the whole cost.
+   *
+   * Against the local mock there is nothing to bill, so the lively idle poll stays: it is what
+   * makes the offline UI feel alive at zero cost.
+   */
+  const remote = cloud.baseUrl !== null;
+  const shouldPoll = graph.running || cloud.state === "warming" || !remote;
   useEffect(() => {
+    if (!shouldPoll) return;
     let cancelled = false;
     let timer: number;
     const tick = async () => {
@@ -172,12 +218,23 @@ export function Inspector() {
       }
       if (!cancelled) timer = window.setTimeout(tick, graph.running ? 250 : 4000);
     };
-    tick();
+    void tick();
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [graph.running]);
+  }, [graph.running, shouldPoll]);
+
+  /** One-shot telemetry read, for when a remote session is idle and not polling. */
+  const refreshGpu = async () => {
+    try {
+      update({ gpu: await getGpu() });
+      setCloudError(null);
+    } catch (e) {
+      update({ gpu: null });
+      setCloudError(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   const act = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -291,6 +348,146 @@ export function Inspector() {
         </div>
 
         <div className="inspector-section">
+          <h3>Cloud session</h3>
+          {remote ? (
+            <>
+              <Row k="Service" v={cloud.baseUrl ?? "—"} title={cloud.baseUrl ?? ""} />
+              <Row
+                k="Instance alive"
+                v={cloud.firstContactAt === null ? "no contact yet" : ""}
+                title={COST_BASIS}
+              />
+              {cloud.firstContactAt !== null && (
+                <div className="inspector-row">
+                  <span className="k">Billing since</span>
+                  <span className="v num" title={COST_BASIS}>
+                    <InstanceClock since={cloud.firstContactAt} />
+                  </span>
+                </div>
+              )}
+              <Row k="Requests" v={`${cloud.requestCount}`} />
+              <Row k="Runs" v={`${cloud.runCount}`} />
+              {/*
+                No currency figure, on purpose (DESIGN.md honesty rule 1). The app has no
+                billing data and the true lifetime started before our first contact, so the
+                measured elapsed time plus the billing model in words is the honest maximum.
+              */}
+              <div className="inspector-note">{COST_BASIS}</div>
+              <div className="inspector-actions">
+                <button disabled={busy} onClick={() => act(refreshGpu)}>
+                  Refresh
+                </button>
+                <button
+                  disabled={busy}
+                  title="Loads the model into VRAM. Measured cold start 64 s + model load 40 s ≈ 105 s, against ~31 s of inference — so warming before you need it is usually the right call."
+                  onClick={() =>
+                    act(async () => {
+                      setCloudState("warming");
+                      try {
+                        update({ gpu: await warmup() });
+                        setCloudState("warm");
+                      } catch (e) {
+                        setCloudState("cold");
+                        throw e;
+                      }
+                    })
+                  }
+                >
+                  Warm up
+                </button>
+              </div>
+              <div className="inspector-actions">
+                <button
+                  disabled={busy}
+                  title="Frees the model from VRAM so the instance CAN scale down. It does not delete the service and it does not stop billing."
+                  onClick={() => act(async () => void (await releaseModel()))}
+                >
+                  Release model
+                </button>
+                <button
+                  className="danger"
+                  disabled={busy}
+                  title="Deletes the Cloud Run service. This is the only action that stops the meter. The ~12 GB image is kept, so the next deploy still skips the build."
+                  onClick={() =>
+                    act(async () => {
+                      if (
+                        !window.confirm(
+                          "Delete the Cloud Run service?\n\nThis is the only thing that stops billing. Any run artifacts still only on the instance will be lost — save them first.\n\nThe image is kept, so the next deploy takes ~1 min, not 20.",
+                        )
+                      ) {
+                        return;
+                      }
+                      const { output } = await deleteService();
+                      markServiceDeleted();
+                      setTeardownLog(output.slice(-600));
+                    })
+                  }
+                >
+                  Delete service
+                </button>
+              </div>
+              <div className="inspector-actions">
+                <button disabled={busy} onClick={() => disconnectCloud()}>
+                  Use local fixture
+                </button>
+              </div>
+              <div className="inspector-note">
+                “Use local fixture” only points this app elsewhere — the instance keeps running
+                and keeps billing until it is deleted.
+              </div>
+            </>
+          ) : (
+            <>
+              <Row k="Target" v="local mock + fixtures" />
+              <Row k="Cost" v="none" />
+              <div className="inspector-row control">
+                <span className="k">Service URL</span>
+                <input
+                  type="text"
+                  value={baseDraft}
+                  placeholder="http://localhost:8080"
+                  onChange={(e) => setBaseDraft(e.target.value)}
+                />
+              </div>
+              <div className="inspector-row control">
+                <span className="k">Token</span>
+                <input
+                  type="password"
+                  value={tokenDraft}
+                  placeholder="optional"
+                  onChange={(e) => setTokenDraft(e.target.value)}
+                />
+              </div>
+              <div className="inspector-actions">
+                <button
+                  disabled={busy || baseDraft.trim() === ""}
+                  onClick={() =>
+                    act(async () => {
+                      connectCloud(baseDraft.trim(), tokenDraft.trim());
+                      const snapshot = await getGpu();
+                      update({ gpu: snapshot });
+                      setCloudState(snapshot.modelLoaded ? "warm" : "cold");
+                    })
+                  }
+                >
+                  Connect
+                </button>
+              </div>
+              <div className="inspector-note">
+                Connecting starts nothing by itself, but the first request wakes an instance and
+                Cloud Run then bills its whole lifetime. Prefer a{" "}
+                <code>gcloud run services proxy</code> on localhost — it supplies correct auth,
+                which a raw identity token does not.
+              </div>
+              {cloud.deleted && (
+                <div className="inspector-note">Service deleted this session. Meter stopped.</div>
+              )}
+            </>
+          )}
+          {teardownLog && <div className="inspector-note error">{teardownLog}</div>}
+        </div>
+
+        <div className="inspector-section">
           <h3>GPU</h3>
           {gpu ? (
             <>
@@ -299,23 +496,12 @@ export function Inspector() {
                 total={gpu.totalBytes}
                 label={gpu.busy ? "VRAM live" : "VRAM peak"}
               />
+              <Row k="Device" v={gpu.deviceName} />
               <Row k="State" v={gpu.busy ? "busy" : gpu.modelLoaded ? "warm" : "cold"} />
             </>
           ) : (
-            <Row k="State" v="unreachable" />
+            <Row k="State" v={remote ? "not polled — press Refresh" : "unreachable"} />
           )}
-          <div className="inspector-actions">
-            <button disabled={busy} onClick={() => act(async () => void (await warmup()))}>
-              Warm up
-            </button>
-            <button
-              className="danger"
-              disabled={busy}
-              onClick={() => act(async () => void (await shutdown()))}
-            >
-              Release
-            </button>
-          </div>
         </div>
 
         <div className="inspector-section">
