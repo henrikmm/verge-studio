@@ -127,7 +127,7 @@ export function Depth2D() {
   const object = activeMeasurementObject();
   const mask = getMask();
   const reviewIssue = automaticMaskReviewIssue(mask);
-  const automaticFixtureValidated = object.id === "door-leaf";
+  const automaticFixtureValidated = object?.id === "door-leaf";
   const segmentBusy = segmentProgress?.phase === "loading" || segmentProgress?.phase === "encoding" || segmentProgress?.phase === "decoding";
   const segmentationTotalMs = mask?.segmentation
     ? (mask.segmentation.selectionDurationMs ?? 0) > 0
@@ -139,6 +139,9 @@ export function Depth2D() {
 
   const syncMeasurementGraph = useCallback(() => {
     const active = activeMeasurementObject();
+    // A clip with no targets yet has nothing to measure; syncing zeros into the graph would
+    // put the measurement branch into a confidently wrong state instead of an empty one.
+    if (!active) return;
     const currentMask = getMask();
     setNodeParams(BRUSH_SELECTION_ID, {
       objectId: active.id,
@@ -147,7 +150,8 @@ export function Depth2D() {
       confidencePercentile: ui.confidencePercentile,
     });
     setNodeParams(MEASURE_HEIGHT_ID, { mode: active.mode });
-    setNodeParams(SCALE_CHECK_ID, { truthM: active.truthM });
+    // null truth means "measurable but ungradable" — the node treats 0 as no grading.
+    setNodeParams(SCALE_CHECK_ID, { truthM: active.truthM ?? 0 });
     void runAuto();
   }, [ui.canonicalFrame, ui.confidencePercentile]);
 
@@ -200,7 +204,7 @@ export function Depth2D() {
     setSegmentationElapsedMs(current?.segmentation?.selectionDurationMs ?? 0);
     setSegmentProgress(undefined);
     setSegmentError(undefined);
-  }, [descriptor?.rgbUrl, object.id]);
+  }, [descriptor?.rgbUrl, object?.id]);
 
   useEffect(() => {
     if (descriptor && descriptor.canonicalIndex !== ui.canonicalFrame) {
@@ -289,7 +293,7 @@ export function Depth2D() {
 
   useEffect(() => {
     if (field) syncMeasurementGraph();
-  }, [field, object.id, object.mode, object.truthM, syncMeasurementGraph]);
+  }, [field, object?.id, object?.mode, object?.truthM, syncMeasurementGraph]);
 
   // Show both brush time and complete automatic-selection time. The latter starts before model
   // setup/frame encoding and stops only on acceptance, so a fast decoder cannot hide cold-start
@@ -320,7 +324,7 @@ export function Depth2D() {
   ) => {
     recordSegmentationAttempt({
       id: evidence?.attemptId ?? attemptId(),
-      objectId: object.id,
+      objectId: object?.id ?? "",
       canonicalFrame: ui.canonicalFrame,
       outcome,
       reason,
@@ -398,6 +402,7 @@ export function Depth2D() {
         correctionStrokes: 0,
         accepted: false,
       };
+      if (!object) return;
       setMaskData(object.id, ui.canonicalFrame, result.width, result.height, best.data, {
         source: "model",
         segmentation,
@@ -477,6 +482,32 @@ export function Depth2D() {
         .join(",")})`,
     [],
   );
+
+  /**
+   * A clip with no measurement targets yet.
+   *
+   * This became reachable when targets stopped being a hardcoded list of five door objects.
+   * Rendering the brush UI here would invite painting a mask that belongs to nothing, so the
+   * pane says what is missing and where to fix it instead. Every hook above has already run,
+   * so this early return cannot change hook order.
+   */
+  if (!object) {
+    return (
+      <div className="pane measurement-canvas-pane">
+        <PaneControls
+          status="Idle"
+          elapsedMs={0}
+          paused={paused}
+          paneId="depth"
+          onPause={() => setPaused((value) => !value)}
+        />
+        <div className="pane-empty">
+          This clip has no measurement targets yet. Add one in the Objects pane — truths from
+          another clip do not transfer, so nothing is inherited by default.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="pane measurement-canvas-pane">

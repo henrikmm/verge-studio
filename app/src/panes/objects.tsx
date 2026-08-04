@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   composeUncertainty,
   fitErrorModel,
@@ -22,8 +22,11 @@ import { FIXTURE_SETTINGS, builtinRunId } from "../measurement/depth-field";
 import type { RunId } from "../lib/runs";
 import { useRuns } from "../lib/runs-store";
 import {
-  MEASUREMENT_OBJECTS,
   MIN_TRIALS_FOR_SPREAD,
+  addTarget,
+  measurementObjects,
+  removeTarget,
+  setActiveClip,
   activeMeasurementObject,
   addObservation,
   currentSittingId,
@@ -37,6 +40,7 @@ import {
   trialStats,
   trialsFor,
   useMeasurementUi,
+  type MeasurementMode,
   type MeasurementObservation,
   type MeasurementObject,
 } from "../measurement/measurement-store";
@@ -106,9 +110,28 @@ function formatDuration(ms: number): string {
   return seconds < 60 ? `${seconds.toFixed(0)}s` : `${Math.floor(seconds / 60)}m ${(seconds % 60).toFixed(0)}s`;
 }
 
-function doorFactor(observations: readonly MeasurementObservation[], runId: RunId): number {
-  const raw = objectMean(observations, "door-leaf", runId);
-  return Number.isFinite(raw) && raw > 0 ? 2.1 / raw : NaN;
+/**
+ * The clip's calibration target: the longest object whose truth is actually known.
+ *
+ * This was hardcoded to the door's 2.10 m. Longest wins because the same absolute endpoint
+ * error is a smaller fraction of a longer reference — clip B's door is 2.8x less fractional
+ * error than its table for the same slip (see PROGRESS.md, "The test videos").
+ */
+function calibrationTarget(targets: readonly MeasurementObject[]): MeasurementObject | undefined {
+  return targets
+    .filter((item) => item.truthM !== null && !item.availabilityNote)
+    .sort((a, b) => (b.truthM ?? 0) - (a.truthM ?? 0))[0];
+}
+
+function clipScaleFactor(
+  observations: readonly MeasurementObservation[],
+  runId: RunId,
+  targets: readonly MeasurementObject[],
+): number {
+  const target = calibrationTarget(targets);
+  if (!target || target.truthM === null) return NaN;
+  const raw = objectMean(observations, target.id, runId);
+  return Number.isFinite(raw) && raw > 0 ? target.truthM / raw : NaN;
 }
 
 function correctedValue(raw: number, factor: number): number {
@@ -157,7 +180,10 @@ function EvidenceRow({
   const ui = useMeasurementUi();
   const active = ui.activeObjectId === object.id;
   const stats = trialStats(ui.observations, object.id, runId);
-  const absError = Number.isFinite(stats.meanM) ? Math.abs(stats.meanM - object.truthM) : NaN;
+  const absError =
+    Number.isFinite(stats.meanM) && object.truthM !== null
+      ? Math.abs(stats.meanM - object.truthM)
+      : NaN;
   const thin = stats.n > 0 && stats.n < MIN_TRIALS_FOR_SPREAD;
   const budget = objectBudget(ui.observations, object.id, runId, model);
   const stated = statedUncertainty(budget);
@@ -173,7 +199,9 @@ function EvidenceRow({
         <b>{veil(ui.blind, formatM(stats.meanM))}</b>
         <small title={budget.basis}>
           {stats.n === 0
-            ? `truth ${object.truthM.toFixed(3)} m`
+            ? object.truthM === null
+              ? "no truth — ungradable"
+              : `truth ${object.truthM.toFixed(3)} m`
             : ui.blind
               ? `n${stats.n} · ${stats.sittingCount} sitting${stats.sittingCount === 1 ? "" : "s"}`
               : `|e| ${absError.toFixed(3)} · n${stats.n}${Number.isFinite(stated) ? ` · ±${stated.toFixed(3)}` : ""}`}
@@ -181,6 +209,114 @@ function EvidenceRow({
       </span>
       {thin && <span className="trial-flag" title={`${MIN_TRIALS_FOR_SPREAD} trials needed before the spread means anything`}>{stats.n}/{MIN_TRIALS_FOR_SPREAD}</span>}
     </button>
+  );
+}
+
+/**
+ * Add a measurement target to the active clip.
+ *
+ * The truth field is deliberately optional. Requiring one would make the app unusable on any
+ * scene the operator has not tape-measured, and would push people to type a guess — which is
+ * strictly worse than an honest "ungradable", because a guessed truth silently poisons the
+ * clip's scale factor and every calibrated reading derived from it.
+ */
+function AddTargetForm({
+  clipName,
+  existing,
+  suggestedFrame,
+  onAdd,
+}: {
+  clipName: string;
+  existing: readonly MeasurementObject[];
+  suggestedFrame: number;
+  onAdd: (target: Omit<MeasurementObject, "builtin">) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [definition, setDefinition] = useState("");
+  const [truth, setTruth] = useState("");
+  const [mode, setMode] = useState<MeasurementMode>("vertical_extent");
+
+  if (!open) {
+    return (
+      <button className="add-target-open" onClick={() => setOpen(true)}>
+        + Add target{clipName ? ` to ${clipName}` : ""}
+      </button>
+    );
+  }
+
+  const trimmedTruth = truth.trim();
+  const parsedTruth = trimmedTruth === "" ? null : Number(trimmedTruth);
+  const truthInvalid = parsedTruth !== null && (!Number.isFinite(parsedTruth) || parsedTruth <= 0);
+
+  return (
+    <div className="add-target">
+      <label>
+        NAME
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Doorway" />
+      </label>
+      <label>
+        DEFINITION
+        <input
+          value={definition}
+          onChange={(e) => setDefinition(e.target.value)}
+          placeholder="floor to lintel underside"
+        />
+      </label>
+      <label>
+        MODE
+        <select value={mode} onChange={(e) => setMode(e.target.value as MeasurementMode)}>
+          <option value="vertical_extent">vertical extent (own bottom → top)</option>
+          <option value="top_above_floor">top above the fitted floor</option>
+        </select>
+      </label>
+      <label>
+        TRUTH m
+        <input
+          value={truth}
+          onChange={(e) => setTruth(e.target.value)}
+          placeholder="optional — leave blank if untaped"
+        />
+      </label>
+      <small className="honesty-note">
+        Frame {suggestedFrame} will be this target's suggested frame. Without a truth the target
+        is measurable but never graded, and it cannot contribute to the clip's scale factor.
+      </small>
+      {truthInvalid && <div className="evidence-warning">Truth must be a positive number of metres, or blank.</div>}
+      <div className="evidence-actions">
+        <button
+          disabled={name.trim() === "" || truthInvalid}
+          onClick={() => {
+            const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+            let id = base || `target-${existing.length + 1}`;
+            // Ids key masks and trials, so a collision would merge two different objects'
+            // evidence. Suffix until unique rather than refusing the name.
+            let suffix = 2;
+            while (existing.some((item) => item.id === id)) id = `${base}-${suffix++}`;
+            onAdd({
+              id,
+              code: `T${existing.length + 1}`,
+              name: name.trim(),
+              definition: definition.trim() || "operator-defined target",
+              truthM: parsedTruth,
+              mode,
+              suggestedFrame,
+              maskInstruction:
+                mode === "vertical_extent"
+                  ? "Paint the object continuously from its lower endpoint to its upper endpoint."
+                  : "Paint the top surface and a visible floor patch; a connecting stroke is fine.",
+            });
+            setOpen(false);
+            setName("");
+            setDefinition("");
+            setTruth("");
+          }}
+        >
+          Add
+        </button>
+        <button onClick={() => setOpen(false)}>Cancel</button>
+      </div>
+    </div>
   );
 }
 
@@ -198,6 +334,15 @@ export function ObjectsPane() {
    */
   const runId = String(fixture?.params.runId ?? DEFAULT_RUN_ID) as RunId;
   const activeRun = runs.runs.find((item) => item.id === runId);
+
+  /**
+   * Targets follow the CLIP the active run came from. Selecting a run from a different video
+   * therefore swaps the whole target list rather than grading a new scene against door truths.
+   */
+  useEffect(() => {
+    if (activeRun?.clipSha256) setActiveClip(activeRun.clipSha256);
+  }, [activeRun?.clipSha256]);
+  const targets = measurementObjects(ui.clipKey);
   const currentValue = <T,>(nodeId: string, portId: string): T | undefined => {
     const runtime = graph.runtime[nodeId];
     if (runtime?.status !== "ok" || isNodeStale(graph, nodeId)) return undefined;
@@ -208,21 +353,21 @@ export function ObjectsPane() {
   const measurement = currentValue<MeasurementValue>(MEASURE_HEIGHT_ID, "measurement");
   const measurementError = graph.runtime[MEASURE_HEIGHT_ID]?.error;
 
-  const factor = doorFactor(ui.observations, runId);
+  const factor = clipScaleFactor(ui.observations, runId, targets);
   const corrected = measurement ? correctedValue(measurement.rawM, factor) : NaN;
   const derivedMonitorTop = objectMean(ui.observations, "table-top", runId) + objectMean(ui.observations, "monitor-own", runId);
   const currentRunObservations = ui.observations.filter((item) => item.runId === runId);
-  const activeStats = trialStats(ui.observations, object.id, runId);
-  const activeTrials = trialsFor(ui.observations, object.id, runId);
-  const repeatedMasks = duplicateMaskTrialIds(ui.observations, object.id, runId);
+  const activeStats = trialStats(ui.observations, object?.id ?? "", runId);
+  const activeTrials = trialsFor(ui.observations, object?.id ?? "", runId);
+  const repeatedMasks = duplicateMaskTrialIds(ui.observations, object?.id ?? "", runId);
   const automaticStats = segmentationAttemptStats(
-    ui.segmentationAttempts.filter((attempt) => attempt.objectId === object.id),
+    ui.segmentationAttempts.filter((attempt) => attempt.objectId === object?.id),
   );
   const rawDa3Text = measurement
     ? formatM(measurement.rawM)
     : selection?.segmentation && !selection.segmentation.accepted
       ? "LOCKED · ACCEPT MASK"
-      : selection?.segmentation && object.availabilityNote
+      : selection?.segmentation && object?.availabilityNote
         ? "UNAVAILABLE · OCCLUDED ENDPOINT"
         : "—";
 
@@ -230,12 +375,17 @@ export function ObjectsPane() {
   // door outvote a once-measured table and shrink the residual by repetition alone.
   const errorModelPoints = useMemo(
     () =>
-      MEASUREMENT_OBJECTS.map((item) => {
-        const stats = trialStats(ui.observations, item.id, runId);
-        const spreads = trialsFor(ui.observations, item.id, runId).map((trial) => trial.internalSpreadM);
-        return { id: item.id, truth: item.truthM, predicted: stats.meanM, uncertainty: mean(spreads) };
-      }).filter((point) => Number.isFinite(point.predicted)),
-    [runId, ui.observations],
+      targets
+        // A target with no tape truth cannot constrain a scale fit. Including it with a zero
+        // would drag the slope toward the origin and manufacture a bias that is not there.
+        .filter((item): item is MeasurementObject & { truthM: number } => item.truthM !== null)
+        .map((item) => {
+          const stats = trialStats(ui.observations, item.id, runId);
+          const spreads = trialsFor(ui.observations, item.id, runId).map((trial) => trial.internalSpreadM);
+          return { id: item.id, truth: item.truthM, predicted: stats.meanM, uncertainty: mean(spreads) };
+        })
+        .filter((point) => Number.isFinite(point.predicted)),
+    [runId, targets, ui.observations],
   );
 
   // The clip's scale, fitted over every graded object in this setting. Two points minimum:
@@ -255,34 +405,33 @@ export function ObjectsPane() {
         model: clipModel,
       })
     : activeStats.n > 0
-      ? objectBudget(ui.observations, object.id, runId, clipModel)
+      ? objectBudget(ui.observations, object?.id ?? "", runId, clipModel)
       : undefined;
 
   const resolutionRows = useMemo(
     () =>
       FIXTURE_SETTINGS.map((setting) => {
         const candidate = builtinRunId(setting);
-        const holdouts = MEASUREMENT_OBJECTS.filter(
-          (item) => item.id !== "door-leaf" && !item.availabilityNote,
-        )
+        const calibration = calibrationTarget(targets);
+        const holdouts = targets
+          .filter(
+            (item): item is MeasurementObject & { truthM: number } =>
+              item.truthM !== null && item.id !== calibration?.id && !item.availabilityNote,
+          )
           .map((item) => ({ item, raw: objectMean(ui.observations, item.id, candidate) }))
           .filter((entry) => Number.isFinite(entry.raw));
-        const calibration = doorFactor(ui.observations, candidate);
+        const factor = clipScaleFactor(ui.observations, candidate, targets);
         const rawMae = mean(holdouts.map(({ item, raw }) => Math.abs(raw - item.truthM)));
-        const correctedMae = Number.isFinite(calibration)
-          ? mean(
-              holdouts.map(({ item, raw }) =>
-                Math.abs(correctedValue(raw, calibration) - item.truthM),
-              ),
-            )
+        const correctedMae = Number.isFinite(factor)
+          ? mean(holdouts.map(({ item, raw }) => Math.abs(correctedValue(raw, factor) - item.truthM)))
           : NaN;
-        return { setting, views: holdouts.length, rawMae, correctedMae, calibration };
+        return { setting, views: holdouts.length, rawMae, correctedMae, factor };
       }),
-    [ui.observations],
+    [targets, ui.observations],
   );
 
   const capture = () => {
-    if (!measurement || !selection || !ground) return;
+    if (!object || !measurement || !selection || !ground) return;
     addObservation({
       objectId: object.id,
       runId,
@@ -381,15 +530,47 @@ export function ObjectsPane() {
         </section>
 
         <section className="object-list" aria-label="Measurement objects">
-          {MEASUREMENT_OBJECTS.map((item) => (
+          {targets.map((item) => (
             <EvidenceRow key={item.id} object={item} runId={runId} model={clipModel} />
           ))}
+          <AddTargetForm
+            clipName={activeRun?.clipName ?? ""}
+            existing={targets}
+            suggestedFrame={ui.canonicalFrame}
+            onAdd={(target) => {
+              addTarget(target);
+              void runAuto();
+            }}
+          />
         </section>
 
+        {!object ? (
+          <section className="evidence-card">
+            <div className="evidence-title">
+              <span><b>No targets</b></span>
+            </div>
+            <p>
+              This clip has none yet. Truths do not transfer between clips — metric scale is
+              per-clip — so nothing is inherited from the door set. Add a target above; a tape
+              truth is optional, and without one the target is measurable but ungradable.
+            </p>
+          </section>
+        ) : (
         <section className="evidence-card">
           <div className="evidence-title">
             <span><b>{object.code}</b> {object.name}</span>
-            <span className="truth">truth {object.truthM.toFixed(3)} m</span>
+            <span className="truth">
+              {object.truthM === null ? "no truth" : `truth ${object.truthM.toFixed(3)} m`}
+            </span>
+            {!object.builtin && (
+              <button
+                className="trial-drop"
+                title="Remove this target. Trials already recorded against it stay in the store."
+                onClick={() => removeTarget(object.id)}
+              >
+                ×
+              </button>
+            )}
           </div>
           <p>{object.definition}</p>
           <div className="reading-grid">
@@ -419,7 +600,10 @@ export function ObjectsPane() {
                 <span>ABSTAIN / FAIL</span><b>{automaticStats.abstained} / {automaticStats.failed}</b>
               </>
             )}
-            <span>{object.id === "door-leaf" ? "CALIBRATION TARGET" : "DOOR-SCALE CHECK"}</span><b>{veil(ui.blind, formatM(corrected))}</b>
+            <span>
+              {object.id === calibrationTarget(targets)?.id ? "CALIBRATION TARGET" : "SCALE-CHECKED"}
+            </span>
+            <b>{veil(ui.blind, formatM(corrected))}</b>
           </div>
 
           {/*
@@ -462,8 +646,12 @@ export function ObjectsPane() {
           </div>
           {measurementError && <div className="evidence-warning">{measurementError}</div>}
           {object.availabilityNote && <div className="evidence-warning">{object.availabilityNote}</div>}
-          {!Number.isFinite(factor) && object.id !== "door-leaf" && (
-            <div className="evidence-warning">Record B1 in this setting before treating the corrected number as evidence.</div>
+          {!Number.isFinite(factor) && object.id !== calibrationTarget(targets)?.id && (
+            <div className="evidence-warning">
+              {calibrationTarget(targets)
+                ? `Record ${calibrationTarget(targets)?.code} on this run before treating the corrected number as evidence.`
+                : "No target in this clip has a tape truth, so there is no scale reference at all. The raw reading stands alone."}
+            </div>
           )}
           {object.id === "monitor-top" && (
             <div className="composition-check">
@@ -531,7 +719,10 @@ export function ObjectsPane() {
                     <span className="mono">
                       {veil(
                         ui.blind,
-                        (trial.rawM - object.truthM >= 0 ? "+" : "") + (trial.rawM - object.truthM).toFixed(3),
+                        object.truthM === null
+                          ? "—"
+                          : (trial.rawM - object.truthM >= 0 ? "+" : "") +
+                            (trial.rawM - object.truthM).toFixed(3),
                       )}
                     </span>
                     <span className="mono">
@@ -604,10 +795,11 @@ export function ObjectsPane() {
             now carry this id. A separated repeat means reloading later, not recording again.
           </small>
         </section>
+        )}
 
         <section className="resolution-card">
           <h3>Resolution vs frame-count verdict</h3>
-          <div className="resolution-head"><span>Setting</span><span>Holdouts</span><span>Raw MAE</span><span>Door-scaled</span></div>
+          <div className="resolution-head"><span>Setting</span><span>Holdouts</span><span>Raw MAE</span><span>Scaled</span></div>
           {resolutionRows.map((row) => (
             <div className="resolution-row" key={row.setting}>
               <span>{row.setting}</span>

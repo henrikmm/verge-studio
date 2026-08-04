@@ -71,15 +71,35 @@ export interface MeasurementObject {
   code: string;
   name: string;
   definition: string;
-  truthM: number;
+  /**
+   * Tape truth, or null when there is none.
+   *
+   * Nullable since 2026-08-04. Targets used to be a hardcoded list of five door-clip objects
+   * whose truths were all known, so "measure something without a reference" was unrepresentable
+   * — which meant a new clip inherited the door's 2.100 m and graded against it. A target with
+   * no truth is measurable but ungradable, and every aggregate below has to say so rather than
+   * quietly treating null as zero.
+   */
+  truthM: number | null;
   mode: MeasurementMode;
   suggestedFrame: number;
   maskInstruction: string;
   availabilityNote?: string;
   maskOwnerId?: string;
+  /** Built-in targets ship with the app and cannot be edited or deleted. */
+  builtin?: boolean;
 }
 
-export const MEASUREMENT_OBJECTS: readonly MeasurementObject[] = [
+/**
+ * Targets belong to a CLIP, not to the app.
+ *
+ * Metric scale does not transfer between clips (see PROGRESS.md, M3 decision 6), so a truth
+ * measured in one video is meaningless in another. Sets are keyed by the source clip's content
+ * digest; `BUILTIN_DOOR_CLIP` is the key the built-in run records carry.
+ */
+export const BUILTIN_DOOR_CLIP = "builtin-door";
+
+export const DOOR_TARGETS: readonly MeasurementObject[] = [
   {
     id: "door-leaf",
     code: "B1",
@@ -89,6 +109,7 @@ export const MEASUREMENT_OBJECTS: readonly MeasurementObject[] = [
     mode: "vertical_extent",
     suggestedFrame: 1,
     maskInstruction: "Paint the door leaf continuously from its bottom edge to its top edge.",
+    builtin: true,
   },
   {
     id: "table-top",
@@ -99,6 +120,7 @@ export const MEASUREMENT_OBJECTS: readonly MeasurementObject[] = [
     mode: "top_above_floor",
     suggestedFrame: 231,
     maskInstruction: "Paint the tabletop edge and a visible floor patch; a connecting stroke is fine.",
+    builtin: true,
   },
   {
     id: "pc-tower",
@@ -109,6 +131,7 @@ export const MEASUREMENT_OBJECTS: readonly MeasurementObject[] = [
     mode: "vertical_extent",
     suggestedFrame: 187,
     maskInstruction: "Paint the tower continuously from its tabletop contact to its top.",
+    builtin: true,
   },
   {
     id: "monitor-own",
@@ -120,6 +143,7 @@ export const MEASUREMENT_OBJECTS: readonly MeasurementObject[] = [
     suggestedFrame: 219,
     maskInstruction: "Paint from the stand/table contact to the top of the screen.",
     availabilityNote: "The laptop occludes the stand/table contact in the recorded clip. Do not grade B4 without another view.",
+    builtin: true,
   },
   {
     id: "monitor-top",
@@ -130,6 +154,7 @@ export const MEASUREMENT_OBJECTS: readonly MeasurementObject[] = [
     mode: "top_above_floor",
     suggestedFrame: 219,
     maskInstruction: "Paint the screen top and a visible floor patch; a connecting stroke is fine.",
+    builtin: true,
   },
 ] as const;
 
@@ -235,6 +260,8 @@ export interface MeasurementUiState {
    */
   blind: boolean;
   activeObjectId: string;
+  /** Clip whose target set is active. */
+  clipKey: string;
   canonicalFrame: number;
   brushSize: number;
   erasing: boolean;
@@ -277,7 +304,73 @@ export function currentSittingId(): string {
   return SITTING_ID;
 }
 
-const first = MEASUREMENT_OBJECTS[0];
+/**
+ * Target sets, one per source clip.
+ *
+ * The built-in door set is seeded and cannot be edited; every other clip starts empty and is
+ * filled in by the operator. Keeping them separate is not tidiness — a truth from another clip
+ * applied here would silently produce a calibration factor that means nothing.
+ */
+const targetSets: Record<string, MeasurementObject[]> = {
+  [BUILTIN_DOOR_CLIP]: DOOR_TARGETS.map((target) => ({ ...target })),
+};
+
+/**
+ * Which clip's targets the panes are showing. Mirrored into `state.clipKey` so it is part of
+ * the observable snapshot — a pane must re-render when the active run changes clip.
+ */
+let activeClip = BUILTIN_DOOR_CLIP;
+
+export function measurementObjects(clip = activeClip): readonly MeasurementObject[] {
+  return targetSets[clip] ?? [];
+}
+
+/** Kept for the built-in door set, which several tests and the resolution table refer to. */
+export const MEASUREMENT_OBJECTS = DOOR_TARGETS;
+
+export function activeClipKey(): string {
+  return activeClip;
+}
+
+/**
+ * Point the panes at a clip's targets. Creates an empty set for an unknown clip rather than
+ * falling back to the door's — inheriting another clip's truths is the failure this exists to
+ * prevent.
+ */
+export function setActiveClip(clip: string): void {
+  const key = clip || BUILTIN_DOOR_CLIP;
+  if (activeClip === key) return;
+  activeClip = key;
+  state.clipKey = key;
+  if (!targetSets[key]) targetSets[key] = [];
+  const targets = targetSets[key];
+  if (!targets.some((item) => item.id === state.activeObjectId)) {
+    state.activeObjectId = targets[0]?.id ?? "";
+    if (targets[0]) state.canonicalFrame = targets[0].suggestedFrame;
+  }
+  commit();
+}
+
+export function addTarget(target: Omit<MeasurementObject, "builtin">, clip = activeClip): void {
+  const targets = targetSets[clip] ?? (targetSets[clip] = []);
+  if (targets.some((item) => item.id === target.id)) return;
+  targets.push({ ...target });
+  state.activeObjectId = target.id;
+  state.canonicalFrame = target.suggestedFrame;
+  commit();
+}
+
+export function removeTarget(id: string, clip = activeClip): void {
+  const targets = targetSets[clip];
+  if (!targets) return;
+  const target = targets.find((item) => item.id === id);
+  if (!target || target.builtin) return;
+  targetSets[clip] = targets.filter((item) => item.id !== id);
+  if (state.activeObjectId === id) state.activeObjectId = targetSets[clip][0]?.id ?? "";
+  commit();
+}
+
+const first = DOOR_TARGETS[0];
 
 function encodeMask(mask: MaskRecord): number[] {
   const runs: number[] = [];
@@ -365,12 +458,22 @@ function restoreSession(): Partial<MeasurementUiState> {
     const saved = JSON.parse(raw) as {
       blind?: boolean;
       activeObjectId?: string;
+      activeClip?: string;
+      targetSets?: Record<string, MeasurementObject[]>;
       canonicalFrame?: number;
       confidencePercentile?: number;
       masks?: Record<string, EncodedMask>;
       observations?: MeasurementObservation[];
       segmentationAttempts?: SegmentationAttempt[];
     };
+    // Restore operator-authored sets, but never let a stored copy shadow the built-in door
+    // definitions — those are code, and an old copy would silently freeze a stale truth.
+    for (const [clip, targets] of Object.entries(saved.targetSets ?? {})) {
+      if (clip === BUILTIN_DOOR_CLIP) continue;
+      targetSets[clip] = targets.map((target) => ({ ...target, builtin: false }));
+    }
+    if (saved.activeClip && targetSets[saved.activeClip]) activeClip = saved.activeClip;
+
     return {
       blind: saved.blind ?? false,
       activeObjectId: saved.activeObjectId,
@@ -391,6 +494,7 @@ const restored = restoreSession();
 const state: MeasurementUiState = {
   blind: false,
   activeObjectId: first.id,
+  clipKey: activeClip,
   canonicalFrame: first.suggestedFrame,
   brushSize: 28,
   erasing: false,
@@ -449,11 +553,15 @@ function persistSession(): void {
     JSON.stringify({
       blind: state.blind,
       activeObjectId: state.activeObjectId,
+      activeClip,
       canonicalFrame: state.canonicalFrame,
       confidencePercentile: state.confidencePercentile,
       masks,
       observations: state.observations,
       segmentationAttempts: state.segmentationAttempts,
+      // Operator-authored targets are evidence definitions, not preferences: losing them
+      // orphans every trial recorded against them.
+      targetSets,
     }),
   );
 }
@@ -480,12 +588,20 @@ export function getMeasurementUi(): MeasurementUiState {
   return state;
 }
 
-export function activeMeasurementObject(): MeasurementObject {
-  return MEASUREMENT_OBJECTS.find((item) => item.id === state.activeObjectId) ?? first;
+/**
+ * The active target, resolved within the ACTIVE CLIP's set.
+ *
+ * Returns undefined when a clip has no targets yet — a real state now that a new video starts
+ * with an empty set, and one the panes must render as "add a target" rather than silently
+ * falling back to the door's B1.
+ */
+export function activeMeasurementObject(): MeasurementObject | undefined {
+  const targets = measurementObjects();
+  return targets.find((item) => item.id === state.activeObjectId) ?? targets[0];
 }
 
 export function setActiveMeasurementObject(objectId: string): void {
-  const object = MEASUREMENT_OBJECTS.find((item) => item.id === objectId);
+  const object = measurementObjects().find((item) => item.id === objectId);
   if (!object) return;
   state.activeObjectId = object.id;
   state.canonicalFrame = object.suggestedFrame;
@@ -528,7 +644,7 @@ export function setMeasurementZoom(value: number): void {
 }
 
 function maskKey(objectId = state.activeObjectId, frame = state.canonicalFrame): string {
-  const object = MEASUREMENT_OBJECTS.find((item) => item.id === objectId);
+  const object = measurementObjects().find((item) => item.id === objectId);
   return `${object?.maskOwnerId ?? objectId}:${frame}`;
 }
 
@@ -939,7 +1055,7 @@ export function exportMeasurementSession(): string {
     ]),
   );
   const runIds = [...new Set(state.observations.map((item) => item.runId))];
-  const repeatability = MEASUREMENT_OBJECTS.flatMap((object) =>
+  const repeatability = measurementObjects().flatMap((object) =>
     runIds
       .map((runId) => ({ objectId: object.id, code: object.code, runId, ...trialStats(state.observations, object.id, runId) }))
       .filter((row) => row.n > 0),
@@ -952,7 +1068,7 @@ export function exportMeasurementSession(): string {
       // Which sittings the trials came from, so a reader can tell a repeatability claim from
       // three measurements taken in the same five minutes.
       sittings: [...new Set(state.observations.map((item) => item.sittingId ?? LEGACY_SITTING_ID))],
-      definitions: MEASUREMENT_OBJECTS,
+      definitions: measurementObjects(),
       // Every trial, each carrying the mask it was measured from. This is the evidence.
       observations: state.observations,
       segmentationAttempts: state.segmentationAttempts,
