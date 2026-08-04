@@ -6,7 +6,10 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-04 (fourth session) · **M3c fixture/UX correction after operator review.**
+Last updated: 2026-08-04 (fifth session) · **P2: cloud cost safety, a run registry, per-clip
+measurement targets, pane focus/hide, and a neutral colour system — see the P2 section.**
+
+Previously: 2026-08-04 (fourth session) · **M3c fixture/UX correction after operator review.**
 Pinned SlimSAM now runs on every fixture target rather than silently disabling Segment outside B1;
 the required acceptance action wraps visibly in a narrow pane, locked RAW DA3 explains itself, and
 timing separates one-time setup, per-frame encoding, last-click decode and total operator time. B1
@@ -955,18 +958,176 @@ which this task exists to close. Deliberately scheduled after M3 by user decisio
    is for. Fix: parse `side_data` rotation and swap the planning dimensions when |rotation| is
    90 or 270.
 
+## P2 — Cloud safety, runs, per-clip targets, panes, colour ✅ 2026-08-04 (fifth session)
+
+Five tracks, all local, **no cloud resource created and `server/` untouched** (the image tag
+`src-3038078518c96bb0` still matches the tree — verified against the registry this session).
+Driven by an operator review that asked five questions; the answers are what shaped the work.
+
+### The five gaps that prompted it
+
+1. **The video drop target existed but was hidden.** It is the Frame Source node card, and the
+   Graph pane opens in "Measurement view", which filters that node out. You had to click
+   **Full graph** before the only drop target was on screen. The local half was verified working
+   this session by driving the routes directly: `POST /api/upload` → rotation-aware probe
+   (1080×1920, `rotation: 270`), `POST /api/extract` → 22 frames @ 10 fps in **0.43 s**.
+2. **The app quietly prevented Cloud Run scale-down.** The inspector polled `/gpu` every 4 s
+   forever. Against a real service that is a request every 4 s, and an instance with continuous
+   traffic never scales to zero — so leaving the tab open billed indefinitely.
+3. **"Release" did not stop billing** but its docstring implied it did. It frees VRAM; only
+   deleting the service stops the meter, and there was no in-app way to do that.
+4. **The Objects pane was hardcoded to the door's B1–B5**, with door truths and door frame
+   indices. A new clip inherited 2.100 m. `Record trial` was disabled for anything but the three
+   fixture directories, because a live run had no stable identity to key a trial to.
+5. **Nothing could save or delete a run.** `save-run.sh` was the whole story, run by hand during
+   the exact window when a GPU instance is billing.
+
+### Track A — cloud control plane ✅
+
+- [x] **`lib/cloud-store.ts`** owns the GPU base at RUNTIME. `VITE_INFER_BASE` used to fix it at
+      dev-server start, so pointing at a real service meant killing Vite and restarting — a bad
+      property for the one setting that decides whether a GPU is billing. It now seeds a Connect
+      field. 10 unit tests pin the cost-safety properties.
+- [x] **Idle polling is gone against a remote.** Polling is demand-driven: during a run, during
+      warm-up, or on Refresh. The local mock keeps its lively idle poll — nothing to bill.
+      **Verified in-browser: 38 s connected, still exactly 1 request.** Under the old code that
+      would have been ~10, and the instance would never have idled out.
+- [x] **Instance meter** in the status bar and inspector, ticking from first contact. It is a
+      local clock; watching the meter never feeds the meter.
+- [x] **No currency figure, deliberately** — `COST_BASIS` states why: the app has no billing
+      data, and the true lifetime starts before our first contact. DESIGN.md honesty rule 1.
+- [x] **Release model / Delete service split.** Delete runs `scripts/teardown.sh` through a
+      dev-only `POST /api/teardown`, behind a confirm dialog, with `PURGE_IMAGE` forced to 0 so
+      no button can ever throw away the 12 GB image. **Exercised for real this session** — 0
+      services, image kept, repository `verge` intact.
+- [x] **`isBilling` ignores the current connection on purpose.** Disconnecting points the app
+      elsewhere; the instance keeps running. Reporting "not billing" there would be a false
+      all-clear at the most dangerous moment. The status bar says `disconnected, still alive`.
+- [x] **`beforeunload` guard** when an instance was ever reached and not deleted.
+- [x] **The dead `lastRun` chip is fixed** — nothing ever called `update({ lastRun })`, so the
+      status bar's frames/GPU chip never rendered and the cost label was pinned at "cloud: none"
+      even mid-run. `DA3Depth` sets it now, which is the only place a real run happens.
+
+### Track B — runs as first-class objects ✅
+
+- [x] **`~/verge-runs`, outside the repository** (user decision), so a 135 MB artifact can never
+      be staged by accident. Served through `GET /api/run-artifact` with the same prefix guard
+      `/api/frame` uses, Range-aware because the npz is ~108 MB.
+- [x] **Transient by default.** A completed cloud run registers a manifest stub — selectable
+      immediately, nothing large on disk — until an explicit **Save**, which shells out to
+      `save-run.sh` rather than reimplementing its range-chunked, sha256-verified download.
+- [x] **Runs pane**: per-run and total disk size, Save with a byte estimate, Delete, and the
+      three door fixtures as read-only built-ins that cannot be deleted.
+- [x] **`loadFixtureDepthField(setting)` → `loadRunDepthField(run)`.** Recorded evidence is no
+      longer three hardcoded door directories.
+- [x] **Measurements re-keyed from `setting` to `runId`** (schema **0.5.0**), which is what
+      finally lets a saved cloud run hold trials. Migration mapping the three settings onto
+      `door-<setting>` is pinned by two tests — getting it wrong would silently split the nine
+      P0 trials into orphan groups and destroy the repeatability study.
+- [x] **`Record trial` now requires a persisted run**, not a door fixture. A trial against a
+      transient run would reference evidence that dies with the instance.
+
+### Track C — per-clip measurement targets ✅
+
+- [x] **Targets keyed by clip sha256.** An unknown clip gets an EMPTY set, never the door's —
+      metric scale does not transfer between clips, so an inherited 2.100 m would produce a
+      confident, wrong calibration factor. 6 tests, including that isolation directly.
+- [x] **`truthM` is nullable.** Requiring a truth would make the app unusable on any untaped
+      scene and would push people to type a guess, which is strictly worse than an honest
+      "ungradable" — a guessed truth poisons the clip scale factor and every calibrated reading.
+- [x] **Add Target flow** (name, definition, mode, optional truth, frame from the scrubber),
+      with id collision suffixing so two targets can never merge each other's evidence.
+- [x] **The calibration target is now the longest KNOWN truth in the clip**, not literally the
+      door. On the door set that selects B1 and behaves exactly as before.
+- [x] **Honest degradation**: targets without truths are excluded from the error-model fit
+      (a zero would drag the slope toward the origin and manufacture a bias), and a clip with
+      no truths at all says so instead of showing NaN.
+
+### Track D — panes ✅
+
+- [x] **Focus** = `panel.api.maximize()`. Non-destructive: Dockview's `hideAllViewsBut` flips
+      grid child visibility, so the other panes yield their space but stay MOUNTED — no WebGL
+      teardown, no re-uploading a million points — and it round-trips through toJSON/fromJSON.
+- [x] **Hide** = `close()`, plus a status-bar **view bar** to bring a pane back. Dockview
+      deliberately omits `setVisible` from `DockviewPanelApi`, so there is no supported hide
+      that does not unmount; reaching into the private gridview would break on upgrade.
+- [x] **Layout persistence** with Reset, and a custom tab giving every pane both verbs
+      (double-click = focus, ✕ = hide).
+- [x] Verified in-browser: hide reflows the survivors, restore lands in the right place, focus
+      fills the window without remounting, Escape exits, and all of it survives a reload.
+
+### Three real bugs found and fixed while doing it
+
+1. ⚠️ **Dockview's grid went stale after `fromJSON`.** It restores the grid at the pixel size it
+   was SAVED at, and the auto-resize observer only reacts to later changes. Measured: the dock
+   reported 1400×825 while its groups still summed to 1280×695. Fixed by re-laying out against
+   the real container after any restore, plus a ResizeObserver as a backstop.
+2. ⚠️ **The graph rendered as a thumbnail in the corner** — a long-standing symptom with two
+   causes. React Flow's internal viewport was stale at **500×55** (solved backwards from its own
+   `getViewportForBounds` output), so every `fitView` was computed against a box that no longer
+   existed and then clamped to `minZoom`. And an animated `setViewport` is a d3 transition:
+   successive refits interrupted each other and the promise was measured **never settling**. The
+   fit is now computed from the node positions we own and applied with no transition duration.
+3. ⚠️ **A custom Dockview tab silently breaks click-to-activate**, because it replaces the
+   default tab that normally calls `setActive()`. Caught in-browser: clicking Inspector did
+   nothing. Fixed, and worth remembering before adding any other custom Dockview renderer.
+
+### Track E — colour ✅
+
+- [x] **Green is gone; hue no longer encodes status.** State rides a neutral `--emph*` ramp plus
+      a **status glyph** (`●` current · `◐` working · `○` idle · `▲` failure), so state survives
+      desaturation and a grayscale screenshot. Amber stays for stale/attention; error red is
+      desaturated to `#b4574f` and reserved for hard failure; `--slider` red stays because it is
+      the one red the Sentinel reference uses and it marks *controls*, not state.
+- [x] **The eight typed port hues are kept** — they are a documented type legend and a wire's
+      colour tells you what flows through it.
+- [x] **Two deliberate exceptions**, both because the mark sits on photographic content: the 2D
+      mask overlay (clip B's room is white walls — a neutral mask would vanish on the door) and
+      the port hues. Documented in `docs/DESIGN.md`, whose token table and checklist were updated
+      in the same commit, with a new item 1b: no status may be signalled by hue alone.
+
+### Verification
+
+`verify.sh` green with **250 tests** (was 232) including the server-contract check under a venv;
+production Vite build green; every track driven in the browser with screenshots. `npm audit`
+still reports the two inherited Transformers.js `sharp` advisories — unchanged, and the
+repository audit must not be described as clean.
+
+### NOT done — carry forward
+
+- [ ] **The live-run → measurement seam is still unverified against real hardware.** M2b proved
+      `FrameSource → DA3 → PointCloud → Viewer`; the measurement branch arrived in M3b and has
+      only ever been driven from recorded fixtures. Registering, saving and then measuring a
+      genuine cloud run has never happened end to end.
+- [ ] **The 24 MiB range-chunked NPZ fetch has still never run against a live Cloud Run
+      instance.** The new `/api/run-artifact` route honours Range and is exercised locally, but
+      the cloud path is the one that matters and it remains untested since implementation.
+- [ ] **`deploy.sh`'s build-skip branch has still never executed.** The tag matches the tree, so
+      the next deploy is its first real test. Budget for it missing.
+- [ ] **One warm cloud session would close all three at once**: connect → warm → run the 2 s clip
+      → register → save → delete run → teardown. Batch it; do not spend a cold start on less.
+- [ ] Edge selection/deletion in the graph is still broken (2026-08-04 audit bug 1) — untouched.
+- [ ] Rewiring by port drag is still unverified — needs a human hand.
+- [ ] `$TMPDIR/verge-uploads` and `verge-frames` still have no cleanup; every dropped video and
+      every extraction accumulates.
+
 ## M4 — Productization + evidence hardening ⬜
 
 - [x] ~~Remove dormant `infer_gs`, splat export types, UI checkbox and unused splat port/type~~ —
       **app side done 2026-08-04** (`InferParams.inferGs`, the `gs_ply`/`gs_video` artifact kinds,
       the checkbox and the `splat` port type/colour are gone). `server/` keeps its `infer_gs`
       field on purpose; see the standing constraints at the top.
+- [x] ~~Explicit Save action / "persist only on Save"~~ — **done 2026-08-04 by P2**: runs are
+      transient by default and persist to `~/verge-runs` only on an explicit Save, with Delete
+      and a disk-size readout beside it.
+- [x] ~~Per-session cost accounting~~ — **partially done 2026-08-04**: the instance-alive meter
+      is real and measured. A currency figure is still deliberately absent; see `COST_BASIS`.
 - [ ] Compact `mini_npz` and/or transient object storage + signed URLs; verify live browser fetch
 - [x] ~~Tie every recorded result to reproducible mask evidence and retain repeat trials~~ —
       done by P0 on 2026-08-04; each trial carries its own RLE mask and digest.
 - [x] ~~Rename/remove the misleading Recompute action~~ — **done 2026-08-04**: it is now
       **"Rebuild measurement"** with a tooltip stating that DA3 is not run and nothing is billed.
-- [ ] Per-session/per-node cost accounting
+- [ ] Per-node cost attribution (the per-session instance meter shipped in P2)
 
 ---
 
