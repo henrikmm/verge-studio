@@ -30,7 +30,6 @@ export const da3DepthSpec: NodeSpec = {
     processRes: 504,
     processResMethod: "upper_bound_resize",
     refViewStrategy: "middle",
-    inferGs: false,
     maxFrames: DEFAULT_MAX_FRAMES,
   },
   controls: [
@@ -56,7 +55,6 @@ export const da3DepthSpec: NodeSpec = {
       ],
     },
     { kind: "slider", key: "maxFrames", label: "Max frames", min: 2, max: 144 },
-    { kind: "checkbox", key: "inferGs", label: "Splats (infer_gs)" },
   ],
   execute: async ({ inputs, params }) => {
     const frames = inputs.frames?.value as FramesValue | undefined;
@@ -69,7 +67,6 @@ export const da3DepthSpec: NodeSpec = {
       processRes: Number(params.processRes),
       processResMethod: params.processResMethod as ProcessResMethod,
       refViewStrategy: params.refViewStrategy as RefViewStrategy,
-      inferGs: Boolean(params.inferGs),
       maxFrames: Number(params.maxFrames),
     });
 

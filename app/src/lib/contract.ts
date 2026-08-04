@@ -3,6 +3,12 @@
  *
  * Mirrors `server/contract.py` field for field — change both together.
  * Defaults are the verified upstream values; see docs/SOURCES.md.
+ *
+ * ONE DELIBERATE DIVERGENCE (2026-08-04): the server still declares `infer_gs: bool = False`
+ * and the `gs_ply` / `gs_video` artifact kinds. Gaussian splats were dropped from the roadmap
+ * — no measurement node consumes them — so the client no longer sends or understands them.
+ * The server side is left alone on purpose: editing `server/` changes the image source hash
+ * and forces a ~20 min rebuild for dead code. It has a default, so omitting the field is safe.
  */
 
 export const SCHEMA_VERSION = "verge.infer-manifest/0.1.0";
@@ -51,12 +57,34 @@ export const DEFAULT_MAX_FRAMES = 112;
  * contaminated data implied — which is why the real ceiling landed at ~144 rather
  * than the predicted ~110.
  */
-export const VRAM_MEASUREMENTS: ReadonlyArray<{ frames: number; peakBytes: number }> = [
+const GIB = 1_073_741_824;
+
+/** The rungs exactly as measured, in frame order. */
+const MEASURED_DRIVER_PEAKS: ReadonlyArray<{ frames: number; peakBytes: number }> = [
   { frames: 32, peakBytes: 15_294_529_536 },
   { frames: 64, peakBytes: 18_186_502_144 },
   { frames: 112, peakBytes: 22_848_471_040 },
   { frames: 128, peakBytes: 23_561_502_720 },
+  // The 144 rung was overwritten by the sweep-merge bug and recovered from console output, so
+  // only its GiB figure survives (`"recovered": true`, null peak_bytes in the JSON). Derived
+  // here rather than back-computed to fake byte precision that was genuinely lost.
+  { frames: 144, peakBytes: Math.round(21.88 * GIB) },
 ];
+
+/**
+ * The table the UI interpolates, forced non-decreasing.
+ *
+ * 144 measures LOWER than 128 (21.88 vs 21.94 GiB). VRAM did not fall: the driver figure
+ * includes the CUDA context and allocator reserve, so past ~21.5 GiB it is a plateau against
+ * the 22.03 GiB device limit with measurement scatter on top, not a curve. The allocator series
+ * is the one that stays clean and monotonic (18.35 → 19.47 GiB across the same rungs). Taking a
+ * running maximum keeps the estimate physical without editing the measurements above.
+ */
+export const VRAM_MEASUREMENTS: ReadonlyArray<{ frames: number; peakBytes: number }> =
+  MEASURED_DRIVER_PEAKS.map((point, index, all) => ({
+    frames: point.frames,
+    peakBytes: Math.max(...all.slice(0, index + 1).map((entry) => entry.peakBytes)),
+  }));
 
 /** Highest frame count we have actually run to success. Beyond this we are extrapolating. */
 export const MAX_MEASURED_FRAMES = 144;
@@ -123,13 +151,7 @@ export type RefViewStrategy = "first" | "middle" | "saddle_balanced" | "saddle_s
  * "npz_native" is DA3's own export — kept and served, but distinguished so a
  * lookup by kind can never pick it up by accident.
  */
-export type ArtifactKind =
-  | "glb"
-  | "npz"
-  | "npz_native"
-  | "depth_preview"
-  | "gs_ply"
-  | "gs_video";
+export type ArtifactKind = "glb" | "npz" | "npz_native" | "depth_preview";
 
 export interface InferParams {
   /** Sampling rate the local ffmpeg pass used. The server never resamples. */
@@ -138,7 +160,6 @@ export interface InferParams {
   processRes: number;
   processResMethod: ProcessResMethod;
   refViewStrategy: RefViewStrategy;
-  inferGs: boolean;
   maxFrames: number;
 }
 
@@ -148,7 +169,6 @@ export const DEFAULT_PARAMS: InferParams = {
   processRes: 504,
   processResMethod: "upper_bound_resize",
   refViewStrategy: "middle",
-  inferGs: false,
   maxFrames: DEFAULT_MAX_FRAMES,
 };
 

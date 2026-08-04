@@ -42,7 +42,6 @@ describe("defaults track upstream", () => {
     expect(DEFAULT_PARAMS.fps).toBe(10);
     expect(DEFAULT_PARAMS.processRes).toBe(504);
     expect(DEFAULT_PARAMS.refViewStrategy).toBe("middle");
-    expect(DEFAULT_PARAMS.inferGs).toBe(false);
   });
 });
 
@@ -65,10 +64,22 @@ describe("predictVram", () => {
     expect(p.bytes).toBeLessThan(hi);
   });
 
+  it("counts the recovered 144 rung as measured, because it was", () => {
+    // The table used to stop at 128 while MAX_MEASURED_FRAMES said 144, so 129–144 was flagged
+    // as extrapolation despite having been run. 144 is in the table now.
+    expect(predictVram(144, 504).measured).toBe(true);
+    expect(predictVram(MAX_MEASURED_FRAMES, 504).measured).toBe(true);
+  });
+
+  it("never lets the driver plateau read as VRAM falling with more frames", () => {
+    // 144 measured 21.88 GiB against 128's 21.94 — scatter on a saturated driver figure, not a
+    // reduction. The prediction must stay non-decreasing across the plateau.
+    expect(predictVram(144, 504).bytes).toBeGreaterThanOrEqual(predictVram(128, 504).bytes);
+    expect(predictVram(136, 504).bytes).toBeGreaterThanOrEqual(predictVram(128, 504).bytes);
+  });
+
   it("flags extrapolation beyond the measured envelope", () => {
-    // 128 is the largest measured point; 144 ran but is not in the interpolation table.
-    expect(predictVram(144, 504).measured).toBe(false);
-    expect(predictVram(144, 504).bytes).toBeGreaterThan(predictVram(128, 504).bytes);
+    expect(predictVram(150, 504).measured).toBe(false);
   });
 
   it("flags any resolution other than the one measured", () => {

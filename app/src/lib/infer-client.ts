@@ -100,7 +100,6 @@ export function manifestFromWire(w: any): InferManifest {
       processRes: w.params.process_res,
       processResMethod: w.params.process_res_method,
       refViewStrategy: w.params.ref_view_strategy,
-      inferGs: w.params.infer_gs,
       maxFrames: w.params.max_frames,
     },
     frames: {
@@ -268,7 +267,6 @@ export async function infer(
       process_res: params.processRes,
       process_res_method: params.processResMethod,
       ref_view_strategy: params.refViewStrategy,
-      infer_gs: params.inferGs,
       max_frames: params.maxFrames,
     }),
   );

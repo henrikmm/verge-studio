@@ -16,7 +16,6 @@ export type PortType =
   | "plane"
   | "selection"
   | "measurement"
-  | "splat"
   | "camera"
   | "scalar";
 
@@ -28,7 +27,6 @@ export const PORT_COLORS: Record<PortType, string> = {
   plane: "#f3c969",
   selection: "#fb7185",
   measurement: "#e8a95b",
-  splat: "#c084fc",
   camera: "#e879a0",
   scalar: "#f59e0b",
 };

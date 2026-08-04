@@ -5,7 +5,7 @@ import { GraphPane } from "./panes/graph-pane";
 import { Inspector } from "./panes/inspector";
 import { ObjectsPane } from "./panes/objects";
 import { Viewport3D } from "./panes/viewport-3d";
-import { formatBytes } from "./lib/contract";
+import { formatBytes, type InferManifest } from "./lib/contract";
 import { useSession } from "./lib/session-store";
 import { runAuto } from "./graph/graph-store";
 
@@ -49,6 +49,23 @@ function onReady(event: DockviewReadyEvent) {
   api.getPanel("viewport")?.api.setActive();
 }
 
+/**
+ * The status bar's cost slot.
+ *
+ * It read a hardcoded `$0.00` from M0 until 2026-08-04. That was defensible while no cloud
+ * session had ever run; after three warm sessions it was a fabricated number on screen. There is
+ * still nothing local that knows what anything cost — Cloud Run bills the whole instance
+ * lifetime, cold start and idle tail included, and the app never sees a bill. So the slot states
+ * what it actually knows and no more. Real per-session accounting is an M4 item.
+ */
+const COST_NOTE =
+  "Cloud Run bills the instance lifetime, not inference seconds — cold start and idle tail included. The app has no billing data, so it reports none.";
+
+function costLabel(lastRun: InferManifest | null): string {
+  if (!lastRun) return "cloud: none";
+  return lastRun.mock ? "cloud: fixture" : "cloud: 1 run · billing not instrumented";
+}
+
 let initialFixtureStarted = false;
 
 export function App() {
@@ -88,7 +105,7 @@ export function App() {
             {lastRun.frames.count}f · {lastRun.timing.gpuSeconds.toFixed(1)}s GPU
           </span>
         )}
-        <span className="cost">$0.00</span>
+        <span className="cost" title={COST_NOTE}>{costLabel(lastRun)}</span>
       </div>
     </div>
   );
