@@ -840,7 +840,10 @@ canvas {
 .object-row {
   width: 100%;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) 90px;
+  /* Trailing auto track holds the n/3 trial-count flag; it collapses when there is none.
+     The reading track carries value + error + trial count + spread, so it is wider than the
+     90px the single frozen number needed. */
+  grid-template-columns: 28px minmax(0, 1fr) 118px auto;
   align-items: center;
   gap: 5px;
   padding: 5px 7px;
@@ -967,6 +970,96 @@ canvas {
 .composition-check small {
   grid-column: 1 / -1;
   color: var(--text-dim);
+}
+
+.trial-flag {
+  padding: 1px 4px;
+  border: 1px solid var(--accent-busy);
+  color: var(--accent-busy);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.trial-block {
+  margin: 0 7px 5px;
+  border: 1px solid var(--border);
+}
+
+.trial-head {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 5px 6px;
+  background: var(--bg-header);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.trial-head > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.trial-head span {
+  overflow: hidden;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trial-head b {
+  font-size: 11px;
+}
+
+/* A spread from fewer than MIN_TRIALS_FOR_SPREAD trials is not yet a claim about repeatability. */
+.trial-head b.unproven {
+  color: var(--text-dim);
+}
+
+.trial-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trial-list li {
+  display: grid;
+  grid-template-columns: 22px 62px 52px minmax(0, 1fr) 40px 18px;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px;
+  border-top: 1px solid #242428;
+  font-size: 9px;
+}
+
+.trial-list li .mono {
+  overflow: hidden;
+  color: var(--text-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trial-list li.repeated-mask {
+  background: #f59e0b0c;
+}
+
+.trial-list li.repeated-mask .mono {
+  color: var(--accent-busy);
+}
+
+.trial-drop {
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.trial-drop:hover {
+  color: var(--accent-err);
 }
 
 .evidence-actions {

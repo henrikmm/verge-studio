@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from "react";
+import { median, nmad } from "../../../geometry";
+import { sha256Hex } from "../graph/cache-key";
 import type { FixtureSetting } from "./depth-field";
 
 export type MeasurementMode = "top_above_floor" | "vertical_extent";
@@ -77,10 +79,29 @@ export interface MaskRecord {
   revision: number;
 }
 
+/**
+ * The mask exactly as it stood when a trial was recorded.
+ *
+ * Trials are frozen evidence, so they cannot point at `state.masks` — the next stroke
+ * would mutate the record retroactively. The RLE runs are copied in, and `digest`
+ * identifies them so two trials can be told apart (or proven identical) without
+ * comparing pixels.
+ */
+export interface MaskSnapshot {
+  width: number;
+  height: number;
+  revision: number;
+  paintedPixels: number;
+  digest: string;
+  runs: number[];
+}
+
 export interface MeasurementObservation {
   id: string;
   objectId: string;
   setting: FixtureSetting;
+  /** 1-based, counted within (objectId, setting). Repeat trials are kept, never replaced. */
+  trialIndex: number;
   canonicalFrame: number;
   npzFrame: number;
   rawM: number;
@@ -93,7 +114,35 @@ export interface MeasurementObservation {
   floorBelowFraction: number;
   gravityCoherence: number;
   capturedAt: string;
+  /** Frozen at Record time. Absent on rows migrated from schema 0.1.0, which predate snapshots. */
+  mask?: MaskSnapshot;
+  /** First stroke after the last clear/record → Record. Absent when the mask was not painted this session. */
+  paintDurationMs?: number;
 }
+
+/**
+ * Operator repeatability across the trials of one (object, setting).
+ *
+ * This is a different quantity from `MeasurementObservation.internalSpreadM`, which is the
+ * roughness of a single patch of points. `rangeM`/`nmadM` here measure how far the *answer*
+ * moves when the same operator measures the same object again on the same reconstruction —
+ * the term that moved the door between 1.887 m and ~2.0 m with no model change.
+ */
+export interface TrialStats {
+  n: number;
+  meanM: number;
+  medianM: number;
+  minM: number;
+  maxM: number;
+  /** max − min. The honest spread statement at the n=3..5 counts this study actually reaches. */
+  rangeM: number;
+  /** Robust dispersion; only meaningful from n≥3, NaN below that. */
+  nmadM: number;
+  medianPaintMs: number;
+}
+
+/** Below this, a spread number describes one accident rather than a tendency. */
+export const MIN_TRIALS_FOR_SPREAD = 3;
 
 export interface MeasurementUiState {
   activeObjectId: string;
@@ -107,7 +156,10 @@ export interface MeasurementUiState {
   observations: MeasurementObservation[];
 }
 
-const STORAGE_KEY = "verge.m3b.measurement-session/0.1.0";
+export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.2.0";
+const STORAGE_KEY = "verge.m3b.measurement-session/0.2.0";
+/** 0.1.0 kept one row per (object, setting, frame) and destroyed repeat trials on record. */
+const LEGACY_STORAGE_KEY = "verge.m3b.measurement-session/0.1.0";
 const first = MEASUREMENT_OBJECTS[0];
 
 function encodeMask(mask: MaskRecord): number[] {
@@ -132,10 +184,29 @@ function decodeMask(value: { width: number; height: number; revision: number; ru
   return { width: value.width, height: value.height, revision: value.revision, data };
 }
 
+/**
+ * Give every restored row a trial index and a stable id.
+ *
+ * A 0.1.0 row has neither, and it also has no mask snapshot — the mask it was measured from
+ * lives under a working key that has almost certainly been repainted since. Those rows are
+ * carried forward as trial 1 with `mask` absent, which is the truthful state: the number
+ * survives, the evidence behind it does not.
+ */
+export function migrateObservations(rows: readonly MeasurementObservation[]): MeasurementObservation[] {
+  const counters = new Map<string, number>();
+  return rows.map((row) => {
+    const group = `${row.objectId}:${row.setting}`;
+    const trialIndex = (counters.get(group) ?? 0) + 1;
+    counters.set(group, trialIndex);
+    return { ...row, trialIndex, id: `${group}#${trialIndex}` };
+  });
+}
+
 function restoreSession(): Partial<MeasurementUiState> {
   if (typeof window === "undefined" || !window.localStorage) return {};
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw =
+      window.localStorage.getItem(STORAGE_KEY) ?? window.localStorage.getItem(LEGACY_STORAGE_KEY);
     if (!raw) return {};
     const saved = JSON.parse(raw) as {
       activeObjectId?: string;
@@ -151,7 +222,7 @@ function restoreSession(): Partial<MeasurementUiState> {
       masks: Object.fromEntries(
         Object.entries(saved.masks ?? {}).map(([key, mask]) => [key, decodeMask(mask)]),
       ),
-      observations: saved.observations ?? [],
+      observations: migrateObservations(saved.observations ?? []),
     };
   } catch {
     return {};
@@ -175,6 +246,28 @@ const state: MeasurementUiState = {
 const listeners = new Set<() => void>();
 let snapshot: MeasurementUiState = { ...state };
 let persistTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Time-to-measure, per working mask.
+ *
+ * The clock starts on the first stroke after the mask was last cleared or recorded and is
+ * read at Record. It lives in the store rather than the pane so no paint call site can forget
+ * to start it, and it is deliberately wall-clock: the quantity of interest is operator effort,
+ * which includes the seconds spent studying the 3D highlight before committing a stroke.
+ *
+ * It is not persisted. A clock that survived a reload would report the length of a coffee break.
+ */
+const paintClocks = new Map<string, number>();
+
+function startPaintClock(key: string): void {
+  if (!paintClocks.has(key)) paintClocks.set(key, Date.now());
+}
+
+/** Elapsed paint time on the working mask, or undefined before the first stroke. */
+export function paintElapsedMs(objectId?: string, frame?: number): number | undefined {
+  const startedAt = paintClocks.get(maskKey(objectId, frame));
+  return startedAt === undefined ? undefined : Date.now() - startedAt;
+}
 
 function persistSession(): void {
   if (typeof window === "undefined" || !window.localStorage) return;
@@ -282,6 +375,7 @@ export function ensureMask(width: number, height: number): MaskRecord {
 export function paintMask(x: number, y: number, radius: number, erase: boolean): MaskRecord {
   const current = getMask();
   if (!current) throw new Error("mask canvas has not been initialised");
+  startPaintClock(maskKey());
   const data = current.data.slice();
   const left = Math.max(0, Math.floor(x - radius));
   const right = Math.min(current.width - 1, Math.ceil(x + radius));
@@ -309,6 +403,7 @@ export function paintMaskStroke(
 ): MaskRecord {
   const current = getMask();
   if (!current) throw new Error("mask canvas has not been initialised");
+  startPaintClock(maskKey());
   const data = current.data.slice();
   const distance = Math.hypot(to.x - from.x, to.y - from.y);
   const steps = Math.max(1, Math.ceil(distance / Math.max(1, radius * 0.45)));
@@ -338,6 +433,7 @@ export function paintMaskStroke(
 export function clearActiveMask(): void {
   const current = getMask();
   if (!current) return;
+  paintClocks.delete(maskKey());
   state.masks = {
     ...state.masks,
     [maskKey()]: { ...current, data: new Uint8Array(current.data.length), revision: current.revision + 1 },
@@ -354,32 +450,147 @@ export function setMaskData(
 ): void {
   if (data.length !== width * height) throw new Error("mask dimensions do not match its data");
   const key = maskKey(objectId, canonicalFrame);
+  // A mask set programmatically is not operator paint time. Any correction strokes that
+  // follow start a fresh clock, which is exactly what M3c needs to measure.
+  paintClocks.delete(key);
   const revision = (state.masks[key]?.revision ?? 0) + 1;
   state.masks = { ...state.masks, [key]: { width, height, data: data.slice(), revision } };
   commit();
 }
 
-export function addObservation(observation: Omit<MeasurementObservation, "id" | "capturedAt">): void {
-  const sameEvidence = (item: MeasurementObservation) =>
-    item.objectId === observation.objectId &&
-    item.setting === observation.setting &&
-    item.canonicalFrame === observation.canonicalFrame;
+function snapshotMask(objectId: string, canonicalFrame: number): MaskSnapshot | undefined {
+  const mask = getMask(objectId, canonicalFrame);
+  if (!mask) return undefined;
+  const runs = encodeMask(mask);
+  return {
+    width: mask.width,
+    height: mask.height,
+    revision: mask.revision,
+    paintedPixels: mask.data.reduce((sum, value) => sum + value, 0),
+    // Over the RLE rather than the raw bytes: same information, and it stays comparable
+    // with the exported JSON, which is what a later run would be diffed against.
+    digest: sha256Hex(`${mask.width}x${mask.height}:${runs.join(",")}`).slice(0, 16),
+    runs,
+  };
+}
+
+/**
+ * Record one trial. Trials accumulate; recording again never replaces an earlier row.
+ *
+ * Until 2026-08-04 this filtered out any prior row for the same (object, setting, frame)
+ * before appending, so a second measurement silently destroyed the first. That made repeat
+ * measurement impossible to study and left every frozen number in `MEASUREMENTS.md` a single
+ * unrepeated sample. Operator endpoint placement is a large part of this project's error
+ * budget, so the spread across trials is evidence, not clutter.
+ */
+export function addObservation(
+  observation: Omit<MeasurementObservation, "id" | "capturedAt" | "trialIndex" | "mask" | "paintDurationMs">,
+): MeasurementObservation {
+  const group = `${observation.objectId}:${observation.setting}`;
+  const trialIndex =
+    state.observations.filter(
+      (item) => item.objectId === observation.objectId && item.setting === observation.setting,
+    ).length + 1;
+  const key = maskKey(observation.objectId, observation.canonicalFrame);
+  const startedAt = paintClocks.get(key);
   const record: MeasurementObservation = {
     ...observation,
-    id: `${observation.objectId}:${observation.setting}:${observation.canonicalFrame}`,
+    id: `${group}#${trialIndex}`,
+    trialIndex,
     capturedAt: new Date().toISOString(),
+    mask: snapshotMask(observation.objectId, observation.canonicalFrame),
+    paintDurationMs: startedAt === undefined ? undefined : Date.now() - startedAt,
   };
-  state.observations = [...state.observations.filter((item) => !sameEvidence(item)), record];
+  paintClocks.delete(key);
+  state.observations = [...state.observations, record];
+  commit();
+  return record;
+}
+
+/** Drop one trial by id — a misclick or an abandoned attempt, not a whole study. */
+export function removeObservation(id: string): void {
+  state.observations = state.observations.filter((item) => item.id !== id);
   commit();
 }
 
 export function clearObservations(): void {
   state.observations = [];
+  paintClocks.clear();
   commit();
 }
 
+export function trialsFor(
+  observations: readonly MeasurementObservation[],
+  objectId: string,
+  setting?: FixtureSetting,
+): MeasurementObservation[] {
+  return observations
+    .filter((item) => item.objectId === objectId && (!setting || item.setting === setting))
+    .sort((a, b) => a.trialIndex - b.trialIndex);
+}
+
+/**
+ * Trials whose mask is byte-identical to an earlier trial in the same group.
+ *
+ * Pressing Record twice without repainting yields two rows, zero spread, and the appearance
+ * of perfect repeatability — when it is one measurement counted twice. An independent trial
+ * means clearing the mask and placing the endpoints again. These ids are surfaced rather than
+ * dropped, because the operator may have meant to record a deliberate control.
+ */
+export function duplicateMaskTrialIds(
+  observations: readonly MeasurementObservation[],
+  objectId: string,
+  setting?: FixtureSetting,
+): Set<string> {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const trial of trialsFor(observations, objectId, setting)) {
+    const digest = trial.mask?.digest;
+    if (!digest) continue;
+    if (seen.has(digest)) duplicates.add(trial.id);
+    else seen.add(digest);
+  }
+  return duplicates;
+}
+
+const EMPTY_STATS: TrialStats = {
+  n: 0,
+  meanM: NaN,
+  medianM: NaN,
+  minM: NaN,
+  maxM: NaN,
+  rangeM: NaN,
+  nmadM: NaN,
+  medianPaintMs: NaN,
+};
+
+export function trialStats(
+  observations: readonly MeasurementObservation[],
+  objectId: string,
+  setting?: FixtureSetting,
+): TrialStats {
+  const values = trialsFor(observations, objectId, setting)
+    .map((item) => item.rawM)
+    .filter((value) => Number.isFinite(value));
+  if (!values.length) return EMPTY_STATS;
+  const durations = trialsFor(observations, objectId, setting)
+    .map((item) => item.paintDurationMs)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  return {
+    n: values.length,
+    meanM: values.reduce((sum, value) => sum + value, 0) / values.length,
+    medianM: median(values),
+    minM: Math.min(...values),
+    maxM: Math.max(...values),
+    rangeM: Math.max(...values) - Math.min(...values),
+    // NMAD of two points is just their half-separation dressed up as robust statistics.
+    nmadM: values.length >= MIN_TRIALS_FOR_SPREAD ? nmad(values) : NaN,
+    medianPaintMs: durations.length ? median(durations) : NaN,
+  };
+}
+
 export function exportMeasurementSession(): string {
-  const masks = Object.fromEntries(
+  const workingMasks = Object.fromEntries(
     Object.entries(state.masks).map(([key, mask]) => [
       key,
       {
@@ -391,12 +602,22 @@ export function exportMeasurementSession(): string {
       },
     ]),
   );
+  const settings = [...new Set(state.observations.map((item) => item.setting))];
+  const repeatability = MEASUREMENT_OBJECTS.flatMap((object) =>
+    settings
+      .map((setting) => ({ objectId: object.id, code: object.code, setting, ...trialStats(state.observations, object.id, setting) }))
+      .filter((row) => row.n > 0),
+  );
   return JSON.stringify(
     {
-      schemaVersion: "verge.measurement-session/0.1.0",
+      schemaVersion: SESSION_SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
       definitions: MEASUREMENT_OBJECTS,
+      // Every trial, each carrying the mask it was measured from. This is the evidence.
       observations: state.observations,
-      masks,
+      repeatability,
+      // The live brush state, kept for convenience. It is NOT evidence: it moves as you paint.
+      workingMasks,
     },
     null,
     2,

@@ -93,12 +93,61 @@ same 3D coordinate system as the point cloud reconstructed from all frames.
 B4 is deliberately absent: its stand/table contact is hidden by the laptop. Guessing that
 endpoint would make the table more complete and the evidence less honest.
 
+⚠️ **Every cell above is n=1** — one painting of one mask, kept because the app until
+2026-08-04 discarded the previous row whenever a new one was recorded. The ± is patch
+roughness, not repeatability. The rows are reproducible from their reconstruction, but none of
+them carries a claim about how much the number moves when the same object is measured again.
+The trial protocol below replaces them.
+
 **Operator refinement on 2026-08-03:** the user repainted the 504px door endpoints and the app
 reported approximately **2.0 m**, about **0.10 m / 4.8%** below the 2.10 m truth. This is the
 best observed door result, but it is intentionally not substituted into the table yet: the
 exact value and exported mask were not captured in this repository. The change from 1.887 m to
 about 2.0 m proves that endpoint placement is now a material part of the remaining error budget.
 The 504px table and tower results above are already within 0.046 m and 0.043 m of truth.
+
+### Repeatability — the trial protocol (2026-08-04)
+
+Two numbers from the same reconstruction, the same floor and the same operator: the door read
+**1.887 m** on one painting and **≈2.0 m** on another. Nothing about the model changed. That
+~0.11 m gap is operator endpoint placement, and it is larger than the 0.061 m raw holdout MAE
+the 504px run is credited with — so it is currently the least-understood term in the error
+budget, and the app has been displaying a ±0.037 m patch roughness beside it.
+
+**Why this has to be frozen before M3c.** Automatic selection is worth having only if it makes
+endpoints *more repeatable*. Judging a click-prompted mask against a benchmark whose own spread
+is unknown proves nothing: if manual spread is ±0.03 m then matching it is a win, and if manual
+spread is ±0.12 m then matching it is noise.
+
+**Protocol.** For each object, at one setting:
+
+1. Clear the mask completely. Reusing the previous mask measures the code, not the operator —
+   the app detects an unchanged mask digest and flags the trial rather than counting it.
+2. Repaint the endpoints from scratch, without first reading the previous trial's number.
+3. Record. The trial keeps its own mask (RLE + digest), painted-pixel count, selected-point
+   count, floor diagnostics and time-to-measure.
+4. Three trials minimum per object. Below three, the app shows the spread greyed out and NMAD
+   is withheld — two points have a separation, not a dispersion.
+
+Report `max − min` as the operator spread. At n=3–5 it is the honest statement; NMAD is
+carried alongside for continuity with the geometry code but is thin at these counts.
+
+**Scope:** B1, B2 and B3 at **504px · 112f**, which is the decided default. B4 stays
+ungraded (occluded stand contact) and B5's truth is derived from B2 + B4, so neither is an
+independent trial subject. A small number of 356px door trials are worth adding as a check that
+spread is not itself resolution-dependent.
+
+| Object | Truth | n | Mean | Median | Spread (max−min) | Median time |
+|---|---:|---:|---:|---:|---:|---:|
+| B1 door-leaf extent | 2.100 | — | — | — | — | — |
+| B2 floor → table | 0.750 | — | — | — | — | — |
+| B3 tower extent | 0.450 | — | — | — | — | — |
+
+*Not yet collected.* The store, the per-trial mask evidence, the timer and the export shipped
+on 2026-08-04 and are covered by unit tests plus a browser run; the trials themselves are
+operator work and cannot be simulated — a mask painted by an agent is not a sample of this
+operator's endpoint judgement. Export the session JSON and fill this table from
+`repeatability[]` once the trials exist.
 
 ### Resolution/frame-count verdict
 

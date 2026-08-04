@@ -3,16 +3,36 @@ import {
   addObservation,
   clearActiveMask,
   clearObservations,
+  duplicateMaskTrialIds,
   ensureMask,
   exportMeasurementSession,
   getMask,
   getMeasurementUi,
+  migrateObservations,
+  paintElapsedMs,
   paintMask,
   paintMaskStroke,
+  removeObservation,
   setActiveMeasurementObject,
   setMaskData,
   setMeasurementFrame,
+  trialStats,
+  type MeasurementObservation,
 } from "./measurement-store";
+
+const BASE = {
+  objectId: "door-leaf",
+  setting: "356px-256f" as const,
+  canonicalFrame: 1,
+  npzFrame: 1,
+  internalSpreadM: 0.04,
+  pointCount: 8000,
+  confidenceThreshold: 0.5,
+  floorRmseM: 0.02,
+  floorTiltDeg: 0.5,
+  floorBelowFraction: 0.02,
+  gravityCoherence: 0.95,
+};
 
 describe("measurement store", () => {
   beforeEach(() => {
@@ -43,28 +63,80 @@ describe("measurement store", () => {
     expect(getMask()?.data.every((value) => value === 0)).toBe(true);
   });
 
-  it("replaces one object/frame/run observation instead of averaging incompatible evidence", () => {
-    const base = {
-      objectId: "door-leaf",
-      setting: "356px-256f" as const,
-      canonicalFrame: 1,
-      npzFrame: 1,
-      internalSpreadM: 0.04,
-      pointCount: 8000,
-      confidenceThreshold: 0.5,
-      floorRmseM: 0.02,
-      floorTiltDeg: 0.5,
-      floorBelowFraction: 0.02,
-      gravityCoherence: 0.95,
-    };
-    addObservation({ ...base, rawM: 1.4 });
-    addObservation({ ...base, rawM: 1.41 });
-    addObservation({ ...base, setting: "504px-112f", rawM: 1.65 });
+  it("retains repeat trials instead of destroying the previous one, and keeps runs separate", () => {
+    addObservation({ ...BASE, rawM: 1.4 });
+    addObservation({ ...BASE, rawM: 1.41 });
+    addObservation({ ...BASE, setting: "504px-112f", rawM: 1.65 });
 
     const observations = getMeasurementUi().observations;
-    expect(observations).toHaveLength(2);
-    expect(observations.find((item) => item.setting === "356px-256f")?.rawM).toBe(1.41);
-    expect(observations.find((item) => item.setting === "504px-112f")?.rawM).toBe(1.65);
+    expect(observations).toHaveLength(3);
+    expect(observations.map((item) => item.rawM)).toEqual([1.4, 1.41, 1.65]);
+    // Trials are numbered within (object, setting), so a different run restarts at 1.
+    expect(observations.map((item) => item.trialIndex)).toEqual([1, 2, 1]);
+    expect(new Set(observations.map((item) => item.id)).size).toBe(3);
+    expect(trialStats(observations, "door-leaf", "356px-256f").n).toBe(2);
+    expect(trialStats(observations, "door-leaf", "504px-112f").n).toBe(1);
+  });
+
+  it("reports operator spread across trials, and withholds NMAD below three of them", () => {
+    addObservation({ ...BASE, rawM: 1.887 });
+    addObservation({ ...BASE, rawM: 2.003 });
+    expect(trialStats(getMeasurementUi().observations, "door-leaf", "356px-256f").nmadM).toBeNaN();
+
+    addObservation({ ...BASE, rawM: 1.95 });
+    const stats = trialStats(getMeasurementUi().observations, "door-leaf", "356px-256f");
+    expect(stats.n).toBe(3);
+    expect(stats.medianM).toBeCloseTo(1.95, 6);
+    expect(stats.meanM).toBeCloseTo((1.887 + 2.003 + 1.95) / 3, 6);
+    expect(stats.rangeM).toBeCloseTo(0.116, 6);
+    expect(stats.nmadM).toBeGreaterThan(0);
+  });
+
+  it("freezes the mask into the trial so later painting cannot rewrite recorded evidence", () => {
+    const painted = new Uint8Array(24 * 20);
+    painted.fill(1, 40, 60);
+    setMaskData("door-leaf", 1, 24, 20, painted);
+
+    const first = addObservation({ ...BASE, setting: "504px-112f", rawM: 2.0 });
+    expect(first.mask?.paintedPixels).toBe(20);
+    const frozenDigest = first.mask?.digest;
+    expect(frozenDigest).toMatch(/^[0-9a-f]{16}$/);
+
+    paintMaskStroke({ x: 2, y: 2 }, { x: 20, y: 2 }, 3, false);
+    const second = addObservation({ ...BASE, setting: "504px-112f", rawM: 2.08 });
+
+    const [recorded] = getMeasurementUi().observations;
+    expect(recorded.mask?.paintedPixels).toBe(20);
+    expect(recorded.mask?.digest).toBe(frozenDigest);
+    // A different mask must be distinguishable from the first without comparing pixels.
+    expect(second.mask?.digest).not.toBe(frozenDigest);
+    expect(second.mask!.paintedPixels).toBeGreaterThan(20);
+  });
+
+  it("times painting from the first stroke to the record, and resets for the next trial", () => {
+    expect(paintElapsedMs()).toBeUndefined();
+    paintMaskStroke({ x: 5, y: 10 }, { x: 18, y: 10 }, 3, false);
+    expect(paintElapsedMs()).toBeGreaterThanOrEqual(0);
+
+    const trial = addObservation({ ...BASE, rawM: 1.4 });
+    expect(trial.paintDurationMs).toBeGreaterThanOrEqual(0);
+    // Recording closes the clock; the next trial must not inherit this one's elapsed time.
+    expect(paintElapsedMs()).toBeUndefined();
+  });
+
+  it("migrates 0.1.0 rows to numbered trials without inventing mask evidence for them", () => {
+    const legacy = [
+      { id: "door-leaf:504px-112f:1", objectId: "door-leaf", setting: "504px-112f", rawM: 1.887 },
+      { id: "door-leaf:504px-112f:1", objectId: "door-leaf", setting: "504px-112f", rawM: 2.003 },
+      { id: "table-top:504px-112f:231", objectId: "table-top", setting: "504px-112f", rawM: 0.71 },
+    ] as unknown as MeasurementObservation[];
+
+    const migrated = migrateObservations(legacy);
+    expect(migrated.map((item) => item.trialIndex)).toEqual([1, 2, 1]);
+    expect(new Set(migrated.map((item) => item.id)).size).toBe(3);
+    // The mask a 0.1.0 row was measured from has since been repainted. Say so rather than
+    // attaching whatever happens to be on the canvas now.
+    expect(migrated.every((item) => item.mask === undefined)).toBe(true);
   });
 
   it("exports portable RLE masks and the clarified physical measurement definitions", () => {
@@ -73,12 +145,17 @@ describe("measurement store", () => {
     data.fill(1, 8, 10);
     setMaskData("door-leaf", 1, 4, 3, data);
 
+    addObservation({ ...BASE, rawM: 1.9 });
+    addObservation({ ...BASE, rawM: 2.0 });
+
     const exported = JSON.parse(exportMeasurementSession()) as {
       schemaVersion: string;
       definitions: Array<{ id: string; mode: string; definition: string }>;
-      masks: Record<string, { paintedPixels: number; runs: number[] }>;
+      observations: MeasurementObservation[];
+      repeatability: Array<{ objectId: string; setting: string; n: number; rangeM: number }>;
+      workingMasks: Record<string, { paintedPixels: number; runs: number[] }>;
     };
-    expect(exported.schemaVersion).toBe("verge.measurement-session/0.1.0");
+    expect(exported.schemaVersion).toBe("verge.measurement-session/0.2.0");
     expect(exported.definitions.find((item) => item.id === "door-leaf")).toMatchObject({
       mode: "vertical_extent",
       definition: "physical leaf, bottom edge to top edge",
@@ -86,9 +163,45 @@ describe("measurement store", () => {
     expect(exported.definitions.find((item) => item.id === "table-top")).toMatchObject({
       mode: "vertical_extent",
     });
-    expect(exported.masks["door-leaf:1"]).toMatchObject({
+    expect(exported.workingMasks["door-leaf:1"]).toMatchObject({
       paintedPixels: 5,
       runs: [2, 3, 8, 2],
     });
+    // Both trials survive the round trip, each carrying the mask it was measured from.
+    expect(exported.observations).toHaveLength(2);
+    expect(exported.observations.map((item) => item.mask?.runs)).toEqual([
+      [2, 3, 8, 2],
+      [2, 3, 8, 2],
+    ]);
+    expect(exported.repeatability).toContainEqual(
+      expect.objectContaining({ objectId: "door-leaf", setting: "356px-256f", n: 2 }),
+    );
+  });
+
+  it("flags trials that reuse an earlier trial's mask instead of crediting them as repeats", () => {
+    const painted = new Uint8Array(24 * 20);
+    painted.fill(1, 40, 60);
+    setMaskData("door-leaf", 1, 24, 20, painted);
+
+    const first = addObservation({ ...BASE, rawM: 2.0 });
+    const unrepainted = addObservation({ ...BASE, rawM: 2.0 });
+    paintMaskStroke({ x: 2, y: 2 }, { x: 20, y: 2 }, 3, false);
+    const repainted = addObservation({ ...BASE, rawM: 1.96 });
+
+    const flagged = duplicateMaskTrialIds(getMeasurementUi().observations, "door-leaf", "356px-256f");
+    expect(flagged.has(unrepainted.id)).toBe(true);
+    expect(flagged.has(first.id)).toBe(false);
+    expect(flagged.has(repainted.id)).toBe(false);
+  });
+
+  it("drops a single mistaken trial without disturbing the rest", () => {
+    addObservation({ ...BASE, rawM: 1.9 });
+    const mistake = addObservation({ ...BASE, rawM: 0.02 });
+    addObservation({ ...BASE, rawM: 1.95 });
+
+    removeObservation(mistake.id);
+    const remaining = getMeasurementUi().observations;
+    expect(remaining.map((item) => item.rawM)).toEqual([1.9, 1.95]);
+    expect(trialStats(remaining, "door-leaf", "356px-256f").n).toBe(2);
   });
 });

@@ -14,11 +14,16 @@ import {
 import { FIXTURE_SETTINGS, type FixtureSetting } from "../measurement/depth-field";
 import {
   MEASUREMENT_OBJECTS,
+  MIN_TRIALS_FOR_SPREAD,
   activeMeasurementObject,
   addObservation,
+  duplicateMaskTrialIds,
   exportMeasurementSession,
   getMask,
+  removeObservation,
   setActiveMeasurementObject,
+  trialStats,
+  trialsFor,
   useMeasurementUi,
   type MeasurementObservation,
   type MeasurementObject,
@@ -34,12 +39,19 @@ function mean(values: number[]): number {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : NaN;
 }
 
+/**
+ * Every aggregate below reads the mean across an object's repeat trials, never a single
+ * recording. With one trial this is the old behaviour; with three it is the number the
+ * repeatability study exists to produce.
+ */
 function objectMean(observations: readonly MeasurementObservation[], objectId: string, setting?: FixtureSetting): number {
-  return mean(
-    observations
-      .filter((item) => item.objectId === objectId && (!setting || item.setting === setting))
-      .map((item) => item.rawM),
-  );
+  return trialStats(observations, objectId, setting).meanM;
+}
+
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms)) return "—";
+  const seconds = ms / 1000;
+  return seconds < 60 ? `${seconds.toFixed(0)}s` : `${Math.floor(seconds / 60)}m ${(seconds % 60).toFixed(0)}s`;
 }
 
 function doorFactor(observations: readonly MeasurementObservation[], setting: FixtureSetting): number {
@@ -84,11 +96,9 @@ function downloadSession(): void {
 function EvidenceRow({ object, setting }: { object: MeasurementObject; setting: FixtureSetting }) {
   const ui = useMeasurementUi();
   const active = ui.activeObjectId === object.id;
-  const records = ui.observations.filter(
-    (item) => item.objectId === object.id && item.setting === setting,
-  );
-  const raw = mean(records.map((item) => item.rawM));
-  const absError = Number.isFinite(raw) ? Math.abs(raw - object.truthM) : NaN;
+  const stats = trialStats(ui.observations, object.id, setting);
+  const absError = Number.isFinite(stats.meanM) ? Math.abs(stats.meanM - object.truthM) : NaN;
+  const thin = stats.n > 0 && stats.n < MIN_TRIALS_FOR_SPREAD;
 
   return (
     <button className={`object-row${active ? " active" : ""}`} onClick={() => selectObject(object)}>
@@ -98,9 +108,14 @@ function EvidenceRow({ object, setting }: { object: MeasurementObject; setting: 
         <small>{object.definition}</small>
       </span>
       <span className="object-reading">
-        <b>{formatM(raw)}</b>
-        <small>{records.length ? `|e| ${absError.toFixed(3)} · this run` : `truth ${object.truthM.toFixed(3)} m`}</small>
+        <b>{formatM(stats.meanM)}</b>
+        <small>
+          {stats.n === 0
+            ? `truth ${object.truthM.toFixed(3)} m`
+            : `|e| ${absError.toFixed(3)} · n${stats.n}${stats.n > 1 ? ` ±${stats.rangeM.toFixed(3)}` : ""}`}
+        </small>
       </span>
+      {thin && <span className="trial-flag" title={`${MIN_TRIALS_FOR_SPREAD} trials needed before the spread means anything`}>{stats.n}/{MIN_TRIALS_FOR_SPREAD}</span>}
     </button>
   );
 }
@@ -126,6 +141,21 @@ export function ObjectsPane() {
   const corrected = measurement ? correctedValue(measurement.rawM, factor) : NaN;
   const derivedMonitorTop = objectMean(ui.observations, "table-top", setting) + objectMean(ui.observations, "monitor-own", setting);
   const currentRunObservations = ui.observations.filter((item) => item.setting === setting);
+  const activeStats = trialStats(ui.observations, object.id, setting);
+  const activeTrials = trialsFor(ui.observations, object.id, setting);
+  const repeatedMasks = duplicateMaskTrialIds(ui.observations, object.id, setting);
+
+  // One point per object, at its trial mean. Feeding every trial in would let a thrice-measured
+  // door outvote a once-measured table and shrink the residual by repetition alone.
+  const errorModelPoints = useMemo(
+    () =>
+      MEASUREMENT_OBJECTS.map((item) => {
+        const stats = trialStats(ui.observations, item.id, setting);
+        const spreads = trialsFor(ui.observations, item.id, setting).map((trial) => trial.internalSpreadM);
+        return { id: item.id, truth: item.truthM, predicted: stats.meanM, uncertainty: mean(spreads) };
+      }).filter((point) => Number.isFinite(point.predicted)),
+    [setting, ui.observations],
+  );
 
   const resolutionRows = useMemo(
     () =>
@@ -177,7 +207,7 @@ export function ObjectsPane() {
     <div className="pane">
       <div className="pane-status">
         <span className="ok">M3b evidence</span>
-        <span>{ui.observations.length} recorded views</span>
+        <span>{ui.observations.length} trials</span>
         <span className="hint">{sourceMode === "recorded" ? "recorded DA3 evidence" : "live DA3 exploration"}</span>
       </div>
       <div className="pane-body objects-pane">
@@ -245,8 +275,63 @@ export function ObjectsPane() {
               <small>Cross-check only; it is not a fifth independent object.</small>
             </div>
           )}
+          <section className="trial-block">
+            <div className="trial-head">
+              <div>
+                <span>REPEAT TRIALS</span>
+                <b>{activeStats.n}</b>
+              </div>
+              <div>
+                <span>OPERATOR SPREAD</span>
+                <b className={activeStats.n >= MIN_TRIALS_FOR_SPREAD ? "" : "unproven"}>
+                  {activeStats.n > 1 ? `${activeStats.rangeM.toFixed(3)} m` : "—"}
+                </b>
+              </div>
+              <div>
+                <span>MEDIAN PAINT</span>
+                <b>{formatDuration(activeStats.medianPaintMs)}</b>
+              </div>
+            </div>
+            {activeTrials.length > 0 && (
+              <ol className="trial-list">
+                {activeTrials.map((trial) => (
+                  <li key={trial.id} className={repeatedMasks.has(trial.id) ? "repeated-mask" : ""}>
+                    <span className="mono">#{trial.trialIndex}</span>
+                    <b>{trial.rawM.toFixed(3)} m</b>
+                    <span className="mono">{(trial.rawM - object.truthM >= 0 ? "+" : "") + (trial.rawM - object.truthM).toFixed(3)}</span>
+                    <span className="mono">
+                      {repeatedMasks.has(trial.id)
+                        ? "same mask as an earlier trial"
+                        : trial.mask
+                          ? `${trial.mask.paintedPixels.toLocaleString()} px · ${trial.mask.digest.slice(0, 8)}`
+                          : "no mask evidence"}
+                    </span>
+                    <span className="mono">{formatDuration(trial.paintDurationMs ?? NaN)}</span>
+                    <button className="trial-drop" title="Discard this trial" onClick={() => removeObservation(trial.id)}>×</button>
+                  </li>
+                ))}
+              </ol>
+            )}
+            {repeatedMasks.size > 0 && (
+              <div className="evidence-warning">
+                {repeatedMasks.size} trial{repeatedMasks.size === 1 ? " reuses" : "s reuse"} an earlier
+                trial's mask. Those rows repeat one measurement rather than repeating the measuring, so
+                they understate the spread. Discard them or repaint.
+              </div>
+            )}
+            {activeStats.n > 0 && activeStats.n < MIN_TRIALS_FOR_SPREAD && (
+              <div className="evidence-warning">
+                {MIN_TRIALS_FOR_SPREAD - activeStats.n} more independent trial
+                {MIN_TRIALS_FOR_SPREAD - activeStats.n === 1 ? "" : "s"} before this object's spread is
+                evidence rather than one accident. Clear the mask and repaint from scratch — reusing the
+                existing mask measures the code, not the operator.
+              </div>
+            )}
+          </section>
           <div className="evidence-actions">
-            <button disabled={sourceMode !== "recorded" || !measurement || !selection || !ground} onClick={capture}>Record this view</button>
+            <button disabled={sourceMode !== "recorded" || !measurement || !selection || !ground} onClick={capture}>
+              Record trial {activeStats.n + 1}
+            </button>
             <button disabled={graph.running} onClick={() => void recompute()}>
               {graph.running ? "Recomputing…" : "Recompute from source"}
             </button>
@@ -273,13 +358,15 @@ export function ObjectsPane() {
 
         <section className="error-model-card">
           <h3>Current-run raw error model</h3>
-          {currentRunObservations.length >= 2 ? (() => {
-            const model = fitErrorModel(currentRunObservations.map((item) => {
-              const definition = MEASUREMENT_OBJECTS.find((candidate) => candidate.id === item.objectId);
-              return { id: item.id, truth: definition?.truthM ?? NaN, predicted: item.rawM, uncertainty: item.internalSpreadM };
-            }));
+          {errorModelPoints.length >= 2 ? (() => {
+            const model = fitErrorModel(errorModelPoints);
             return <div className="reading-grid"><span>SLOPE</span><b>{model.slope.toFixed(3)}</b><span>INTERCEPT</span><b>{model.intercept.toFixed(3)} m</b><span>RESIDUAL RMS</span><b>{model.residualRms.toFixed(3)} m</b><span>MEAN ABSREL</span><b>{(model.meanAbsRel * 100).toFixed(1)}%</b><span>MAX ERROR</span><b>{model.maxAbsError.toFixed(3)} m</b></div>;
           })() : <p>Record at least two distinct truths.</p>}
+          <small className="honesty-note">
+            Fitted over {errorModelPoints.length} object{errorModelPoints.length === 1 ? "" : "s"} from{" "}
+            {currentRunObservations.length} trial{currentRunObservations.length === 1 ? "" : "s"}. Each object
+            contributes its trial mean once — repeat trials of one door are not independent truths.
+          </small>
           <div className="evidence-actions"><button onClick={downloadSession}>Export evidence JSON</button></div>
         </section>
       </div>

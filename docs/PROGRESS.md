@@ -6,10 +6,11 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-03 · M3b is working end to end on the primary door clip. A user-refined
-door mask produced approximately 2.0 m against 2.10 m truth; the exact observation still needs
-to be exported before replacing the frozen benchmark row. 504px/112f remains the operating
-point. B4 remains honestly ungraded because its lower endpoint is occluded.
+Last updated: 2026-08-04 · The repeatability store (P0) is built and verified: trials now
+accumulate instead of overwriting, each carries its own frozen mask, and operator spread is
+reported separately from patch roughness. **The trials themselves are not collected yet** —
+that is operator work. M3b remains working end to end on the primary door clip; 504px/112f
+remains the operating point; B4 remains honestly ungraded because its lower endpoint is occluded.
 
 ---
 
@@ -23,8 +24,9 @@ point. B4 remains honestly ungraded because its lower endpoint is occluded.
 | M2b — One warm cloud session | **done** (fixture home, service deleted) |
 | M3.0 — Door-clip fixture (one warm session) | **done** (3 fixtures local, service deleted) |
 | M3a — Geometry core (offline) | **done** (89 geometry/fixture tests) |
-| M3b — Mask → measurement → grading | **done on clip B** (repeatability is next) |
-| M3c — Automatic evidence selection | **next** |
+| M3b — Mask → measurement → grading | **done on clip B** |
+| P0 — Repeatability store | **built + verified**; trials NOT yet painted (operator work) |
+| M3c — Automatic evidence selection | next, once the trials exist |
 | M3d — Field/raster regime (vegetation) | planned after M3c proof |
 | M4 — Productization + evidence hardening | not started; splats dropped from roadmap |
 
@@ -52,11 +54,11 @@ more repeatable, even before it produces a beautiful full-object mask.
 
 ### Recommended sequence
 
-1. **P0 — Freeze repeatability before adding another model.** Export the exact refined door
-   observation and its mask. Draw B1/B2/B3 independently at least three times. Retain all trials
-   and track raw result, endpoint/operator spread, internal point spread, selected-point count,
-   mask revision/digest and time-to-measure. Recorded rows currently replace the previous row;
-   that is convenient for UI use but insufficient for a repeatability study.
+1. **P0 — Freeze repeatability before adding another model.** ~~Recorded rows currently replace
+   the previous row.~~ **Store built and verified 2026-08-04** — trials accumulate, each freezes
+   its own mask and time-to-measure, and operator spread is reported apart from patch roughness.
+   What remains is the painting itself: B1/B2/B3 drawn independently at least three times at
+   504px, then the export folded into `MEASUREMENTS.md`. See the P0 section below.
 2. **P1 — Challenge the floor on new captures.** Build a small 5–10 clip set covering portrait
    and landscape capture, phone roll/pitch, little visible floor, glossy or textureless floor,
    multiple horizontal surfaces and an outdoor slope. Track support, tilt, below-floor mass,
@@ -663,6 +665,54 @@ Final local gate: production build green; `verify.sh` green with **207 unit/fixt
 the fixture smoke. The optional server-contract check reported its explicit no-FastAPI skip in
 this shell; no server code changed in M3b. No cloud resource was created or billed.
 
+### P0 — Repeatability store ✅ built 2026-08-04 (trials still to be painted)
+
+The blocker in front of M3c was that the app **could not hold a repeat measurement**.
+`addObservation` filtered out any prior row for the same (object, setting, frame) before
+appending, so pressing Record a second time silently destroyed the first result — which is why
+every row in `MEASUREMENTS.md` is n=1 and why the 1.887 m → ~2.0 m door change was never
+captured as data.
+
+- [x] **Trials accumulate.** `trialIndex` within (object, setting); recording never replaces.
+      `removeObservation()` drops one bad row without clearing the study.
+- [x] **Each trial freezes its own mask** — RLE, painted-pixel count and a 16-hex digest, copied
+      at Record time so later strokes cannot rewrite recorded evidence. This is also the "tie
+      every result to reproducible mask evidence" item from M4.
+- [x] **Duplicate-mask guard.** Recording twice without repainting gives zero spread and looks
+      like perfect repeatability. Trials sharing an earlier digest are flagged in the pane, not
+      silently averaged in.
+- [x] **Time-to-measure** — a wall clock from the first stroke after a clear/record to Record,
+      held in the store so no paint call site can forget it, shown live in the frame pane and
+      stored per trial. This is the operator-cost baseline M3c has to beat.
+- [x] **Operator spread reported separately from patch roughness.** `trialStats` gives n, mean,
+      median, min/max, `max − min` and NMAD. NMAD is withheld below three trials; the pane greys
+      the spread and says how many more trials are needed.
+- [x] **Schema 0.2.0 + migration.** 0.1.0 rows are carried forward as numbered trials with
+      `mask` absent — the mask they were measured from has since been repainted, so claiming it
+      would be a lie. Export carries every trial, its mask and a `repeatability[]` summary.
+- [x] **The error model no longer double-counts trials.** It fits one point per object at its
+      trial mean; feeding every trial in would let a thrice-measured door outvote a
+      once-measured table and shrink the residual by repetition alone.
+- [x] Verified in the browser on the real 504px fixture: four trials recorded with distinct
+      digests, none destroyed, spread 0.077 m, a duplicate correctly flagged, a deleted trial
+      correctly removed, an 18 s paint duration captured from a real stroke. `verify.sh` green
+      with **213 tests**; production build green.
+
+**NOT done — this is operator work and cannot be simulated.** A mask painted by an agent is not
+a sample of this operator's endpoint judgement, so the study is empty until the user paints it:
+
+- [ ] Three independent redraws each of B1/B2/B3 at 504px · 112f, clearing the mask between
+      trials. A few 356px door trials as a check that spread is not resolution-dependent.
+- [ ] Export the session JSON, fill the repeatability table in `MEASUREMENTS.md` from
+      `repeatability[]`, and retire the n=1 frozen rows.
+- [ ] Recalculate the door-derived scale factor from the trial mean, not the stale 1.887 m.
+- [ ] Feed the resulting spread into the reported uncertainty, so the app stops showing a
+      patch-roughness ± an order of magnitude tighter than its real error.
+
+⚠️ The user's own browser may still hold a 0.1.0 session containing the refined ~2.0 m door.
+It will migrate to trial 1 with **no mask evidence** — the value survives, the mask behind it
+does not. Export it before painting over it.
+
 ### M3c — Automatic evidence selection (mask source swap only)
 
 Nothing downstream changes: a brush mask and a model mask are the same bytes. **No cloud cost —
@@ -670,7 +720,7 @@ this runs in the browser.** The first goal is repeatable measurement endpoints o
 frame, not perfect outlines or propagation across the entire video.
 
 - [ ] Freeze the manual-repeatability benchmark first; automation cannot be judged against a
-      moving target.
+      moving target. The store for it exists (see P0); the trials do not.
 - [ ] Prototype click-prompted selection with editable brush output. Accept it only if it reduces
       endpoint measurement variation or operator time without hiding failures.
 - [ ] Report measurement delta, abstention/failure rate, correction clicks and latency. Mask IoU
@@ -712,7 +762,8 @@ frame, not perfect outlines or propagation across the entire video.
 
 - [ ] Remove dormant `infer_gs`, splat export types, UI checkbox and unused splat port/type
 - [ ] Compact `mini_npz` and/or transient object storage + signed URLs; verify live browser fetch
-- [ ] Tie every recorded result to reproducible mask evidence and retain repeat trials
+- [x] ~~Tie every recorded result to reproducible mask evidence and retain repeat trials~~ —
+      done by P0 on 2026-08-04; each trial carries its own RLE mask and digest.
 - [ ] Rename/remove the misleading Recompute action
 - [ ] Per-session/per-node cost accounting
 

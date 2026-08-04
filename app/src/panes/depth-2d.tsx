@@ -12,6 +12,7 @@ import {
   clearActiveMask,
   ensureMask,
   getMask,
+  paintElapsedMs,
   paintMaskStroke,
   setBrushSize,
   setConfidencePercentile,
@@ -46,6 +47,7 @@ export function Depth2D() {
   const [elapsedMs, setElapsedMs] = useState(0);
   const [paused, setPaused] = useState(false);
   const [output, setOutput] = useState("rgb");
+  const [paintSeconds, setPaintSeconds] = useState<number>();
 
   const graph = useGraph();
   const ui = useMeasurementUi();
@@ -169,6 +171,19 @@ export function Depth2D() {
     if (field) syncMeasurementGraph();
   }, [field, object.id, object.mode, object.truthM, syncMeasurementGraph]);
 
+  // Time-to-measure, shown live so the operator can see what a trial is costing. The clock
+  // itself lives in the store; this only polls it. Setting the same value is a no-op render,
+  // so a single interval with no dependencies is cheaper than restarting one per stroke.
+  useEffect(() => {
+    const tick = () => {
+      const elapsed = paintElapsedMs();
+      setPaintSeconds(elapsed === undefined ? undefined : Math.round(elapsed / 1000));
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const paintAt = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -278,7 +293,12 @@ export function Depth2D() {
             <span>{range[1].toFixed(2)}{unit}</span>
           </div>
         )}
-        {mask && <div className="mask-readout">{paintedPixels(mask).toLocaleString()} px selected</div>}
+        {mask && (
+          <div className="mask-readout">
+            {paintedPixels(mask).toLocaleString()} px selected
+            {paintSeconds !== undefined && ` · ${paintSeconds}s`}
+          </div>
+        )}
       </div>
     </div>
   );
