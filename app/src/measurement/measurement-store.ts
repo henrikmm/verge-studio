@@ -26,7 +26,9 @@ export interface SegmentationProvenance {
   scoreMargin: number;
   boundaryFraction: number;
   modelLoadMs: number;
+  modelLoadCached?: boolean;
   frameEncodeMs: number;
+  frameEncodeCached?: boolean;
   lastDecodeMs: number;
   selectionDurationMs?: number;
   correctionStrokes: number;
@@ -94,7 +96,7 @@ export const MEASUREMENT_OBJECTS: readonly MeasurementObject[] = [
     name: "Table top",
     definition: "floor plane to tabletop surface",
     truthM: 0.75,
-    mode: "vertical_extent",
+    mode: "top_above_floor",
     suggestedFrame: 231,
     maskInstruction: "Paint the tabletop edge and a visible floor patch; a connecting stroke is fine.",
   },
@@ -125,7 +127,7 @@ export const MEASUREMENT_OBJECTS: readonly MeasurementObject[] = [
     name: "Monitor top",
     definition: "floor plane to screen top; also checked as B2 + B4",
     truthM: 1.284,
-    mode: "vertical_extent",
+    mode: "top_above_floor",
     suggestedFrame: 219,
     maskInstruction: "Paint the screen top and a visible floor patch; a connecting stroke is fine.",
   },

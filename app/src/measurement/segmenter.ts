@@ -31,7 +31,9 @@ export interface PreparedSegmentationFrame {
   width: number;
   height: number;
   modelLoadMs: number;
+  modelLoadCached: boolean;
   frameEncodeMs: number;
+  frameEncodeCached: boolean;
 }
 
 export interface SegmentationCandidate {
@@ -146,9 +148,16 @@ export async function prepareSegmentationFrame(
 ): Promise<PreparedSegmentationFrame> {
   if (cachedFrame?.imageUrl === imageUrl) {
     onProgress?.({ phase: "ready" });
-    return cachedFrame;
+    return {
+      ...cachedFrame,
+      modelLoadMs: 0,
+      modelLoadCached: true,
+      frameEncodeMs: 0,
+      frameEncodeCached: true,
+    };
   }
 
+  const modelLoadCached = segmenterPromise !== undefined;
   const runtime = await loadSegmenter(onProgress);
   onProgress?.({ phase: "encoding", detail: "encoding this frame" });
   const started = performance.now();
@@ -160,8 +169,10 @@ export async function prepareSegmentationFrame(
     imageUrl,
     width,
     height,
-    modelLoadMs: runtime.loadMs,
+    modelLoadMs: modelLoadCached ? 0 : runtime.loadMs,
+    modelLoadCached,
     frameEncodeMs: performance.now() - started,
+    frameEncodeCached: false,
     embeddings,
     originalSizes: inputs.original_sizes,
     reshapedInputSizes: inputs.reshaped_input_sizes,

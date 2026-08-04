@@ -6,11 +6,12 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-04 (third session) · **M3c automatic-selection prototype implemented.**
-Pinned SlimSAM now runs locally through browser WebGPU, accepts positive/negative clicks, remains
-brush-editable, records model/click/latency/abstention provenance, and withholds height until the
-operator accepts the mask. The first real-door result is useful but does **not** pass the milestone's
-acceptance benchmark yet; N=1 cannot establish variation or a failure rate.
+Last updated: 2026-08-04 (fourth session) · **M3c fixture/UX correction after operator review.**
+Pinned SlimSAM now runs on every fixture target rather than silently disabling Segment outside B1;
+the required acceptance action wraps visibly in a narrow pane, locked RAW DA3 explains itself, and
+timing separates one-time setup, per-frame encoding, last-click decode and total operator time. B1
+remains the only validated automatic target. B2/B3/B5 are explicitly experimental, while B4 can be
+segmented but cannot expose height because its defining contact point is occluded.
 
 Earlier that day · P0 done: the repeatability store shipped and nine trials were painted
 and analysed. **The result overturned its own premise** — operator endpoint placement repeats to
@@ -829,9 +830,9 @@ confident, healthy-looking 1.887 m with no reported statistic distinguishing it 
       correction withdraws height and requires acceptance again.
 - [x] **Honest acceptance/abstention path.** Height is withheld before explicit acceptance.
       Low score (<0.70), near-tied candidates (<0.015 margin), excessive frame-boundary contact,
-      insufficient 3D support (<40 points at either endpoint), non-B1 objects, and unavailable
-      WebGPU all refuse rather than guess. B1-only is deliberate until another definition is
-      validated: segmenting a tabletop alone cannot satisfy “floor to tabletop”.
+      insufficient 3D support (<40 points at either endpoint), the occluded B4 height definition,
+      and unavailable WebGPU all refuse rather than guess. B2 and B5 use the fitted floor plane as
+      their lower reference; B1 and B3 use full-object endpoint evidence.
 - [x] **Reproducible evidence schema 0.4.0.** Working masks and frozen trials carry source
       (`brush`, `model`, `model+brush`), model/revision/runtime, normalized prompts, all candidate
       scores, selected candidate, boundary fraction, load/encode/decode/selection latency,
@@ -849,7 +850,23 @@ confident, healthy-looking 1.887 m with no reported statistic distinguishing it 
       endpoint adapter itself adds +0.089 m versus blindly measuring the dense full mask. This is
       easier selection, not a precision win, and cold operator time is not yet better than the
       5–10 s manual benchmark.
-- [x] **Verification:** fixture smoke, strict typecheck, production Vite build, and all **231 tests**
+- [x] **Operator-feedback correction, same day.** The first UI placed Accept Mask in a horizontally
+      scrolling tool row, so a narrow Depth 2D pane could hide the only action that unlocks RAW DA3.
+      The row now wraps, acceptance sits beside the review status, and Objects says
+      `LOCKED · ACCEPT MASK` instead of a bare dash. Segment is enabled for B1–B5 with
+      definition-specific instructions. B2/B5 measure top above the fitted floor, B1/B3 measure
+      vertical extent, and B4 states that height is unavailable because its stand contact is hidden.
+      The recorded DA3 cloud time is now labelled `recorded DA3 run`, not the ambiguous `GPU`.
+- [x] **Timing correction.** “Sub-second” applies only to a cached click decode, not the workflow.
+      On the first B2 browser run, setup took 1.9 s, frame encoding 9.3 s and the click 0.48 s:
+      about **11.7 s of compute before review**, with total operator time continuing until Accept.
+      A later same-frame attempt correctly reports cached preparation. More than five seconds is
+      therefore expected on a new frame with this model and hardware.
+- [x] **Non-door result kept experimental.** A deliberately under-reviewed one-click B2 proposal
+      passed the generic 2D score gate but selected the wrong evidence and produced 1.177 m against
+      0.750 m truth. The app labels B2/B3/B5 experimental and still requires RGB + 3D review. This
+      result is evidence that fixture-specific 3D gates are required before any non-B1 claim.
+- [x] **Verification:** fixture smoke, strict typecheck, production Vite build, and all **232 tests**
       pass; the real browser flow was visually checked in RGB + registered 3D. `server/` was not
       touched and the server-contract subcheck was skipped because this workspace has no FastAPI
       venv. `npm audit --omit=dev` reports two high advisories inherited through Transformers.js'

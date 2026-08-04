@@ -211,7 +211,16 @@ export function ObjectsPane() {
   const activeStats = trialStats(ui.observations, object.id, setting);
   const activeTrials = trialsFor(ui.observations, object.id, setting);
   const repeatedMasks = duplicateMaskTrialIds(ui.observations, object.id, setting);
-  const automaticStats = segmentationAttemptStats(ui.segmentationAttempts);
+  const automaticStats = segmentationAttemptStats(
+    ui.segmentationAttempts.filter((attempt) => attempt.objectId === object.id),
+  );
+  const rawDa3Text = measurement
+    ? formatM(measurement.rawM)
+    : selection?.segmentation && !selection.segmentation.accepted
+      ? "LOCKED · ACCEPT MASK"
+      : selection?.segmentation && object.availabilityNote
+        ? "UNAVAILABLE · OCCLUDED ENDPOINT"
+        : "—";
 
   // One point per object, at its trial mean. Feeding every trial in would let a thrice-measured
   // door outvote a once-measured table and shrink the residual by repetition alone.
@@ -339,7 +348,7 @@ export function ObjectsPane() {
               <option value="252px-256f">252 px · 256f</option>
             </select>
           </label>
-          <span>{sourceMode === "recorded" ? `GPU ${GPU_TIMES[setting].toFixed(2)} s` : "run DA3 manually"}</span>
+          <span>{sourceMode === "recorded" ? `recorded DA3 run ${GPU_TIMES[setting].toFixed(2)} s` : "run DA3 manually"}</span>
           {/* Lives here, not in the status row: that row is nowrap+overflow:hidden and clips
               its right edge in a narrow pane, which is no place for a mode control. */}
           <button
@@ -368,13 +377,18 @@ export function ObjectsPane() {
           </div>
           <p>{object.definition}</p>
           <div className="reading-grid">
-            <span>RAW DA3</span><b>{veil(ui.blind, measurement ? formatM(measurement.rawM) : "—")}</b>
+            <span>RAW DA3</span>
+            <b>{veil(ui.blind, rawDa3Text)}</b>
             <span>SELECTED</span><b>{selection ? `${selection.diagnostics.pointCount.toLocaleString()} pts` : "—"}</b>
             <span>SELECTION</span><b>{selection?.maskSource ?? "—"}</b>
             {selection?.segmentation && (
               <>
                 <span>AUTOMATIC REVIEW</span>
-                <b>{selection.segmentation.accepted ? `accepted · ${selection.segmentation.prompts.length} clicks` : "height withheld"}</b>
+                <b>
+                  {selection.segmentation.accepted
+                    ? `${object.id === "door-leaf" ? "accepted" : "accepted · experimental"} · ${selection.segmentation.prompts.length} clicks`
+                    : "height withheld"}
+                </b>
               </>
             )}
             {selection?.segmentation && measurement && Number.isFinite(measurement.details.fullMaskControlM) && (
@@ -385,7 +399,7 @@ export function ObjectsPane() {
             )}
             {automaticStats.total > 0 && (
               <>
-                <span>AUTO ATTEMPTS</span><b>{automaticStats.accepted}/{automaticStats.total} accepted</b>
+                <span>AUTO ATTEMPTS · {object.code}</span><b>{automaticStats.accepted}/{automaticStats.total} accepted</b>
                 <span>ABSTAIN / FAIL</span><b>{automaticStats.abstained} / {automaticStats.failed}</b>
               </>
             )}

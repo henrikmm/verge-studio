@@ -408,7 +408,7 @@ export const measureHeightSpec: NodeSpec = {
   type: "measure-height",
   label: "Measure Height",
   category: "geometry",
-  version: "0.4.0",
+  version: "0.4.1",
   execution: "auto",
   inputs: [
     { id: "selection", label: "Selection", type: "selection", required: true },
@@ -444,12 +444,12 @@ export const measureHeightSpec: NodeSpec = {
         },
       };
     }
-    if (selection.segmentation && selection.objectId !== "door-leaf") {
+    if (selection.segmentation && selection.objectId === "monitor-own") {
       return {
         measurement: {
           type: "measurement",
           value: null,
-          summary: "automatic height unavailable · use the brush protocol",
+          summary: "automatic height unavailable · stand contact is occluded",
         },
       };
     }

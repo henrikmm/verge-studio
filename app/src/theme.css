@@ -731,9 +731,29 @@ canvas {
 }
 
 .segment-toolbar {
-  justify-content: space-between;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  white-space: normal;
+  overflow-x: hidden;
   background: #0d1514;
   color: var(--text-dim);
+}
+
+.brush-toolbar {
+  flex-wrap: wrap;
+  white-space: normal;
+  overflow-x: hidden;
+}
+
+.segment-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.segment-toolbar .mono {
+  flex-basis: 100%;
+  line-height: 1.35;
 }
 
 .segment-toolbar .busy {

@@ -9,6 +9,7 @@ import {
   currentSittingId,
   duplicateMaskTrialIds,
   LEGACY_SITTING_ID,
+  MEASUREMENT_OBJECTS,
   ensureMask,
   exportMeasurementSession,
   getMask,
@@ -47,6 +48,18 @@ describe("measurement store", () => {
     setActiveMeasurementObject("door-leaf");
     setMeasurementFrame(1);
     setMaskData("door-leaf", 1, 24, 20, new Uint8Array(24 * 20));
+  });
+
+  it("uses the fitted floor directly for floor-referenced automatic targets", () => {
+    expect(MEASUREMENT_OBJECTS.find((item) => item.id === "table-top")?.mode).toBe(
+      "top_above_floor",
+    );
+    expect(MEASUREMENT_OBJECTS.find((item) => item.id === "monitor-top")?.mode).toBe(
+      "top_above_floor",
+    );
+    expect(MEASUREMENT_OBJECTS.find((item) => item.id === "pc-tower")?.mode).toBe(
+      "vertical_extent",
+    );
   });
 
   it("paints continuous strokes, erases them and clears without mutating older masks", () => {
@@ -168,7 +181,7 @@ describe("measurement store", () => {
       definition: "physical leaf, bottom edge to top edge",
     });
     expect(exported.definitions.find((item) => item.id === "table-top")).toMatchObject({
-      mode: "vertical_extent",
+      mode: "top_above_floor",
     });
     expect(exported.workingMasks["door-leaf:1"]).toMatchObject({
       paintedPixels: 5,

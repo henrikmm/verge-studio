@@ -59,6 +59,44 @@ function latency(ms: number | undefined): string {
   return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(1)} s`;
 }
 
+function segmentationInstruction(objectId: string): string {
+  switch (objectId) {
+    case "table-top":
+      return "Click the tabletop surface; the fitted floor plane supplies the lower reference automatically.";
+    case "pc-tower":
+      return "Click the complete PC tower from its tabletop contact to its top.";
+    case "monitor-own":
+      return "Click the monitor and stand. This frame can select them, but the hidden stand contact prevents a trustworthy automatic height.";
+    case "monitor-top":
+      return "Click the monitor screen; the fitted floor plane supplies the lower reference automatically.";
+    default:
+      return "Click the complete door leaf from bottom edge to top edge.";
+  }
+}
+
+function reusePreparedFrame(current: PreparedSegmentationFrame | undefined) {
+  return current
+    ? {
+        ...current,
+        modelLoadMs: 0,
+        modelLoadCached: true,
+        frameEncodeMs: 0,
+        frameEncodeCached: true,
+      }
+    : current;
+}
+
+function acceptanceLabel(accepted: boolean, validated: boolean, heightUnavailable: boolean) {
+  if (accepted) {
+    if (heightUnavailable) return "Accepted · height unavailable";
+    return validated ? "Accepted" : "Accepted · experimental";
+  }
+  if (heightUnavailable) return "Accept mask · height unavailable";
+  return validated
+    ? "Accept mask → calculate height"
+    : "Accept experimental mask → calculate height";
+}
+
 export function Depth2D() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastPointRef = useRef<{ x: number; y: number } | undefined>(undefined);
@@ -79,6 +117,7 @@ export function Depth2D() {
   const [prompts, setPrompts] = useState<SegmentPrompt[]>([]);
   const [segmentProgress, setSegmentProgress] = useState<SegmenterProgress>();
   const [segmentError, setSegmentError] = useState<string>();
+  const [segmentationElapsedMs, setSegmentationElapsedMs] = useState(0);
 
   const graph = useGraph();
   const ui = useMeasurementUi();
@@ -88,7 +127,15 @@ export function Depth2D() {
   const object = activeMeasurementObject();
   const mask = getMask();
   const reviewIssue = automaticMaskReviewIssue(mask);
+  const automaticFixtureValidated = object.id === "door-leaf";
   const segmentBusy = segmentProgress?.phase === "loading" || segmentProgress?.phase === "encoding" || segmentProgress?.phase === "decoding";
+  const segmentationTotalMs = mask?.segmentation
+    ? (mask.segmentation.selectionDurationMs ?? 0) > 0
+      ? mask.segmentation.selectionDurationMs
+      : segmentationElapsedMs > 0
+        ? segmentationElapsedMs
+        : undefined
+    : undefined;
 
   const syncMeasurementGraph = useCallback(() => {
     const active = activeMeasurementObject();
@@ -149,6 +196,8 @@ export function Depth2D() {
     const current = getMask();
     setPrompts(current?.segmentation?.prompts ?? []);
     segmentationAttemptRef.current = current?.segmentation?.attemptId;
+    segmentationStartedRef.current = undefined;
+    setSegmentationElapsedMs(current?.segmentation?.selectionDurationMs ?? 0);
     setSegmentProgress(undefined);
     setSegmentError(undefined);
   }, [descriptor?.rgbUrl, object.id]);
@@ -236,16 +285,19 @@ export function Depth2D() {
     if (field) syncMeasurementGraph();
   }, [field, object.id, object.mode, object.truthM, syncMeasurementGraph]);
 
-  // Time-to-measure, shown live so the operator can see what a trial is costing. The clock
-  // itself lives in the store; this only polls it. Setting the same value is a no-op render,
-  // so a single interval with no dependencies is cheaper than restarting one per stroke.
+  // Show both brush time and complete automatic-selection time. The latter starts before model
+  // setup/frame encoding and stops only on acceptance, so a fast decoder cannot hide cold-start
+  // or operator-review cost.
   useEffect(() => {
     const tick = () => {
       const elapsed = paintElapsedMs();
       setPaintSeconds(elapsed === undefined ? undefined : Math.round(elapsed / 1000));
+      if (segmentationStartedRef.current !== undefined) {
+        setSegmentationElapsedMs(performance.now() - segmentationStartedRef.current);
+      }
     };
     tick();
-    const timer = window.setInterval(tick, 1000);
+    const timer = window.setInterval(tick, 250);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -281,7 +333,7 @@ export function Depth2D() {
   };
 
   const chooseSegmentation = async () => {
-    if (!descriptor || object.id !== "door-leaf") return;
+    if (!descriptor) return;
     setTool("segment");
     setErasing(false);
     setSegmentError(undefined);
@@ -310,6 +362,7 @@ export function Depth2D() {
 
   const proposeMask = async (nextPrompts: SegmentPrompt[]) => {
     if (!preparedFrame || segmentBusy) return;
+    segmentationStartedRef.current ??= performance.now();
     const request = ++segmentationRequestRef.current;
     setPrompts(nextPrompts);
     setSegmentError(undefined);
@@ -332,7 +385,9 @@ export function Depth2D() {
         scoreMargin: best.score - (rankedScores[1] ?? 0),
         boundaryFraction: result.boundaryFraction,
         modelLoadMs: preparedFrame.modelLoadMs,
+        modelLoadCached: preparedFrame.modelLoadCached,
         frameEncodeMs: preparedFrame.frameEncodeMs,
+        frameEncodeCached: preparedFrame.frameEncodeCached,
         lastDecodeMs: result.decodeMs,
         correctionStrokes: 0,
         accepted: false,
@@ -359,6 +414,7 @@ export function Depth2D() {
     if (!next.some((prompt) => prompt.label === 1)) {
       recordAttempt("abstained", getMask()?.segmentation, "cleared before acceptance");
       clearActiveMask();
+      setPreparedFrame(reusePreparedFrame);
       segmentationAttemptRef.current = undefined;
       segmentationStartedRef.current = undefined;
       syncMeasurementGraph();
@@ -370,8 +426,11 @@ export function Depth2D() {
   const acceptSegmentation = () => {
     try {
       const started = segmentationStartedRef.current ?? performance.now();
-      const accepted = acceptActiveModelMask(performance.now() - started);
+      const selectionDurationMs = performance.now() - started;
+      const accepted = acceptActiveModelMask(selectionDurationMs);
       recordAttempt("accepted", accepted.segmentation);
+      segmentationStartedRef.current = undefined;
+      setSegmentationElapsedMs(selectionDurationMs);
       setSegmentError(undefined);
       syncMeasurementGraph();
     } catch (reason) {
@@ -428,13 +487,18 @@ export function Depth2D() {
           )
         }
       />
-      <OutputRow choices={OUTPUTS} active={output} onSelect={setOutput} hint={object.maskInstruction} />
+      <OutputRow
+        choices={OUTPUTS}
+        active={output}
+        onSelect={setOutput}
+        hint={tool === "segment" ? segmentationInstruction(object.id) : object.maskInstruction}
+      />
       <div className="brush-toolbar">
         <span className="tool-context"><b>{object.code}</b> {object.name}</span>
         <button
           className={`chip-toggle${tool === "segment" ? " on" : ""}`}
-          disabled={segmentBusy || object.id !== "door-leaf"}
-          title={object.id === "door-leaf" ? "Load SlimSAM locally, then left-click the object and right-click exclusions" : "M3c automatic height is fixture-validated for B1 only"}
+          disabled={segmentBusy}
+          title="Load SlimSAM locally, then left-click the object and right-click exclusions"
           onClick={() => void chooseSegmentation()}
         >
           {segmentBusy ? "Working…" : "Segment"}
@@ -451,37 +515,26 @@ export function Depth2D() {
             }
             segmentationAttemptRef.current = undefined;
             segmentationStartedRef.current = undefined;
+            setSegmentationElapsedMs(0);
+            setPreparedFrame(reusePreparedFrame);
             setPrompts([]);
             setSegmentError(undefined);
             clearActiveMask();
             syncMeasurementGraph();
           }}
         >Clear</button>
-        {mask?.segmentation && (
-          <>
-            <button className="pane-btn" disabled={segmentBusy || prompts.length === 0} onClick={undoSegmentationPrompt}>Undo click</button>
-            <button
-              className={`chip-toggle${mask.segmentation.accepted ? " accepted" : ""}`}
-              disabled={mask.segmentation.accepted || !!reviewIssue || segmentBusy}
-              title={reviewIssue ?? "Accept this reviewed mask and allow the height pipeline to run"}
-              onClick={acceptSegmentation}
-            >
-              {mask.segmentation.accepted ? "Accepted" : "Accept mask"}
-            </button>
-          </>
-        )}
         <label>Mask <input aria-label="Mask opacity" type="range" min="0.1" max="0.9" step="0.05" value={ui.overlayOpacity} onChange={(event) => setOverlayOpacity(Number(event.target.value))} /></label>
         <label>Zoom <input aria-label="Canvas zoom" type="range" min="1" max="4" step="0.25" value={ui.zoom} onChange={(event) => setMeasurementZoom(Number(event.target.value))} /></label>
       </div>
       {(tool === "segment" || mask?.segmentation || segmentError) && (
-        <div className="segment-toolbar" role="status">
+        <div className="segment-toolbar">
           {segmentBusy ? (
-            <span className="busy">
+            <span className="busy" role="status">
               {segmentProgress?.phase === "loading"
-                ? `Loading SlimSAM${segmentProgress.percent === undefined ? "" : ` ${Math.round(segmentProgress.percent)}%`}`
+                ? `Loading SlimSAM${segmentProgress.percent === undefined ? "" : ` ${Math.round(segmentProgress.percent)}%`} · ${latency(segmentationElapsedMs)}`
                 : segmentProgress?.phase === "encoding"
-                  ? "Encoding this frame locally…"
-                  : "Refining mask locally…"}
+                  ? `Encoding this frame locally… ${latency(segmentationElapsedMs)}`
+                  : `Refining mask locally… ${latency(segmentationElapsedMs)}`}
             </span>
           ) : preparedFrame && tool === "segment" ? (
             <span>Left-click object · right-click background · every click refines all candidates</span>
@@ -489,12 +542,35 @@ export function Depth2D() {
             <span>Automatic selection runs locally with WebGPU; brush selection remains available.</span>
           )}
           {mask?.segmentation && (
+            <span className="segment-actions">
+              <button
+                className={`chip-toggle${mask.segmentation.accepted ? " accepted" : ""}`}
+                disabled={mask.segmentation.accepted || !!reviewIssue || segmentBusy}
+                title={reviewIssue ?? "Accept this reviewed mask and calculate RAW DA3 height"}
+                onClick={acceptSegmentation}
+              >
+                {acceptanceLabel(
+                  mask.segmentation.accepted,
+                  automaticFixtureValidated,
+                  !!object.availabilityNote,
+                )}
+              </button>
+              <button className="pane-btn" disabled={segmentBusy || prompts.length === 0} onClick={undoSegmentationPrompt}>Undo click</button>
+            </span>
+          )}
+          {mask?.segmentation && (
             <span className="mono">
-              score {mask.segmentation.score.toFixed(2)} · margin {mask.segmentation.scoreMargin.toFixed(2)} · {mask.segmentation.prompts.length} clicks · load {latency(mask.segmentation.modelLoadMs)} · encode {latency(mask.segmentation.frameEncodeMs)} · refine {latency(mask.segmentation.lastDecodeMs)}
+              score {mask.segmentation.score.toFixed(2)} · margin {mask.segmentation.scoreMargin.toFixed(2)} · {mask.segmentation.prompts.length} clicks · setup {mask.segmentation.modelLoadCached ? "cached" : latency(mask.segmentation.modelLoadMs)} · frame encode {mask.segmentation.frameEncodeCached ? "cached" : latency(mask.segmentation.frameEncodeMs)} · last click {latency(mask.segmentation.lastDecodeMs)} · operator total {latency(segmentationTotalMs)}
               {mask.segmentation.correctionStrokes > 0 && ` · ${mask.segmentation.correctionStrokes} brush corrections`}
             </span>
           )}
           {(segmentError || reviewIssue) && <span className="segment-warning">{segmentError ?? reviewIssue}</span>}
+          {mask?.segmentation && object.availabilityNote && (
+            <span className="segment-warning">Mask selection is available, but automatic height is withheld: {object.availabilityNote}</span>
+          )}
+          {mask?.segmentation && !automaticFixtureValidated && !object.availabilityNote && (
+            <span className="segment-warning">Experimental on {object.code}: inspect the RGB mask and 3D highlight carefully; only B1 has fixture-validated automatic evidence.</span>
+          )}
         </div>
       )}
       <div className="frame-toolbar">
@@ -546,6 +622,11 @@ export function Depth2D() {
                 }
                 event.currentTarget.setPointerCapture(event.pointerId);
                 lastPointRef.current = undefined;
+                const beforeCorrection = getMask()?.segmentation;
+                if (beforeCorrection?.accepted && segmentationStartedRef.current === undefined) {
+                  segmentationStartedRef.current =
+                    performance.now() - (beforeCorrection.selectionDurationMs ?? 0);
+                }
                 beginMaskCorrection();
                 const correction = getMask()?.segmentation;
                 if (correction) {
