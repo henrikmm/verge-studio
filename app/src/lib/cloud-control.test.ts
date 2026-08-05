@@ -34,6 +34,10 @@ import {
   localApi,
   // @ts-expect-error - plain ESM module, no type declarations
 } from "../../vite-plugins/local-api.mjs";
+import {
+  toWireManifest,
+  // @ts-expect-error - plain ESM module, no type declarations
+} from "../../vite-plugins/runs.mjs";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = new URL("../../../", import.meta.url).pathname;
@@ -148,6 +152,44 @@ describe("job runner", () => {
     });
     const result = await waitFor(job.id);
     expect(result.lines.join("\n")).not.toContain("secretsecret");
+  });
+});
+
+/**
+ * Saving a real cloud run.
+ *
+ * This is a regression test with a receipt. On 2026-08-05 a paid 112-frame run was saved for
+ * the first time and `save-run.sh` died on `KeyError: 'run_id'`: the registry stores the app's
+ * camelCase manifest, the script parses the service's snake_case JSON, and nobody had noticed
+ * because every previous Save was a built-in fixture that never reaches the script at all. The
+ * artifacts were still on a billing instance at the time.
+ */
+describe("toWireManifest", () => {
+  it("converts the stored manifest back into what save-run.sh parses", () => {
+    const wire = toWireManifest({
+      runId: "20260805-144554-780dbc",
+      artifacts: [
+        { kind: "glb", name: "scene.glb", sizeBytes: 16098484, sha256: "aa", url: "/artifact/x/scene.glb" },
+        { kind: "npz", name: "verge-result.npz", sizeBytes: 107434959, sha256: "bb", url: "/artifact/x/n.npz" },
+      ],
+    });
+
+    // The exact keys scripts/save-run.sh reads. Every one of these was missing before.
+    expect(wire.run_id).toBe("20260805-144554-780dbc");
+    expect(wire.artifacts[0]).toEqual({
+      name: "scene.glb",
+      sha256: "aa",
+      url: "/artifact/x/scene.glb",
+      kind: "glb",
+      size_bytes: 16098484,
+    });
+    // Range chunking is driven off this number; undefined would fetch the whole 102 MiB in one
+    // request and hit Cloud Run's 32 MiB response cap.
+    expect(wire.artifacts[1].size_bytes).toBe(107434959);
+  });
+
+  it("survives a manifest with no artifacts rather than throwing mid-save", () => {
+    expect(toWireManifest({ runId: "x" })).toEqual({ run_id: "x", artifacts: [] });
   });
 });
 

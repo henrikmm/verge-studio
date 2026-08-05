@@ -26,7 +26,15 @@ import {
   setCloudState,
   useCloud,
 } from "../lib/cloud-store";
-import { PROXY_BASE, fetchCloudStatus, type CloudStatus } from "../lib/cloud-control";
+import {
+  PROXY_BASE,
+  fetchCloudStatus,
+  runningJob,
+  startDeploy,
+  streamJob,
+  type CloudStatus,
+  type JobView,
+} from "../lib/cloud-control";
 import {
   ENV_INFER_BASE,
   ENV_INFER_TOKEN,
@@ -47,6 +55,10 @@ import {
 import { REGISTRY } from "../graph/nodes";
 import type { ControlSpec } from "../graph/types";
 import type { DepthFieldValue } from "../measurement/depth-field";
+
+/** How long an idle instance may sit before the pane says so. Cloud Run bills its whole
+ *  lifetime, so ten quiet minutes cost the same as ten busy ones. */
+const IDLE_WARN_MINUTES = 10;
 
 function Row({ k, v, title }: { k: string; v: string; title?: string }) {
   return (
@@ -173,6 +185,8 @@ export function Inspector() {
   const [status, setStatus] = useState<CloudStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusBusy, setStatusBusy] = useState(false);
+  const [deployJob, setDeployJob] = useState<JobView | null>(null);
+  const [deployLog, setDeployLog] = useState<string[]>([]);
 
   const selected = graph.selectedId ? nodeById(graph, graph.selectedId) : undefined;
   const spec = selected ? REGISTRY[selected.type] : undefined;
@@ -209,6 +223,25 @@ export function Inspector() {
    * makes the offline UI feel alive at zero cost.
    */
   const remote = cloud.baseUrl !== null;
+
+  /**
+   * Minutes since the last request to the service, or null when nothing is connected.
+   *
+   * `clockTick` exists only to re-render; the value is a local subtraction. Watching the idle
+   * timer must never itself count as activity — that would be the polling cost bug again, in a
+   * new costume.
+   */
+  const [clockTick, setClockTick] = useState(0);
+  useEffect(() => {
+    if (!remote) return;
+    const timer = window.setInterval(() => setClockTick((n) => n + 1), 30_000);
+    return () => window.clearInterval(timer);
+  }, [remote]);
+  const idleMinutes =
+    remote && cloud.lastRequestAt !== null
+      ? Math.floor((Date.now() - cloud.lastRequestAt) / 60_000)
+      : null;
+  void clockTick;
   const shouldPoll = graph.running || cloud.state === "warming" || !remote;
   useEffect(() => {
     if (!shouldPoll) return;
@@ -221,7 +254,14 @@ export function Inspector() {
       } catch {
         if (!cancelled) update({ gpu: null });
       }
-      if (!cancelled) timer = window.setTimeout(tick, graph.running ? 250 : 4000);
+      /**
+       * 250 ms is a local-mock cadence. Against Cloud Run it is 4 requests per second, which
+       * showed up in the 2026-08-05 logs as a wall of `GET /gpu 200` beside the inference — pure
+       * autoscaler pressure on a service capped at one instance, for a VRAM bar nobody reads
+       * four times a second. Remote runs sample every 2 s instead.
+       */
+      const interval = graph.running ? (remote ? 2000 : 250) : 4000;
+      if (!cancelled) timer = window.setTimeout(tick, interval);
     };
     void tick();
     return () => {
@@ -252,6 +292,47 @@ export function Inspector() {
   useEffect(() => {
     void loadStatus();
     // Mount only: refreshing is an explicit action, matching the no-idle-polling rule.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /**
+   * Deploy, watch it, and point the app at the result.
+   *
+   * Auto-connecting on success is a correctness measure, not a convenience: a deployed service
+   * the app is NOT pointed at is precisely the state that produced the 2026-08-05 mock-run
+   * misdiagnosis, where the mock answered /infer and returned an unrelated scene's geometry.
+   */
+  const runDeploy = async () => {
+    setDeployLog([]);
+    const { job } = await startDeploy();
+    setDeployJob(job);
+    const result = await streamJob(job.id, (line) => setDeployLog((prior) => [...prior, line]));
+    setDeployJob((prior) => (prior ? { ...prior, status: result.status } : prior));
+    if (result.status !== "succeeded") {
+      throw new Error(`deploy failed (${result.error ?? `exit ${result.exitCode}`})`);
+    }
+    const fresh = await fetchCloudStatus(true);
+    setStatus(fresh);
+    if (fresh.service.url) {
+      connectProxied(fresh.service.url, PROXY_BASE);
+      // Deliberately NOT warming here. Deploying is free; the first request is what starts the
+      // meter, and that should stay an act the operator chooses.
+      setCloudState("cold");
+    }
+  };
+
+  /** A deploy started before a page reload is still running. Reattach rather than offer to
+   *  start a second one — the job runner is single-flight, but the UI should say so too. */
+  useEffect(() => {
+    void (async () => {
+      const job = await runningJob("deploy").catch(() => null);
+      if (!job) return;
+      setDeployJob(job);
+      setDeployLog(job.lines);
+      const result = await streamJob(job.id, (line) => setDeployLog((prior) => [...prior, line]));
+      setDeployJob((prior) => (prior ? { ...prior, status: result.status } : prior));
+      if (result.status === "succeeded") await loadStatus(true);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -430,6 +511,43 @@ export function Inspector() {
                   {statusBusy ? "Checking…" : "Refresh status"}
                 </button>
                 {/*
+                  Deploy. The rails around it matter as much as the button:
+
+                  - disabled while a service already exists, so it can never stack a second one
+                  - disabled unless gcloud is authenticated, because the failure would be a
+                    twenty-minute-shaped confusion otherwise
+                  - a confirm dialog that states instance-lifetime billing in words and the
+                    predicted duration, since this button removes the friction that has been
+                    protecting this project from accidental spend
+                  - auto-connects on success, because a deployed service the app is not pointed
+                    at is the exact state that produced the mock-run misdiagnosis
+                */}
+                {!status.service.exists && status.auth.active && (
+                  <button
+                    disabled={busy || deployJob !== null}
+                    title="Runs scripts/deploy.sh, then points the app at the result. Cloud Run bills the instance's whole lifetime once it wakes."
+                    onClick={() =>
+                      act(async () => {
+                        if (
+                          !window.confirm(
+                            `Deploy ${status.service.name}?\n\n` +
+                              `${status.deploy.estimate}.\n\n` +
+                              "Deploying does not bill by itself, but the first request wakes an " +
+                              "L4 instance and Cloud Run then bills its WHOLE LIFETIME — cold " +
+                              "start and idle tail included, not inference seconds.\n\n" +
+                              "Batch every run you need, save them, then Delete service.",
+                          )
+                        ) {
+                          return;
+                        }
+                        await runDeploy();
+                      })
+                    }
+                  >
+                    Deploy &amp; connect
+                  </button>
+                )}
+                {/*
                   Connect without typing a URL or holding a token. The service URL comes from
                   `gcloud run services describe`; requests are signed inside the dev server.
                   This does NOT deploy — it only points the app at a service that already
@@ -452,6 +570,12 @@ export function Inspector() {
                   </button>
                 )}
               </div>
+              {deployJob && (
+                <>
+                  <Row k="Deploy" v={deployJob.status} />
+                  <pre className="job-log">{deployLog.slice(-14).join("\n") || "starting…"}</pre>
+                </>
+              )}
               <div className="inspector-note">
                 Checking costs nothing: these read gcloud metadata and never touch the service,
                 so they cannot wake an instance.
@@ -488,6 +612,19 @@ export function Inspector() {
               )}
               <Row k="Requests" v={`${cloud.requestCount}`} />
               <Row k="Runs" v={`${cloud.runCount}`} />
+              {/*
+                Idle watchdog. Cloud Run bills the instance's lifetime, so an instance nobody is
+                using costs exactly as much as one running inference. The app cannot delete it
+                automatically — artifacts that have not been saved yet live only on that
+                instance, and a surprise deletion would destroy paid-for work — so it says so
+                loudly and leaves the decision where it belongs.
+              */}
+              {idleMinutes !== null && idleMinutes >= IDLE_WARN_MINUTES && (
+                <div className="inspector-note error">
+                  Idle {idleMinutes} min — still billing. Save any runs you want to keep, then
+                  Delete service.
+                </div>
+              )}
               {/*
                 No currency figure, on purpose (DESIGN.md honesty rule 1). The app has no
                 billing data and the true lifetime started before our first contact, so the

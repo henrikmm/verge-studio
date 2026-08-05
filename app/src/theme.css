@@ -485,12 +485,79 @@ body {
   min-height: 0;
 }
 
+/* Provenance banner. Deliberately in the pane body's flow, not in `.pane-status` — that row is
+   nowrap + overflow:hidden and silently clips anything at its right edge (2026-08-04 audit,
+   bug 4). A warning that can disappear in a narrow pane is worse than no warning. */
+.provenance {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.provenance.mock {
+  background: #3a1a1a;
+  border-bottom-color: var(--accent-err);
+  color: #ffd9d9;
+}
+
+.provenance.fixture {
+  background: #16161a;
+  color: var(--text-dim);
+}
+
+/* Streamed job output. Fixed height so a 20-minute build cannot push the rest of the
+   inspector off screen, and monospaced because it is gcloud's own text. */
+.job-log {
+  max-height: 130px;
+  overflow: auto;
+  margin: 4px 0;
+  padding: 4px 6px;
+  background: #0a0a0c;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .node-thumb {
+  position: relative;
   height: 74px;
   display: grid;
   place-items: center;
   background: #0a0a0c;
   overflow: hidden;
+}
+
+/* Overlaid rather than laid out, so the control sits in the same place whether the card is
+   showing "drop a video, or" or a frame thumbnail from a loaded clip. */
+.node-browse {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 2px 6px;
+  background: #000000a6;
+  color: #f2f2f4;
+  border: 1px solid #ffffff40;
+  border-radius: 2px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.node-browse:hover {
+  border-color: #ffffff8c;
+  color: var(--emph-hi);
+}
+
+.node-browse:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .node-thumb img {

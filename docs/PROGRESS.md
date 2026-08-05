@@ -6,9 +6,10 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-05 (sixth session) · **P3: in-app cloud control M0–M2 — status before
-spending, a job runner, and an authenticated proxy that keeps credentials out of the browser.
-The Deploy button (M3) and its safety rails (M4) are NOT built. See the P3 section.**
+Last updated: 2026-08-05 (sixth session) · **P3 + P4: in-app cloud control, then the first real
+end-to-end run on a brand-new clip. Deploy, connect, run, save and teardown all happen in the app
+now. The build-skip branch executed and held. Four bugs found — three fixed, one open (see P4
+bug 4: an Inspector param change strands the graph, which makes a paid run look broken).**
 
 Previously: 2026-08-04 (fifth session) · **P2: cloud cost safety, a run registry, per-clip
 measurement targets, pane focus/hide, and a neutral colour system — see the P2 section.**
@@ -1260,6 +1261,142 @@ not assert. A fake that cannot fail the way the real object fails proves nothing
       `gcloud run services proxy` as a managed child.
 - [ ] The teardown *route* has not been exercised against a real service either; only the job
       runner beneath it, and a no-op teardown attempt was blocked by tooling before it ran.
+
+## P4 — First real end-to-end run on a NEW clip ✅ 2026-08-05 (sixth session, part two)
+
+**One warm cloud session, ~25 min instance lifetime, service deleted — 0 services remain, image
+kept.** The whole pipeline ran on a clip that had never been through it: `da3Test.mp4`
+(1920×1080 HEVC, 13.55 s, no rotation), 112 frames @ 8.27 fps, 504 px, **36.9 s GPU**.
+
+This is the first time the app has consumed a real cloud manifest end to end since M2b, and the
+first time ever on a clip with no fixture behind it. It found four bugs, three of them in code
+that had been marked done.
+
+### What now works, verified in the browser against live hardware
+
+- [x] **Deploy from the app.** `Deploy & connect` ran `deploy.sh`, streamed its log, and pointed
+      the app at the result. **The build-skip branch executed for the first time** — see below.
+- [x] **The authenticated proxy carried real Cloud Run traffic.** Header read `NVIDIA L4` with no
+      "(mock)", live VRAM telemetry, and the browser held no credential at any point.
+- [x] **Browse… on Frame Source.** Dragging is no longer the only way in.
+- [x] **The frame plan told the truth on an unfamiliar clip**: `10 fps × 13.5s = 135 frames, over
+      the 112-frame cap. FPS lowered to 8.27 so the frames still span the whole clip.`
+- [x] **Depth 2D and Viewport 3D showed the new room** — table, chairs, shelves, tiled floor —
+      with its own fitted floor (21.3% support, 21.5° tilt) rather than the door room's
+      14.6%/11.8°. No MOCK banner, because it was not a mock.
+- [x] **Range-chunked NPZ against a LIVE instance.** 102 MiB in 5 chunks, sha256 verified. This
+      closes the M1 item that had said "has not been exercised against a live Cloud Run instance
+      since implementation".
+- [x] **Save brought 128 MB home** to `~/verge-runs/20260805-144554-780dbc`; `check-fixtures.mjs`
+      parses `depth, confidence, extrinsics, intrinsics`.
+
+### The build-skip branch — **EXECUTED, and it held** ✅
+
+The open question from P3 is closed. `deploy.sh` took its skip branch on a real deploy: the tree
+hashed to `src-3038078518c96bb0`, Artifact Registry already held that tag, no Cloud Build ran, and
+the service was live in **~1-3 min instead of 15-20**. The prediction the UI showed beforehand
+(`~1-3 min · build skipped`) matched what happened. Both halves — predicate and branch body — are
+now verified. The freeze on `server/` is what keeps this true; treat it as load-bearing.
+
+### Bug 1 — artifacts died with the instance (the reported 404) ⚠️ FIXED
+
+`GET /artifact/{run_id}/scene.glb` returned 404 immediately after a successful run. The proxy was
+innocent: it authenticated, reached Cloud Run and relayed the service's own
+`{"detail":"no such artifact"}`, which was confirmed by fetching it directly.
+
+The logs are unambiguous:
+
+```
+14:33:50.303  INFO: "POST /infer HTTP/1.1" 200 OK        ← manifest returned
+14:33:50.389  *** SIGTERM received by PID 1 from PID 0   ← that instance drained
+14:33:50.511  INFO: "GET /artifact/…/scene.glb" 404      ← answered by a DIFFERENT instance
+```
+
+`RUN_ROOT = tempfile.gettempdir()/verge-runs` (`server/main.py:50`), so artifacts live on the
+container's local disk and an `/artifact` URL is meaningful **only on the instance that produced
+it**. With `--min-instances=0`, Cloud Run had already started a replacement (14:33:21) while
+inference was still running and drained the original 86 ms after its response. Three container
+starts in four minutes — 14:29:24, 14:31:09, 14:33:21 — all normal idle recycling.
+
+**Fix applied: `--min-instances=1` in `deploy.sh`.** It is a correctness requirement, not a
+tuning knob, and it has a price: the instance never scales to zero while the service exists, so
+`teardown.sh` moves from good hygiene to non-negotiable. The durable fix remains the GCS +
+signed-URL path `_publish()` already half-implements.
+
+**Why M2b and M3.0 got away with it:** one instance happened to survive long enough. Luck, not
+correctness. Do not read those sessions as evidence this path was ever sound.
+
+### Bug 2 — the Save button had never worked on a real run ⚠️ FIXED
+
+Pressing Save died on `KeyError: 'run_id'`. The registry stores the app's **camelCase** manifest
+(`manifestFromWire()` has already converted it); `save-run.sh` parses the service's **snake_case**
+JSON. Every previous Save was a built-in fixture, which is already on disk and never reaches the
+script — so the seam had never once been exercised, while P2 recorded it as done.
+
+Fixed with `toWireManifest()` in `runs.mjs`, plus two regression tests that name the exact keys
+the script reads. **This is the second time this file has recorded a box ticked for code that was
+written but never run.** The lesson is not new; the cost this time was a billing GPU.
+
+### Bug 3 — `serviceUrl` recorded the proxy path ⚠️ FIXED
+
+`registerRun` stored `serviceUrl: inferBase()`, which under the proxy is `/api/cloud/svc` — a
+same-origin path meaningless to a shell script. Introduced by P3's proxy work and caught here.
+Now records `getCloud().serviceUrl`. `saveRun` also mints its own identity token from ADC, so
+saving needs no token in the browser and nothing pasted.
+
+### Bug 4 — an Inspector param change strands the graph ⬜ NOT FIXED
+
+`setNodeParam` (`graph/graph-store.ts:95`) stales the node and everything downstream but never
+calls `runAuto()`. Switching **Run Source** from `recorded evidence` to `live DA3 output` left
+eight nodes stale with **no visible way to advance them** — the live run was already paid for and
+sitting in memory, and the panes kept showing the door fixture. It only recovered because
+touching a Depth 2D slider happens to call `runAuto()`.
+
+A user hitting this would reasonably conclude their run failed. **Fix before the next live
+session**: either call `runAuto()` after a param change on an `auto` node, or give the graph a
+visible "N stale — run" affordance. The stale count in the pane header is not enough; it names
+the state without offering the verb.
+
+### Also changed
+
+- **In-run GPU polling was 250 ms** — 4 req/s at a real service, visible as a wall of
+  `GET /gpu 200` beside the inference. Now 2 s when remote, unchanged against the local mock.
+- **Mock honesty (from the P3 carry-forward)**: the mock's manifest no longer echoes the uploaded
+  frame count (the roadside npz holds 4 frames; it claimed 112), and `ProvenanceBanner` marks
+  MOCK/RECORDED runs in both geometry panes. Verified in-browser.
+
+### Measured facts from this session
+
+| | |
+|---|---|
+| Clip | `da3Test.mp4`, 1920×1080 HEVC, 13.55 s, 406 frames @ 120 fps, no rotation |
+| Sampling | 112 frames @ 8.27 fps (10 fps requested, capped) |
+| GPU | 36.9 s at 504 px |
+| **VRAM** | **22.02 / 22.03 GiB — 99.96%** |
+| Artifacts | GLB 16.1 MB, npz 102 MiB |
+| Instance | ~25 min, deleted |
+
+⚠️ **22.02 GiB is not the 21.28 the ladder predicts for 112f/504px.** The measured table was built
+on the portrait door clip; this landscape 1920×1080 clip lands **0.74 GiB higher at the same frame
+count and resolution**, essentially touching the 22.03 GiB ceiling. It did not OOM, but there is
+no headroom left. **Aspect ratio is a VRAM variable and `docs/vram-measurements.json` does not
+model it.** Do not treat 112f @ 504 px as universally safe; for a landscape clip, drop frames or
+resolution first.
+
+### NOT done — carry forward
+
+- [ ] **Bug 4 above** — the stranded-graph UX. Highest priority; it makes a working run look broken.
+- [ ] **GCS + signed URLs.** `--min-instances=1` is a workaround that trades money for
+      correctness. The real fix removes instance-local artifacts entirely.
+- [ ] **The measurement branch was never exercised on this clip** — `Measure Height` and
+      `Scale Check` stayed stale because the target set is the door's B1–B5 and this room has no
+      registered targets or truths. Reaching an actual measurement on a new clip needs the
+      per-clip target flow from P2 driven for real.
+- [ ] **Extend the VRAM model to aspect ratio**, or lower the default frame cap for landscape.
+- [ ] `/healthz` (mock) vs `/health` (service) — the contract is asymmetric; the mock route does
+      not exist on the deployed service.
+- [ ] The first run of the session, `20260805-143206-a68b92`, is a permanently unavailable stub:
+      its artifacts died with its instance. Delete it from the Runs pane.
 
 ## M4 — Productization + evidence hardening ⬜
 

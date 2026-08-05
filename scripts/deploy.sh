@@ -7,6 +7,22 @@
 # Concurrency is deliberately > 1. Only one inference runs at a time (the service
 # holds a lock), but the extra slots keep /gpu answerable during a run, which is what
 # feeds the app's live VRAM bar.
+#
+# --min-instances=1 is NOT an optimisation, it is a correctness requirement, and it was
+# added on 2026-08-05 after it cost a real GPU session. Artifacts are written to the
+# CONTAINER'S LOCAL DISK (server/main.py: RUN_ROOT = tempfile.gettempdir()), so an
+# /artifact URL is only valid on the instance that produced it. With min-instances=0,
+# Cloud Run had already scheduled a replacement while inference was still running: the
+# instance was drained 86 ms after its /infer response, and the browser's GLB fetch
+# 120 ms later was answered by a different instance that had never seen the file.
+#
+# The cost of this flag is real and must be respected: the instance NEVER scales to zero
+# while the service exists, so it bills continuously from deploy to teardown. That is
+# already the operating assumption of a warm batched session -- but it makes
+# scripts/teardown.sh non-optional rather than merely good hygiene.
+#
+# The durable fix is the GCS + signed-URL path that _publish() already half-implements;
+# until VERGE_OUTPUT_BUCKET exists, this flag is what keeps artifacts reachable.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -78,7 +94,7 @@ gcloud run deploy "${SERVICE}" \
   --cpu=8 \
   --memory=32Gi \
   --no-cpu-throttling \
-  --min-instances=0 \
+  --min-instances=1 \
   --max-instances=1 \
   --concurrency=4 \
   --timeout=900 \

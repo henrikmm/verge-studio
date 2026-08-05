@@ -35,6 +35,12 @@ const MIME = {
 
 const FIXTURE_DIR = new URL("../../fixtures/roadside/", import.meta.url);
 
+/**
+ * How many frames the roadside fixture's npz actually contains — `depth` is (4, 224, 392).
+ * The mock must never claim more than this; see the note on `frames` in POST /api/infer.
+ */
+const FIXTURE_FRAME_COUNT = 4;
+
 // Dropped videos and extracted frames both live under the OS temp dir. Nothing here
 // is ever uploaded anywhere by this middleware -- the cloud only ever receives the
 // JPEG frames, and only when the user runs the DA3 node.
@@ -439,9 +445,23 @@ export function localApi() {
                   infer_gs: wireParams.infer_gs ?? false,
                   max_frames: wireParams.max_frames ?? 32,
                 },
+                /**
+                 * `count` is the FIXTURE's frame count, not the upload's.
+                 *
+                 * It used to echo however many JPEGs arrived, which made the manifest describe
+                 * data it did not have: the roadside npz holds 4 frames, so every frame index
+                 * past 3 sliced off the end of the array. Combined with the fact that the app
+                 * takes RGB from the local extraction and geometry from the manifest, a mock
+                 * run wore the new clip's face while carrying an unrelated scene's geometry —
+                 * which is exactly how a mock run got mistaken for a real one on 2026-08-05.
+                 *
+                 * `uploaded_count` keeps the "did the server really receive N JPEGs?" check
+                 * that the multipart path is verified with.
+                 */
                 frames: {
-                  count: frameCount,
+                  count: FIXTURE_FRAME_COUNT,
                   requested_count: frameCount,
+                  uploaded_count: frameCount,
                   width: 518,
                   height: 294,
                   capped: false,

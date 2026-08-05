@@ -18,7 +18,9 @@ import {
   type PointCloudValue,
   type SelectionValue,
 } from "../graph/nodes";
+import type { DepthFieldValue } from "../measurement/depth-field";
 import { OutputRow, PaneControls } from "./pane-chrome";
+import { ProvenanceBanner } from "./provenance";
 
 const GIZMO_PX = 72;
 
@@ -49,6 +51,11 @@ export function Viewport3D() {
 
   const graph = useGraph();
   const incoming = resolveInput(graph, VIEWER_3D_ID, "points");
+  // The cloud itself carries no provenance — it is a GLB. Read it from the depth field that
+  // produced it, one hop upstream, so the banner cannot disagree with what is rendered.
+  const provenance = resolveInput(graph, "point-cloud", "depth")?.value as
+    | DepthFieldValue
+    | undefined;
   const cloud = incoming?.value as PointCloudValue | undefined;
   const ground = resolveCurrentInput(graph, VIEWER_3D_ID, "plane")?.value as GroundPlaneValue | undefined;
   const selection = resolveCurrentInput(graph, VIEWER_3D_ID, "selection")?.value as SelectionValue | undefined;
@@ -293,6 +300,7 @@ export function Viewport3D() {
         onSelect={setOutput}
         hint="Left-drag=orbit, wheel=zoom, right-drag=pan"
       />
+      <ProvenanceBanner field={provenance} />
       <div className="pane-body" ref={hostRef}>
         {ground && (
           <div className="viewport-overlay">

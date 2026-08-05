@@ -8,7 +8,7 @@
  */
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { uploadVideo } from "../lib/infer-client";
 import {
   isNodeStale,
@@ -69,6 +69,8 @@ export function NodeCard({ id, selected }: NodeProps) {
   const graph = useGraph();
   const [dropping, setDropping] = useState(false);
   const [dropError, setDropError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const node = nodeById(graph, id);
   if (!node) return null;
@@ -94,14 +96,17 @@ export function NodeCard({ id, selected }: NodeProps) {
 
   const acceptsVideo = node.type === "frame-source";
 
-  const onDrop = async (event: React.DragEvent) => {
-    if (!acceptsVideo) return;
-    event.preventDefault();
-    event.stopPropagation();
-    setDropping(false);
-    setDropError(null);
-    const file = event.dataTransfer.files[0];
+  /**
+   * One path for both ways of choosing a clip.
+   *
+   * Dragging was the only way in until 2026-08-05, and it is the awkward one: the drop target
+   * is this card, which the Graph pane's default "Measurement view" filters out entirely. The
+   * Browse button reaches the same code through the OS file dialog.
+   */
+  const loadVideo = async (file: File | undefined) => {
     if (!file) return;
+    setDropError(null);
+    setLoading(true);
     try {
       const source = await uploadVideo(file);
       setNodeParams(id, {
@@ -113,7 +118,17 @@ export function NodeCard({ id, selected }: NodeProps) {
       await runAuto();
     } catch (err) {
       setDropError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const onDrop = async (event: React.DragEvent) => {
+    if (!acceptsVideo) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setDropping(false);
+    await loadVideo(event.dataTransfer.files[0]);
   };
 
   return (
@@ -171,10 +186,43 @@ export function NodeCard({ id, selected }: NodeProps) {
           <img src={shown.thumbnailUrl} alt="" />
         ) : (
           <span className="node-thumb-empty">
-            {acceptsVideo && !node.params.videoPath
-              ? "drop a video"
-              : (shown?.summary ?? "no output")}
+            {loading
+              ? "reading clip…"
+              : acceptsVideo && !node.params.videoPath
+                ? "drop a video, or"
+                : (shown?.summary ?? "no output")}
           </span>
+        )}
+        {acceptsVideo && (
+          <>
+            {/*
+              The OS file dialog, because dragging is the awkward path: the drop target is this
+              card, and the Graph pane opens in a view that hides it. `nodrag` keeps React Flow
+              from treating the click as the start of a node drag.
+            */}
+            <input
+              ref={fileInput}
+              type="file"
+              accept="video/*"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                void loadVideo(e.target.files?.[0]);
+                // Clearing lets the same file be picked again after a failure.
+                e.target.value = "";
+              }}
+            />
+            <button
+              className="node-browse nodrag"
+              disabled={loading}
+              title="Choose a video file. It is copied to a temp dir so ffmpeg has a real path — browsers never expose one."
+              onClick={(e) => {
+                e.stopPropagation();
+                fileInput.current?.click();
+              }}
+            >
+              {node.params.videoPath ? "Change clip…" : "Browse…"}
+            </button>
+          </>
         )}
       </div>
 

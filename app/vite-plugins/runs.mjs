@@ -154,6 +154,44 @@ export async function registerRun(entry) {
  * cap forces, plus sha256 verification, and having two implementations of that would mean one
  * of them is wrong.
  */
+/**
+ * Back to the wire shape `save-run.sh` reads.
+ *
+ * The registry stores what the app holds, which `manifestFromWire()` has already converted to
+ * camelCase; the script parses the service's snake_case JSON. Saving a real cloud run therefore
+ * died on `KeyError: 'run_id'` — and because the only runs anyone had ever pressed Save on were
+ * the built-in fixtures (already on disk, never routed here), the Save button had never once
+ * worked against a live run. Found 2026-08-05, after a GPU had been paid for.
+ */
+export function toWireManifest(manifest) {
+  return {
+    run_id: manifest.runId,
+    artifacts: (manifest.artifacts ?? []).map((a) => ({
+      name: a.name,
+      sha256: a.sha256,
+      url: a.url,
+      kind: a.kind,
+      size_bytes: a.sizeBytes,
+    })),
+  };
+}
+
+/**
+ * An identity token for a remote service, or "" for anything local.
+ *
+ * Import is lazy so this module keeps working in tests that never touch gcloud, and a failure
+ * degrades to an empty token rather than blocking a save that might still succeed.
+ */
+async function serviceToken(serviceUrl) {
+  if (!/^https:\/\//i.test(serviceUrl ?? "")) return "";
+  try {
+    const { identityToken } = await import("./cloud.mjs");
+    return await identityToken();
+  } catch {
+    return "";
+  }
+}
+
 export async function saveRun(repoRoot, id) {
   const runs = await readIndex();
   const run = runs.find((item) => item.id === id);
@@ -162,7 +200,7 @@ export async function saveRun(repoRoot, id) {
   if (!run.serviceUrl) throw new Error(`run ${id} has no service URL — it may already be gone`);
 
   const manifestPath = join(tmpdir(), `verge-save-${id}.json`);
-  await writeFile(manifestPath, JSON.stringify(run.manifest));
+  await writeFile(manifestPath, JSON.stringify(toWireManifest(run.manifest)));
 
   const { stdout, stderr } = await execFileAsync(join(repoRoot, "scripts/save-run.sh"), [manifestPath, id], {
     cwd: repoRoot,
@@ -171,7 +209,10 @@ export async function saveRun(repoRoot, id) {
     env: {
       ...process.env,
       VERGE_URL: run.serviceUrl,
-      VERGE_TOKEN: run.token ?? "",
+      // Saving happens in a shell, so the browser's credential-free proxy cannot help here.
+      // The token is minted in THIS process from ADC and handed to the child — it never
+      // reaches the browser, and nothing has to be typed or pasted to save a run.
+      VERGE_TOKEN: run.token || (await serviceToken(run.serviceUrl)),
       FIXTURE_ROOT: RUNS_ROOT,
     },
   });

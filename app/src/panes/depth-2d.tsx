@@ -41,6 +41,7 @@ import {
 import { percentile, type NpyArray } from "../lib/npz";
 import { turbo } from "../lib/turbo";
 import { OutputRow, PaneControls } from "./pane-chrome";
+import { ProvenanceBanner } from "./provenance";
 
 const OUTPUTS = [
   { id: "rgb", label: "RGB" },
@@ -628,6 +629,7 @@ export function Depth2D() {
         <label>Drop low conf <input aria-label="Confidence percentile" type="range" min="0" max="80" step="5" value={ui.confidencePercentile} onChange={(event) => setConfidencePercentile(Number(event.target.value))} /></label>
         <span className="mono">{ui.confidencePercentile}%</span>
       </div>
+      <ProvenanceBanner field={field} />
       <div className="pane-body depth-stage">
         {field ? (
           <div

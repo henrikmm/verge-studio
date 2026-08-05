@@ -15,7 +15,7 @@ import { artifactUrl, fetchFrameBlob, infer } from "../../lib/infer-client";
 import type { InferManifest, ProcessResMethod, RefViewStrategy } from "../../lib/contract";
 import { DEFAULT_MAX_FRAMES } from "../../lib/contract";
 import { depthFieldFromRun } from "../../measurement/depth-field";
-import { inferBase } from "../../lib/cloud-store";
+import { getCloud, inferBase } from "../../lib/cloud-store";
 import { registerRun } from "../../lib/runs";
 import { refreshRuns } from "../../lib/runs-store";
 import { update } from "../../lib/session-store";
@@ -97,7 +97,14 @@ export const da3DepthSpec: NodeSpec = {
           frameCount: manifest.frames.count,
           processRes: manifest.params.processRes,
           gpuSeconds: manifest.timing.gpuSeconds,
-          serviceUrl: inferBase(),
+          /**
+           * The real service, not the path the browser used to reach it.
+           *
+           * Under the local proxy `inferBase()` is `/api/cloud/svc`, which is meaningless to
+           * `save-run.sh` — it runs in a shell and needs somewhere to curl. Recording the proxy
+           * path made Save fail with "no such run" long after the GPU had been paid for.
+           */
+          serviceUrl: getCloud().serviceUrl ?? inferBase(),
           manifest,
           framePaths: frames.paths.slice(0, manifest.frames.count),
         });
