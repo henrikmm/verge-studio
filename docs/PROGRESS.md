@@ -1450,7 +1450,11 @@ The argument for the gate is real (painting a mask that belongs to no object is 
 it over-reaches: RGB/Depth/Confidence are *inspection* outputs with nothing to do with
 measurement, and after paying for a run the first thing anyone wants is to look at it. Proposed
 fix: always render the image and the OUTPUT toggles; disable only Brush/Segment/Erase and show
-the "add a target" hint inline. **Not applied — waiting on the operator's call.**
+the "add a target" hint inline.
+
+**Deferred by the operator on 2026-08-05 — not worth the work right now, and explicitly not a
+settled decision.** The current hard block stands until someone chooses otherwise. The proposal
+above is recorded so it can be picked up directly if that changes.
 
 ## M4 — Productization + evidence hardening ⬜
 
