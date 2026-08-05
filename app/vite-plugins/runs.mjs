@@ -56,6 +56,12 @@ function builtinRuns() {
     // Served by Vite's publicDir, which points at fixtures/.
     artifactBase: `/door/${setting}/`,
     framesBase: "/door/frames/",
+    /**
+     * These three settings SHARE one canonical 256-frame extraction, so an NPZ index has to be
+     * mapped through `canonicalFrameMap` to find its JPEG. Saved cloud runs carry their own
+     * contiguous frames and must not use that map — see the note in `depth-field.ts`.
+     */
+    canonicalFrames: true,
     sizeBytes: 0,
   }));
 }
@@ -139,6 +145,8 @@ export async function registerRun(entry) {
     processRes: entry.processRes ?? 0,
     gpuSeconds: entry.gpuSeconds ?? 0,
     serviceUrl: entry.serviceUrl ?? "",
+    // saveRun renumbers this run's own frames 1..N, so NPZ index i is simply file i+1.
+    canonicalFrames: false,
     manifest: entry.manifest ?? null,
     framePaths: entry.framePaths ?? [],
     artifactBase: null,

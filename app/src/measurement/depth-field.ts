@@ -91,11 +91,32 @@ export function canonicalFrameMap(frameCount: number, canonicalCount = 256): num
   );
 }
 
+/**
+ * Map NPZ index → the RGB file that actually holds that frame.
+ *
+ * Two numbering conventions exist on disk, and using the wrong one desynchronises RGB from
+ * depth **silently**, because most of the wrong filenames still exist:
+ *
+ * - **Built-in door fixtures** share ONE canonical 256-frame extraction between three settings
+ *   (112f / 256f / 256f, ladder-strided from a single decode). NPZ frame *i* is canonical frame
+ *   `canonicalFrameMap(count)[i]`, and the JPEG is named by that canonical number.
+ * - **Saved cloud runs** carry their own frames, renumbered contiguously 1..N by `saveRun`
+ *   (`vite-plugins/runs.mjs`). NPZ frame *i* is simply file *i+1* — the same identity the live
+ *   path uses in `depthFieldFromRun`.
+ *
+ * Applying the canonical spread to a saved 81-frame run asked for `frame-0004` at NPZ index 1
+ * and `frame-0256` at index 80: wrong-but-present frames early, 404s past index 25. Masks were
+ * therefore painted on one frame and back-projected with another frame's depth and camera pose,
+ * which is a silently wrong measurement rather than a visible failure. Found 2026-08-05.
+ */
 function recordedDescriptors(
   manifest: InferManifest,
   framesBase: string,
+  canonicalFrames: boolean,
 ): DepthFrameDescriptor[] {
-  const map = canonicalFrameMap(manifest.frames.count);
+  const map = canonicalFrames
+    ? canonicalFrameMap(manifest.frames.count)
+    : Array.from({ length: manifest.frames.count }, (_, i) => i + 1);
   const fps = manifest.frames.effectiveFps ?? manifest.params.fps;
   return map.map((canonicalIndex, npzIndex) => ({
     npzIndex,
@@ -119,6 +140,10 @@ export async function loadRunDepthField(run: {
   artifactBase: string | null;
   framesBase: string | null;
   available: boolean;
+  /** True only for the built-in door fixtures, which share one canonical 256-frame extraction.
+   *  Absent on records written before 2026-08-05, where `builtin` was the only signal. */
+  canonicalFrames?: boolean;
+  builtin?: boolean;
 }): Promise<DepthFieldValue> {
   if (!run.artifactBase || !run.framesBase) {
     throw new Error(
@@ -141,7 +166,13 @@ export async function loadRunDepthField(run: {
     manifest,
     source: "fixture",
     label: run.label,
-    frames: recordedDescriptors(manifest, run.framesBase),
+    // Falls back to `builtin` so a run record written before the flag existed still resolves
+    // correctly rather than silently taking the wrong numbering.
+    frames: recordedDescriptors(
+      manifest,
+      run.framesBase,
+      run.canonicalFrames ?? run.builtin ?? false,
+    ),
     loadArrays: memoizedArrays(manifest),
   };
 }

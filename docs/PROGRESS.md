@@ -1456,6 +1456,49 @@ the "add a target" hint inline.
 settled decision.** The current hard block stands until someone chooses otherwise. The proposal
 above is recorded so it can be picked up directly if that changes.
 
+### P4.2 — RGB and depth were desynchronised on every saved run ⚠️ FIXED 2026-08-05
+
+Operator report: "RGB frames stop around 87, DEPTH goes until 256… this in turn broke the brush
+measurements." Correct on both counts, and the visible half was the lesser half.
+
+**Two frame-numbering conventions exist on disk and the wrong one was applied to saved runs.**
+
+| Run kind | Frames on disk | NPZ index *i* maps to |
+|---|---|---|
+| Built-in door fixtures | ONE shared canonical 256-frame extraction, ladder-strided into three settings | `canonicalFrameMap(count)[i]` |
+| Saved cloud runs | this run's own frames, renumbered 1..N by `saveRun` | **i + 1** |
+
+`loadRunDepthField` applied the canonical map unconditionally. For the 81-frame `da3Test` run:
+
+```
+npzIndex   0 -> frame-0001.jpg
+npzIndex   1 -> frame-0004.jpg    present, but the WRONG frame
+npzIndex  10 -> frame-0033.jpg    present, but the WRONG frame
+npzIndex  26 -> frame-0084.jpg    404 — only 81 files exist
+npzIndex  80 -> frame-0256.jpg    404
+```
+
+The 404s past index 25 are what the operator saw. **The silent half is the damage**: from index 1
+onward the RGB shown was a different frame from the depth, intrinsics and extrinsics being used —
+so a mask painted on screen was back-projected with another frame's camera pose. That is a
+confidently wrong measurement with no error raised anywhere, the exact failure mode P0 identified
+as the one this project must never ship.
+
+The live path was always correct (`depthFieldFromRun` uses identity), which is why the first
+session looked right and only the saved run broke. Local extraction and the cloud download were
+both innocent — verified by probing the run directory before touching any code.
+
+- Numbering is now **recorded, not inferred**: `canonicalFrames` on the run record (`true` only
+  for built-ins), with a `builtin` fallback for records written before the flag existed.
+- Existing run records backfilled.
+- Three regression tests pin both conventions, including the wrong-but-present early indices.
+- Verified in the browser: the FRAME slider now ends at 81 (was 256), frame 81 reads 13.33 s
+  against a 13.55 s clip, and RGB and depth show the same scene.
+
+⚠️ **Any mask painted on a saved run before this fix is invalid** — it was painted against a
+mismatched frame. Nothing had been recorded on `da3Test.mp4` (0 trials), so no stored measurement
+is affected, but do not trust a pre-fix mask if one turns up.
+
 ## M4 — Productization + evidence hardening ⬜
 
 - [x] ~~Remove dormant `infer_gs`, splat export types, UI checkbox and unused splat port/type~~ —

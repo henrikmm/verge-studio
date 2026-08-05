@@ -26,6 +26,14 @@ export interface RunRecord {
   source: "cloud" | "fixture";
   /** Built-ins are the recorded door fixtures: read-only and not deletable. */
   builtin: boolean;
+  /**
+   * True when this run's RGB frames come from a SHARED canonical 256-frame extraction (the door
+   * fixtures) rather than its own contiguous 1..N set. It decides how an NPZ index maps to a
+   * JPEG filename, and getting it wrong desynchronises RGB from depth without erroring — see
+   * `measurement/depth-field.ts`. Optional: records written before 2026-08-05 fall back to
+   * `builtin`.
+   */
+  canonicalFrames?: boolean;
   /** True once the artifacts are on this disk rather than only on a cloud instance. */
   persisted: boolean;
   /** False when a stub's instance is gone, or a fixture payload was never regenerated. */
