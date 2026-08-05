@@ -18,6 +18,8 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 import { promisify } from "node:util";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { InferManifest } from "./contract";
+import { manifestFromWire } from "./infer-client";
 import {
   sourceTag,
   // @ts-expect-error - plain ESM module, no type declarations
@@ -189,7 +191,61 @@ describe("toWireManifest", () => {
   });
 
   it("survives a manifest with no artifacts rather than throwing mid-save", () => {
-    expect(toWireManifest({ runId: "x" })).toEqual({ run_id: "x", artifacts: [] });
+    expect(toWireManifest({ runId: "x" }).artifacts).toEqual([]);
+  });
+
+  /**
+   * The test that would have caught the SECOND bug, which the first fix caused.
+   *
+   * save-run.sh copies this exact object into the run directory as `manifest.json`, and
+   * `loadRunDepthField` reads it back through `manifestFromWire`. So the real contract is not
+   * "has the keys the script parses" — it is "survives a round trip". A version emitting only
+   * run_id and artifacts passed the field-by-field test above and still made every saved run
+   * unloadable.
+   */
+  it("round-trips through manifestFromWire without losing anything the app reads", () => {
+    const original: InferManifest = {
+      schemaVersion: "verge.infer-manifest/0.1.0",
+      runId: "20260805-151526-a99a78",
+      modelRepositoryId: "depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+      modelRevision: "b2359bdf726fb44ef62acca04d629dcf158053e7",
+      depthMode: "metric",
+      linearUnit: "metre",
+      params: {
+        fps: 8.27,
+        sourceDurationS: 13.55,
+        processRes: 504,
+        processResMethod: "upper_bound_resize",
+        refViewStrategy: "middle",
+        maxFrames: 112,
+      },
+      frames: { count: 81, requestedCount: 81, width: 1024, height: 576, capped: true, effectiveFps: 5.98 },
+      timing: { gpuSeconds: 36.9, wallSeconds: 41.2, modelLoadSeconds: 40.1 },
+      vram: {
+        peakBytes: 23_648_000_000,
+        currentBytes: 7_050_625_024,
+        totalBytes: 23_659_151_360,
+        deviceName: "NVIDIA L4",
+        torchPeakBytes: 18_500_000_000,
+        baselineBytes: 7_050_625_024,
+      },
+      artifacts: [
+        { kind: "glb", name: "scene.glb", sizeBytes: 16071460, sha256: "c49d", url: "/artifact/x/scene.glb" },
+      ],
+      transient: true,
+      expiresAfterDays: 3,
+      mock: false,
+    };
+
+    const restored = manifestFromWire(toWireManifest(original));
+    expect(restored).toEqual(original);
+
+    // Named individually because these four are what actually threw: Run Source died on
+    // `Cannot read properties of undefined`, and the viewport just kept the old point cloud.
+    expect(restored.params.fps).toBe(8.27);
+    expect(restored.frames.count).toBe(81);
+    expect(restored.timing.gpuSeconds).toBe(36.9);
+    expect(restored.vram.peakBytes).toBe(23_648_000_000);
   });
 });
 

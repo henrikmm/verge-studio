@@ -155,17 +155,63 @@ export async function registerRun(entry) {
  * of them is wrong.
  */
 /**
- * Back to the wire shape `save-run.sh` reads.
+ * Back to the wire shape — the COMPLETE inverse of `manifestFromWire`, not just the fields
+ * `save-run.sh` happens to parse.
  *
- * The registry stores what the app holds, which `manifestFromWire()` has already converted to
- * camelCase; the script parses the service's snake_case JSON. Saving a real cloud run therefore
- * died on `KeyError: 'run_id'` — and because the only runs anyone had ever pressed Save on were
- * the built-in fixtures (already on disk, never routed here), the Save button had never once
- * worked against a live run. Found 2026-08-05, after a GPU had been paid for.
+ * Two bugs live here, and the second was caused by the fix for the first.
+ *
+ * 1. The registry stores the app's camelCase manifest while the script parses the service's
+ *    snake_case JSON, so saving a real cloud run died on `KeyError: 'run_id'`. Every previous
+ *    Save was a built-in fixture, which is already on disk and never reaches the script, so the
+ *    seam had never been exercised.
+ * 2. The first fix emitted only `run_id` and `artifacts` — enough for the script, and wrong,
+ *    because `save-run.sh` *copies this file into the run directory as its permanent record*
+ *    (`cp "${MANIFEST}" "${DEST}/manifest.json"`). `loadRunDepthField` reads it back through
+ *    `manifestFromWire`, which dereferences `w.params.fps`, `w.frames.count`,
+ *    `w.timing.gpu_seconds` and `w.vram.peak_bytes`. A 429-byte manifest made every saved run
+ *    unloadable: selecting it threw inside Run Source, and the viewport silently kept showing
+ *    the previous cloud.
+ *
+ * The lesson worth keeping: this object is not a function argument, it is the run's archive
+ * record. Anything dropped here is dropped permanently, and the loss only shows up later.
  */
 export function toWireManifest(manifest) {
   return {
+    schema_version: manifest.schemaVersion,
     run_id: manifest.runId,
+    model_repository_id: manifest.modelRepositoryId,
+    model_revision: manifest.modelRevision,
+    depth_mode: manifest.depthMode,
+    linear_unit: manifest.linearUnit,
+    params: {
+      fps: manifest.params?.fps,
+      source_duration_s: manifest.params?.sourceDurationS ?? null,
+      process_res: manifest.params?.processRes,
+      process_res_method: manifest.params?.processResMethod,
+      ref_view_strategy: manifest.params?.refViewStrategy,
+      max_frames: manifest.params?.maxFrames,
+    },
+    frames: {
+      count: manifest.frames?.count,
+      requested_count: manifest.frames?.requestedCount,
+      width: manifest.frames?.width,
+      height: manifest.frames?.height,
+      capped: manifest.frames?.capped,
+      effective_fps: manifest.frames?.effectiveFps ?? null,
+    },
+    timing: {
+      gpu_seconds: manifest.timing?.gpuSeconds,
+      wall_seconds: manifest.timing?.wallSeconds,
+      model_load_seconds: manifest.timing?.modelLoadSeconds ?? null,
+    },
+    vram: {
+      peak_bytes: manifest.vram?.peakBytes,
+      current_bytes: manifest.vram?.currentBytes,
+      total_bytes: manifest.vram?.totalBytes,
+      device_name: manifest.vram?.deviceName,
+      torch_peak_bytes: manifest.vram?.torchPeakBytes ?? 0,
+      baseline_bytes: manifest.vram?.baselineBytes ?? 0,
+    },
     artifacts: (manifest.artifacts ?? []).map((a) => ({
       name: a.name,
       sha256: a.sha256,
@@ -173,6 +219,15 @@ export function toWireManifest(manifest) {
       kind: a.kind,
       size_bytes: a.sizeBytes,
     })),
+    diagnostics: manifest.diagnostics
+      ? {
+          native_npz: manifest.diagnostics.nativeNpz ?? {},
+          export_dir_listing: manifest.diagnostics.exportDirListing ?? [],
+        }
+      : undefined,
+    transient: manifest.transient,
+    expires_after_days: manifest.expiresAfterDays,
+    mock: manifest.mock === true,
   };
 }
 

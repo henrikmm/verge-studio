@@ -1398,6 +1398,60 @@ resolution first.
 - [ ] The first run of the session, `20260805-143206-a68b92`, is a permanently unavailable stub:
       its artifacts died with its instance. Delete it from the Runs pane.
 
+### P4.1 — Saved runs were unloadable, and the graph forgot which one you picked ✅ 2026-08-05
+
+Operator report after a second end-to-end session on `da3Test.mp4` (81f, 93.2 MB, saved): the run
+loaded correctly at first, but after an hour's break the app had reverted to the door fixture, and
+**selecting the da3Test run did not change the point cloud.** Two independent bugs.
+
+#### Bug A — the P4 save fix truncated the run's permanent record ⚠️ FIXED
+
+**Self-inflicted, same day.** P4's fix for `KeyError: 'run_id'` made `toWireManifest()` emit only
+the two fields `save-run.sh` parses. But that script does
+`cp "${MANIFEST}" "${DEST}/manifest.json"` — **the object handed to it becomes the run's archive
+record**, and `loadRunDepthField()` reads it back through `manifestFromWire()`, which dereferences
+`w.params.fps`, `w.frames.count`, `w.timing.gpu_seconds` and `w.vram.peak_bytes`.
+
+The saved `manifest.json` was **429 bytes**. Every saved run was therefore unloadable: Run Source
+threw, and because a failing node keeps its previous output, the viewport silently went on showing
+the door cloud. The failure was invisible at exactly the place it mattered.
+
+- `toWireManifest()` is now the complete inverse of `manifestFromWire()`.
+- The regression test is a **round trip** (`manifestFromWire(toWireManifest(m))` deep-equals `m`),
+  not a field-by-field check — the field-by-field test passed against the broken version.
+- The one already-saved run was repaired in place from the registry, which still held the full
+  manifest: 429 → 1679 bytes.
+
+**The lesson worth keeping:** that object is not a function argument, it is an archive record.
+A field dropped there is dropped permanently and only surfaces later, somewhere else.
+
+#### Bug B — the graph persisted nothing ⚠️ FIXED
+
+`dock-store` persisted the pane layout and `measurement-store` persisted objects, targets, trials
+and masks. `graph-store` persisted **nothing**, so any reload — including a tab discarded while the
+Mac slept — reset Run Source to `door-504px-112f` while the operator's own targets stayed on
+screen. Node `params` now persist under `verge.graph.params.v1`.
+
+Deliberately excluded: runtime outputs (live `THREE.Group`s and decoded arrays, neither
+serializable nor safe to resurrect) and the clip identity (`videoPath` points into the OS temp
+dir, cleared on reboot — restoring it would make Frame Source auto-run against a missing file).
+**Persisting the loaded clip itself needs a durable copy of the video and is not done.**
+
+Verified in the operator's own Chrome: select the run → reload → the selection, the point cloud
+(`24.6% support · 22.1° tilt`) and the `T1 Table` target all survive.
+
+#### Open — Depth 2D is gated behind having a measurement target ⬜ DESIGN DECISION
+
+`depth-2d.tsx:495` returns early with "This clip has no measurement targets yet" and renders
+**nothing** — no RGB, no depth, no confidence — until a target exists in the Objects pane. The
+operator hit this on a fresh clip and flagged it.
+
+The argument for the gate is real (painting a mask that belongs to no object is meaningless), but
+it over-reaches: RGB/Depth/Confidence are *inspection* outputs with nothing to do with
+measurement, and after paying for a run the first thing anyone wants is to look at it. Proposed
+fix: always render the image and the OUTPUT toggles; disable only Brush/Segment/Erase and show
+the "add a target" hint inline. **Not applied — waiting on the operator's call.**
+
 ## M4 — Productization + evidence hardening ⬜
 
 - [x] ~~Remove dormant `infer_gs`, splat export types, UI checkbox and unused splat port/type~~ —

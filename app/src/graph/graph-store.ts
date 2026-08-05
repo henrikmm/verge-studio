@@ -31,7 +31,74 @@ export interface GraphStoreState {
   error: string | null;
 }
 
-const initial = defaultGraph();
+/**
+ * Node parameters survive a reload; nothing else does.
+ *
+ * The pane layout (`dock-store`) and the measurement objects, targets and painted trials
+ * (`measurement-store`) have both persisted for a while. The graph did not — so a browser
+ * reload, or a Mac waking from sleep and discarding the tab, silently reset Run Source to the
+ * built-in door fixture while the operator's own targets stayed on screen. Reported 2026-08-05
+ * after an hour's break: "the default was the standard run not the da3Test one".
+ *
+ * Only `params` are stored. Runtime outputs hold live THREE.Group objects and decoded typed
+ * arrays, which are neither serializable nor safe to resurrect — a restored graph is stale by
+ * construction and re-runs its CPU nodes, which is the honest state anyway.
+ *
+ * The clip identity is deliberately EXCLUDED. `videoPath` points into the OS temp dir, which is
+ * cleared on reboot, so restoring it would make Frame Source auto-run and fail against a file
+ * that no longer exists. Losing the run selection was the actual complaint; a persisted clip
+ * needs a durable copy of the video, which is a separate piece of work.
+ */
+const PARAMS_KEY = "verge.graph.params.v1";
+const UNSAVED_PARAMS: Record<string, readonly string[]> = {
+  "frame-source": ["videoPath", "videoName", "videoSha256", "durationS"],
+};
+
+function loadParams(): Record<string, Record<string, JsonValue>> {
+  if (typeof window === "undefined" || !window.localStorage) return {};
+  try {
+    const raw = window.localStorage.getItem(PARAMS_KEY);
+    return raw ? (JSON.parse(raw) as Record<string, Record<string, JsonValue>>) : {};
+  } catch {
+    // Corrupt or unavailable storage must never stop the app from opening.
+    return {};
+  }
+}
+
+function saveParams(nodes: GraphNode[]): void {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    const stored: Record<string, Record<string, JsonValue>> = {};
+    for (const node of nodes) {
+      const skip = UNSAVED_PARAMS[node.type] ?? [];
+      stored[node.id] = Object.fromEntries(
+        Object.entries(node.params).filter(([key]) => !skip.includes(key)),
+      );
+    }
+    window.localStorage.setItem(PARAMS_KEY, JSON.stringify(stored));
+  } catch {
+    // A full or disabled localStorage must never take the app down with it.
+  }
+}
+
+/**
+ * Restore stored params onto the default graph.
+ *
+ * Merged onto the spec defaults rather than replacing them, so a node that gains a parameter in
+ * a later version still gets its default instead of `undefined` reaching an execute().
+ */
+function restoreGraph() {
+  const graph = defaultGraph();
+  const stored = loadParams();
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) =>
+      stored[node.id] ? { ...node, params: { ...node.params, ...stored[node.id] } } : node,
+    ),
+  };
+}
+
+const initial = restoreGraph();
 
 const state: GraphStoreState = {
   nodes: initial.nodes,
@@ -58,6 +125,7 @@ function recomputeKeys() {
 
 function commit() {
   snapshot = { ...state };
+  saveParams(state.nodes);
   for (const listener of listeners) listener();
 }
 
