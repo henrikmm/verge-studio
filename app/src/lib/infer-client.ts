@@ -7,6 +7,7 @@
  */
 
 import type { GpuSnapshot, InferManifest, InferParams } from "./contract";
+import { startTeardown, streamJob } from "./cloud-control";
 import { getCloud, inferBase, isRemote, noteRequest, noteRun } from "./cloud-store";
 
 /**
@@ -177,14 +178,18 @@ export async function releaseModel(): Promise<void> {
  * `scripts/teardown.sh`. This is the only action in the app that stops the meter. It keeps
  * the ~12 GB image, so the next deploy still takes the build-skip branch (~1 min, not 20).
  */
-export async function deleteService(): Promise<{ output: string }> {
-  return (await expectOk(
-    await fetch(`${LOCAL_BASE}/teardown`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: "{}",
-    }),
-  )) as { output: string };
+export async function deleteService(onLine?: (line: string) => void): Promise<{ output: string }> {
+  const lines: string[] = [];
+  const collect = (line: string) => {
+    lines.push(line);
+    onLine?.(line);
+  };
+  const { job } = await startTeardown();
+  const result = await streamJob(job.id, collect);
+  if (result.status !== "succeeded") {
+    throw new Error(`teardown failed (${result.error ?? `exit ${result.exitCode}`})`);
+  }
+  return { output: lines.join("\n").trim() };
 }
 
 export interface VideoProbe {

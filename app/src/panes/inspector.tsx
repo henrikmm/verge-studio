@@ -18,6 +18,7 @@ import {
 import {
   COST_BASIS,
   connectCloud,
+  connectProxied,
   disconnectCloud,
   formatElapsed,
   markServiceDeleted,
@@ -25,6 +26,7 @@ import {
   setCloudState,
   useCloud,
 } from "../lib/cloud-store";
+import { PROXY_BASE, fetchCloudStatus, type CloudStatus } from "../lib/cloud-control";
 import {
   ENV_INFER_BASE,
   ENV_INFER_TOKEN,
@@ -168,6 +170,9 @@ export function Inspector() {
   const [baseDraft, setBaseDraft] = useState(ENV_INFER_BASE);
   const [tokenDraft, setTokenDraft] = useState(ENV_INFER_TOKEN);
   const [teardownLog, setTeardownLog] = useState<string | null>(null);
+  const [status, setStatus] = useState<CloudStatus | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+  const [statusBusy, setStatusBusy] = useState(false);
 
   const selected = graph.selectedId ? nodeById(graph, graph.selectedId) : undefined;
   const spec = selected ? REGISTRY[selected.type] : undefined;
@@ -224,6 +229,31 @@ export function Inspector() {
       window.clearTimeout(timer);
     };
   }, [graph.running, shouldPoll]);
+
+  /**
+   * Cloud control status — free, and therefore safe to read on mount.
+   *
+   * Unlike /gpu, none of these calls reach the service: they ask gcloud about the service and
+   * the registry, so they cannot wake an instance or extend a billed lifetime. That is what
+   * makes it acceptable to answer "what would a deploy cost me right now?" before anything is
+   * spent, rather than making the operator start one to find out.
+   */
+  const loadStatus = async (refresh = false) => {
+    setStatusBusy(true);
+    try {
+      setStatus(await fetchCloudStatus(refresh));
+      setStatusError(null);
+    } catch (e) {
+      setStatusError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setStatusBusy(false);
+    }
+  };
+  useEffect(() => {
+    void loadStatus();
+    // Mount only: refreshing is an explicit action, matching the no-idle-polling rule.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** One-shot telemetry read, for when a remote session is idle and not polling. */
   const refreshGpu = async () => {
@@ -347,11 +377,102 @@ export function Inspector() {
           )}
         </div>
 
+        {/*
+          Cloud control: the state of the world before anything is spent.
+
+          Every row here is a metadata read. The one that matters is Image — it evaluates
+          deploy.sh's own build-skip predicate against the live registry, which is the
+          difference between a ~1-3 min deploy and a 15-20 min rebuild. Until this existed the
+          only way to learn that was to start the deploy and watch the log.
+        */}
+        <div className="inspector-section">
+          <h3>Cloud control</h3>
+          {status ? (
+            <>
+              <Row
+                k="gcloud"
+                v={
+                  !status.gcloud.available
+                    ? "not available"
+                    : status.auth.active
+                      ? (status.auth.account ?? "authenticated")
+                      : "not authenticated"
+                }
+                title={status.gcloud.error ?? status.auth.account ?? ""}
+              />
+              {status.gcloud.available && !status.auth.active && status.auth.hint && (
+                <div className="inspector-note">
+                  {status.auth.hint} — this is the one step no button can do for you, because it
+                  needs a browser consent screen.
+                </div>
+              )}
+              <Row k="Project" v={`${status.project} · ${status.region}`} />
+              <Row
+                k="Service"
+                v={status.service.exists ? "deployed" : "none"}
+                title={status.service.url ?? "no service — nothing is billing"}
+              />
+              <Row
+                k="Image"
+                v={status.image.present ? "in registry" : "not built"}
+                title={`${status.image.uri}:${status.image.tag ?? "?"}`}
+              />
+              <Row
+                k="Next deploy"
+                v={status.deploy.estimate}
+                title={status.deploy.detail ?? status.deploy.estimate}
+              />
+              {status.deploy.detail && (
+                <div className="inspector-note">{status.deploy.detail}</div>
+              )}
+              <div className="inspector-actions">
+                <button disabled={statusBusy} onClick={() => void loadStatus(true)}>
+                  {statusBusy ? "Checking…" : "Refresh status"}
+                </button>
+                {/*
+                  Connect without typing a URL or holding a token. The service URL comes from
+                  `gcloud run services describe`; requests are signed inside the dev server.
+                  This does NOT deploy — it only points the app at a service that already
+                  exists, and the first request is what wakes the instance.
+                */}
+                {status.service.exists && !remote && (
+                  <button
+                    disabled={busy || !status.service.url}
+                    title="Route GPU calls through the dev server, which signs them from this Mac's gcloud credentials. No token is stored in the browser. The first request wakes the instance and starts the meter."
+                    onClick={() =>
+                      act(async () => {
+                        connectProxied(status.service.url!, PROXY_BASE);
+                        const snapshot = await getGpu();
+                        update({ gpu: snapshot });
+                        setCloudState(snapshot.modelLoaded ? "warm" : "cold");
+                      })
+                    }
+                  >
+                    Connect (signed locally)
+                  </button>
+                )}
+              </div>
+              <div className="inspector-note">
+                Checking costs nothing: these read gcloud metadata and never touch the service,
+                so they cannot wake an instance.
+              </div>
+            </>
+          ) : (
+            <Row k="—" v={statusError ? "unavailable" : "checking…"} />
+          )}
+          {statusError && <div className="inspector-note error">{statusError}</div>}
+        </div>
+
         <div className="inspector-section">
           <h3>Cloud session</h3>
           {remote ? (
             <>
-              <Row k="Service" v={cloud.baseUrl ?? "—"} title={cloud.baseUrl ?? ""} />
+              <Row
+                k="Service"
+                v={cloud.serviceUrl ?? cloud.baseUrl ?? "—"}
+                title={cloud.serviceUrl ?? cloud.baseUrl ?? ""}
+              />
+              {cloud.proxied && <Row k="Auth" v="signed by dev server · no token held" />}
               <Row
                 k="Instance alive"
                 v={cloud.firstContactAt === null ? "no contact yet" : ""}
@@ -417,9 +538,17 @@ export function Inspector() {
                       ) {
                         return;
                       }
-                      const { output } = await deleteService();
+                      // Streams now, rather than blocking on one request for the whole
+                      // delete. The operator sees gcloud working instead of a frozen button.
+                      setTeardownLog("deleting…");
+                      const { output } = await deleteService((line) =>
+                        setTeardownLog((prior) =>
+                          `${prior === "deleting…" ? "" : (prior ?? "")}\n${line}`.trim().slice(-600),
+                        ),
+                      );
                       markServiceDeleted();
                       setTeardownLog(output.slice(-600));
+                      await loadStatus(true);
                     })
                   }
                 >
@@ -475,9 +604,10 @@ export function Inspector() {
               </div>
               <div className="inspector-note">
                 Connecting starts nothing by itself, but the first request wakes an instance and
-                Cloud Run then bills its whole lifetime. Prefer a{" "}
-                <code>gcloud run services proxy</code> on localhost — it supplies correct auth,
-                which a raw identity token does not.
+                Cloud Run then bills its whole lifetime. These two fields are the manual path,
+                kept for a service this Mac's gcloud cannot see. Otherwise prefer{" "}
+                <b>Connect (signed locally)</b> in Cloud control above: it finds the service
+                itself and keeps the credential out of the browser entirely.
               </div>
               {cloud.deleted && (
                 <div className="inspector-note">Service deleted this session. Meter stopped.</div>

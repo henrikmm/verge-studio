@@ -59,6 +59,13 @@ not just the seconds of actual inference.
   four. Plan the whole sweep before deploying.
 - Always deploy with `--no-gpu-zonal-redundancy` (there is no zonal-redundant L4 quota on this project).
 - **Always delete the service** at the end of a session — the instance is the real meter.
+- **Check before you spend.** The app has a local control plane at `/api/cloud/*` (dev middleware
+  only): Inspector → **Cloud control** reports gcloud auth, whether the service exists, and
+  whether Artifact Registry already holds an image for the current `server/` hash — i.e. whether
+  the next deploy is ~1-3 min or ~15-20 min. All metadata reads; they never touch the service and
+  cannot wake an instance. `Connect (signed locally)` routes GPU calls through the dev server,
+  which signs them from ADC, so no token ever reaches the browser. **Deploying is still a
+  terminal action** (`scripts/deploy.sh`) — the route exists but no button reaches it yet.
 - **Keep the image.** Artifact Registry storage is ~$0.10/GB/month (~$1/month for our 12 GB);
   rebuilding costs 15–20 min of wall clock every session. `deploy.sh` tags the image with a hash
   of `server/` and skips the build when that exact source is already in the registry, so a stale

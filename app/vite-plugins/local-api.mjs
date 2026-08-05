@@ -4,14 +4,14 @@
 // can be built and reviewed offline at zero cost. Swapping to the real service is a
 // base-URL change, nothing more.
 
-import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 import { extractFrames, probeVideo } from "../../scripts/extract-frames.mjs";
+import { cloudStatus, invalidateCloudStatus, proxyToService } from "./cloud.mjs";
+import { getJob, getRunningJob, killAllJobs, startJob, subscribeJob } from "./jobs.mjs";
 import {
   RUNS_ROOT,
   deleteRun,
@@ -21,7 +21,6 @@ import {
   saveRun,
 } from "./runs.mjs";
 
-const execFileAsync = promisify(execFile);
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 const MIME = {
@@ -129,11 +128,61 @@ export function localApi() {
   return {
     name: "verge-local-api",
     configureServer(server) {
+      // No gcloud child may outlive the dev server. A deploy orphaned by Ctrl-C would keep
+      // rolling out a revision nobody is watching, and a half-applied deploy is worse than
+      // none — the operator would have no log and no way to know it happened.
+      server.httpServer?.on("close", killAllJobs);
+      process.once("exit", killAllJobs);
+
       server.middlewares.use(async (req, res, next) => {
         const url = new URL(req.url, "http://localhost");
         if (!url.pathname.startsWith("/api/")) return next();
 
         try {
+          /**
+           * Everything under /api/cloud/svc/ is the deployed service, reached through this
+           * process so the browser never holds a credential. The app addresses a same-origin
+           * path; cloud.mjs attaches the bearer token and streams both directions.
+           */
+          if (url.pathname.startsWith("/api/cloud/svc/")) {
+            const subPath = url.pathname.slice("/api/cloud/svc".length) + url.search;
+            return await proxyToService(REPO_ROOT, req, res, subPath);
+          }
+
+          /**
+           * Watch a job. SSE rather than polling: a deploy emits output for minutes, and a
+           * reconnecting client replays the whole buffer first, so a page refresh mid-deploy
+           * loses nothing.
+           */
+          const jobRoute = /^\/api\/cloud\/job\/([^/]+)$/.exec(url.pathname);
+          if (jobRoute && req.method === "GET") {
+            const job = getJob(decodeURIComponent(jobRoute[1]));
+            if (!job) return json(res, 404, { detail: "no such job" });
+
+            if (url.searchParams.get("stream") !== "1") return json(res, 200, job);
+
+            res.statusCode = 200;
+            res.setHeader("content-type", "text/event-stream");
+            res.setHeader("cache-control", "no-store");
+            res.setHeader("connection", "keep-alive");
+            const send = (event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
+            send({ type: "snapshot", job });
+            const unsubscribe = subscribeJob(job.id, (event) => {
+              send(event);
+              if (event.type === "end") res.end();
+            });
+            if (unsubscribe) req.on("close", unsubscribe);
+            return;
+          }
+
+          // "Is one already running?" — what a reloaded page asks before offering a button.
+          const jobKind = /^\/api\/cloud\/job$/.test(url.pathname)
+            ? url.searchParams.get("kind")
+            : null;
+          if (jobKind && req.method === "GET") {
+            return json(res, 200, { job: getRunningJob(jobKind) });
+          }
+
           // Per-run routes carry an id in the path, so they cannot be exact-matched below.
           const runRoute = /^\/api\/runs\/([^/]+)(\/save)?$/.exec(url.pathname);
           if (runRoute) {
@@ -175,6 +224,40 @@ export function localApi() {
               return json(res, 200, { status: "released" });
 
             /**
+             * What the cloud looks like right now, without touching it.
+             *
+             * Every call here is a metadata read — `gcloud auth list`, `run services describe`,
+             * `artifacts docker images describe`. None of them reach the service itself, so
+             * none can wake an instance or extend a billed lifetime. Checking is free; that is
+             * the whole reason this route can exist at all.
+             */
+            case "GET /api/cloud/status":
+              return json(
+                res,
+                200,
+                await cloudStatus(REPO_ROOT, { refresh: url.searchParams.get("refresh") === "1" }),
+              );
+
+            /**
+             * Deploy. The build branch runs 15-20 minutes, so this returns a job id at once
+             * and the log is streamed separately.
+             *
+             * The request body is ignored on purpose. FORCE_BUILD would turn a ~2 min deploy
+             * into a ~20 min one and is the single most expensive thing a stray click could
+             * do, so it is not plumbed — a rebuild is a deliberate act at a terminal.
+             */
+            case "POST /api/cloud/deploy": {
+              const started = startJob({
+                kind: "deploy",
+                command: join(REPO_ROOT, "scripts/deploy.sh"),
+                cwd: REPO_ROOT,
+                timeoutMs: 45 * 60_000,
+              });
+              invalidateCloudStatus();
+              return json(res, started.attached ? 200 : 202, started);
+            }
+
+            /**
              * Delete the Cloud Run service — the only action that actually stops the meter.
              *
              * Releasing the model frees VRAM but leaves the instance alive, and Cloud Run
@@ -183,17 +266,21 @@ export function localApi() {
              * exist on the deployed service and cannot be reached from anywhere but
              * localhost, and it runs the repo's own teardown.sh rather than composing a
              * gcloud command here, so the "keep the image" policy stays in one place.
+             *
+             * PURGE_IMAGE is pinned to "0" and never read from the request: deleting the
+             * ~12 GB image would cost the next session a 15-20 min rebuild, and no UI
+             * button should be able to.
              */
-            case "POST /api/teardown": {
-              const script = join(REPO_ROOT, "scripts/teardown.sh");
-              // PURGE_IMAGE is never forwarded: deleting the ~12 GB image would cost the
-              // next session a 15-20 min rebuild, and no UI button should be able to.
-              const { stdout, stderr } = await execFileAsync(script, [], {
+            case "POST /api/cloud/teardown": {
+              const started = startJob({
+                kind: "teardown",
+                command: join(REPO_ROOT, "scripts/teardown.sh"),
                 cwd: REPO_ROOT,
-                timeout: 180_000,
-                env: { ...process.env, PURGE_IMAGE: "0" },
+                env: { PURGE_IMAGE: "0" },
+                timeoutMs: 10 * 60_000,
               });
-              return json(res, 200, { output: `${stdout}${stderr}`.trim() });
+              invalidateCloudStatus();
+              return json(res, started.attached ? 200 : 202, started);
             }
 
             // Real ffmpeg, running locally — this part is not mocked.

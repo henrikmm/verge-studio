@@ -28,9 +28,25 @@ export type CloudState =
   | "unreachable";
 
 export interface CloudSession {
-  /** Absolute base URL of the GPU service, or null when using the local fixture mock. */
+  /**
+   * Where GPU calls go, or null when using the local fixture mock.
+   *
+   * Two shapes, both remote. An absolute `https://…run.app` is the direct connection, which
+   * needs a token in this store. `PROXY_BASE` (`/api/cloud/svc`) is same-origin and needs
+   * none: the dev server signs each request from ADC that never leaves the Mac. Prefer the
+   * second — a credential the browser never receives cannot leak from it.
+   */
   baseUrl: string | null;
   token: string;
+  /**
+   * The service being addressed, for display only.
+   *
+   * With the proxy, `baseUrl` is a local path and no longer names anything, so the operator
+   * would otherwise have no way to see WHICH service is billing.
+   */
+  serviceUrl: string | null;
+  /** True when requests are signed by the dev server rather than carrying a token from here. */
+  proxied: boolean;
   state: CloudState;
   /** First moment we saw this service respond — the earliest the instance can have existed. */
   firstContactAt: number | null;
@@ -58,6 +74,8 @@ export const COST_BASIS =
 const state: CloudSession = {
   baseUrl: null,
   token: "",
+  serviceUrl: null,
+  proxied: false,
   state: "local",
   firstContactAt: null,
   lastRequestAt: null,
@@ -129,9 +147,24 @@ export function noteRun(): void {
   emit();
 }
 
+/**
+ * Point at a service through the dev server's authenticated proxy.
+ *
+ * Nothing is typed and no token is held: `serviceUrl` comes from `gcloud run services
+ * describe` via /api/cloud/status, and the bearer is attached inside the dev server.
+ */
+export function connectProxied(serviceUrl: string, proxyBase: string): void {
+  connectCloud(proxyBase, "");
+  state.serviceUrl = serviceUrl;
+  state.proxied = true;
+  emit();
+}
+
 export function connectCloud(baseUrl: string, token: string): void {
   state.baseUrl = baseUrl.replace(/\/$/, "");
   state.token = token;
+  state.serviceUrl = /^https?:\/\//i.test(baseUrl) ? baseUrl.replace(/\/$/, "") : null;
+  state.proxied = false;
   state.state = "connecting";
   state.firstContactAt = null;
   state.lastRequestAt = null;
@@ -153,6 +186,8 @@ export function connectCloud(baseUrl: string, token: string): void {
 export function disconnectCloud(): void {
   state.baseUrl = null;
   state.token = "";
+  state.serviceUrl = null;
+  state.proxied = false;
   state.state = "local";
   state.error = null;
   emit();
@@ -162,6 +197,8 @@ export function markServiceDeleted(): void {
   state.deleted = true;
   state.baseUrl = null;
   state.token = "";
+  state.serviceUrl = null;
+  state.proxied = false;
   state.state = "local";
   state.firstContactAt = null;
   emit();

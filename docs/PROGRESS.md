@@ -6,7 +6,11 @@ working session** — the agent task list is ephemeral and does not survive the 
 Milestone definitions live in the approved plan at
 `~/.claude/plans/hi-fable-im-considering-transient-kurzweil.md` (outside this repo).
 
-Last updated: 2026-08-04 (fifth session) · **P2: cloud cost safety, a run registry, per-clip
+Last updated: 2026-08-05 (sixth session) · **P3: in-app cloud control M0–M2 — status before
+spending, a job runner, and an authenticated proxy that keeps credentials out of the browser.
+The Deploy button (M3) and its safety rails (M4) are NOT built. See the P3 section.**
+
+Previously: 2026-08-04 (fifth session) · **P2: cloud cost safety, a run registry, per-clip
 measurement targets, pane focus/hide, and a neutral colour system — see the P2 section.**
 
 Previously: 2026-08-04 (fourth session) · **M3c fixture/UX correction after operator review.**
@@ -29,6 +33,10 @@ implied. 504px/112f remains the operating point. B4 remains ungraded (occluded e
    comment — forces a ~20 min rebuild on the next deploy. Two known one-line improvements
    (`scene.jpg` collection, removing the dead `infer_gs` field) are deliberately NOT applied for
    this reason. Batch them with the next real server change.
+   **The app now shows you this** (Inspector → Cloud control → Image / Next deploy), so before
+   any edit under `server/` you can see what it will cost. Confirmed 2026-08-05: the tree hashes
+   to `src-3038078518c96bb0`, that image is in the registry, and the freeze is exactly what keeps
+   the next deploy on its ~1-3 min branch.
 2. **Gaussian splats are not a deliverable and never will be.** The one historical `infer_gs`
    failure was a missing `gsplat` dependency; it does not matter, because no measurement node
    consumes splats. Do not add the dependency, do not schedule a run, do not rebuild the image
@@ -1108,14 +1116,150 @@ repository audit must not be described as clean.
 - [ ] **The 24 MiB range-chunked NPZ fetch has still never run against a live Cloud Run
       instance.** The new `/api/run-artifact` route honours Range and is exercised locally, but
       the cloud path is the one that matters and it remains untested since implementation.
-- [ ] **`deploy.sh`'s build-skip branch has still never executed.** The tag matches the tree, so
-      the next deploy is its first real test. Budget for it missing.
+- [ ] **`deploy.sh`'s build-skip branch has still never executed** — but its *predicate* is now
+      confirmed and regression-tested. See "The build-skip branch" under P3 below.
 - [ ] **One warm cloud session would close all three at once**: connect → warm → run the 2 s clip
       → register → save → delete run → teardown. Batch it; do not spend a cold start on less.
 - [ ] Edge selection/deletion in the graph is still broken (2026-08-04 audit bug 1) — untouched.
 - [ ] Rewiring by port drag is still unverified — needs a human hand.
 - [ ] `$TMPDIR/verge-uploads` and `verge-frames` still have no cleanup; every dropped video and
       every extraction accumulates.
+
+## P3 — In-app cloud control, M0–M2 ✅ 2026-08-05 (sixth session)
+
+**No cloud resource created, nothing billed, `server/` untouched** (deliberately — see the
+build-skip finding below, which depends on it).
+
+### Why this exists — the failure that prompted it
+
+The operator ran a new clip (`da3Test.mp4`) end to end and got depth and a point cloud from an
+**unrelated older video**. Nothing was wrong with the graph. No Cloud Run service existed, so
+`inferBase()` resolved to `/api` and `POST /infer` was answered by the fixture-backed mock, which
+returns `/roadside/scene.glb` + `/roadside/result.npz` for any input whatsoever.
+
+The symptom's shape is the diagnostic, and it is worth keeping: **the RGB was the new clip while
+the geometry was the old one.** `depthFieldFromRun()` builds `rgbUrl` from the locally extracted
+frames and everything else from the manifest, so a mock run wears the new video's face. Worse,
+the mock echoes the *uploaded* frame count while the roadside npz holds only **4** frames, so
+every frame index past 3 sliced past the end of the array.
+
+Three places said "mock" and none of them was where the operator was looking: the status bar
+(`cloud: local fixture`), the inspector (`Target: local mock + fixtures`) and the DA3 card's
+`· MOCK` suffix. **The panes that display the geometry say nothing at all** — still true, and
+now the top item in "NOT done" below.
+
+### Track A — cloud status before anything is spent (M0) ✅
+
+- [x] **`GET /api/cloud/status`** (`app/vite-plugins/cloud.mjs`) — is gcloud installed, is ADC
+      active and for whom, does the service exist and at what URL, and **does Artifact Registry
+      hold an image for the current `server/` source**. Every call is a metadata read; none
+      touches the service, so none can wake an instance or extend a billed lifetime. Checking
+      being free is what makes the whole route defensible.
+- [x] **`sourceTag()` reimplements deploy.sh's hash** so the UI can predict the deploy branch.
+      Pinned to the real shell pipeline by a parity test on the actual `server/` tree — the same
+      technique `cache-key.test.ts` uses for the donor port. A drift here would print "build
+      skipped" and then spend twenty minutes, which is a wrong answer that costs real time.
+- [x] **Inspector "Cloud control" block** — gcloud/account, project·region, service, image, and
+      `Next deploy: ~1-3 min · build skipped` with the reason spelled out beneath it. Verified in
+      the browser against live gcloud.
+- [x] The unauthenticated case names the one repair no button can perform: `gcloud auth login`
+      needs a browser consent screen. The app detects it and says so rather than pretending.
+
+### The build-skip branch — **predicate confirmed 2026-08-05, branch body still unexecuted**
+
+This is the knowledge the session was asked to consolidate, stated at the precision it was
+actually established:
+
+- The tag computation is **verified two independent ways**: `sourceTag()` and deploy.sh's own
+  `find | sort | xargs shasum | shasum | cut` pipeline both return **`src-3038078518c96bb0`** on
+  the current tree, and a unit test asserts that agreement (plus that one added comment byte
+  changes it, and that `__pycache__` is excluded).
+- The exact command deploy.sh branches on —
+  `gcloud artifacts docker images describe …/da3-service:src-3038078518c96bb0` — **exits 0.**
+  So the next deploy *will* take the skip branch; that is no longer an assumption.
+- **Provenance closes cleanly.** `server/`'s last commit is `2020ec9`, the very commit PROGRESS
+  records as having invalidated the M2b image, and the registry image (`2026-08-01T16:28:37`)
+  was built after it. Nothing has touched `server/` since. This is why the freeze earns its
+  keep: the standing constraint is what keeps this predicate true.
+- **What is still NOT verified: the branch body.** Deploying an existing image by digest without
+  a build has never run, and neither has its ~1-3 min estimate. Do not tick that box from this
+  section — the first real deploy is still its first real test.
+
+### Track B — job runner (M1) ✅
+
+- [x] **`app/vite-plugins/jobs.mjs`** — spawn, buffer, stream, single-flight. The old
+      `POST /api/teardown` was a blocking `execFileAsync` with a 180 s cap, which cannot hold a
+      deploy (15-20 min on the build branch) and orphans its child when the browser refreshes.
+- [x] **Single-flight per kind.** A second Deploy attaches to the running job instead of racing
+      a second `gcloud run deploy` over one service.
+- [x] **`POST /api/cloud/deploy` / `POST /api/cloud/teardown` → job id; `GET /api/cloud/job/:id
+      ?stream=1` → SSE.** The stream opens with a snapshot of every buffered line, so attaching
+      after a page refresh replays the whole log rather than the tail.
+- [x] **Nothing from a request reaches the child's argv or env.** `FORCE_BUILD` (a ~20 min
+      mistake) is not plumbed at all; `PURGE_IMAGE` is pinned to `"0"` (destroying the cached
+      image would cost the *next* session a rebuild). Both are deliberate dead ends.
+- [x] **Output is redacted before it leaves the process** — OAuth- and JWT-shaped strings. A test
+      pins that deploy.sh's literal `export VERGE_TOKEN="$(…)"` line survives untouched, because
+      that is shell source text and not a credential.
+- [x] Children are killed on dev-server close; a hard timeout kills and reports.
+- [x] **Delete service now streams**, through this runner, and refreshes the status block after.
+
+### Track C — authenticated reverse proxy (M2) ✅ (local proof only)
+
+- [x] **`/api/cloud/svc/*` → the deployed service, signed in the dev server.** `inferBase()`
+      becomes the same-origin `PROXY_BASE`; the identity token is minted from ADC, cached until
+      five minutes before expiry, and **never serialized into a response**. The browser holds no
+      credential at all, so there is nothing in it to leak.
+- [x] **`Connect (signed locally)`** in Cloud control — no URL typed, no token pasted, no
+      `gcloud run services proxy` to run in a second terminal. The service URL comes from
+      `gcloud run services describe`. The two manual fields survive for a service this Mac's
+      gcloud cannot see, and their note now points at the signed path instead of the old
+      recommendation.
+- [x] **Range passthrough is tested, and it is the reason this could have failed silently.** The
+      app fetches anything over 24 MiB in 24 MiB chunks because Cloud Run caps responses at
+      32 MiB, and `fetchArtifactBuffer` asserts each chunk's exact byte count — so a proxy that
+      collapsed `206` into `200` or dropped `content-range` would not fail as a transport bug, it
+      would fail later as a corrupt point cloud. Covered against a local stand-in service.
+- [x] A client-supplied `Authorization` header is **never** forwarded; a test pins it.
+- [x] Upstream 401/403 returns an explanation naming `roles/run.invoker` and `gcloud auth login`,
+      rather than surfacing a bare status inside a node's error line.
+- [x] `VERGE_SERVICE_URL` overrides the lookup and localhost targets skip auth entirely — which
+      makes running the DA3 container locally a first-class path, and is what lets the proxy be
+      tested with no cloud and no gcloud.
+
+### Verification
+
+`verify.sh` green with **267 tests** (was 232) — 35 new, covering tag parity, redaction, the job
+runner, the job routes' SSE framing and late-attach replay, and the proxy's status/header/Range
+behaviour. Production Vite build green. Cloud control driven in the browser against live gcloud
+(authenticated, no service, image present, "build skipped"). The server-contract subcheck
+reported its usual no-FastAPI skip; `server/` was not touched.
+
+**One test caught a real bug in its own scaffolding**, worth remembering: the first `fakeResponse`
+was a plain object with a `write` method, so `Readable.pipe(res)` threw and the middleware's catch
+turned every proxied reply into a 500 — which the test then read as a pass on everything it did
+not assert. A fake that cannot fail the way the real object fails proves nothing.
+
+### NOT done — carry forward
+
+- [ ] **The panes that show geometry still never say "MOCK".** This is the actual bug behind this
+      session's report: a mock run wears the new clip's RGB, and Depth 2D and Viewport 3D display
+      it with no provenance marking at all. Fix before the next new-clip attempt — a banner in
+      both panes, plus clamping the mock's manifest to the roadside fixture's real 4 frames
+      instead of echoing the uploaded count.
+- [ ] **M3 — the Deploy button is NOT built.** `POST /api/cloud/deploy` exists, is single-flight
+      and is unit-tested, but **no UI reaches it**, so it has never been exercised end to end.
+      Do not describe deploying as available in the app until that button exists.
+- [ ] **M4 — safety rails not built.** One-click deploy removes the friction that has been
+      protecting this project from accidental billing. Before shipping the button: the confirm
+      dialog stating instance-lifetime billing, Deploy disabled while a service exists, an idle
+      watchdog, and the save-your-runs-first reminder.
+- [ ] **The proxy has never carried a real Cloud Run request.** Locally proven, cloud unproven.
+      In particular the identity token's audience is accepted by `smoke-infer.sh`'s curl path but
+      has never been tried from this proxy — if it is rejected, the fallback is spawning
+      `gcloud run services proxy` as a managed child.
+- [ ] The teardown *route* has not been exercised against a real service either; only the job
+      runner beneath it, and a no-op teardown attempt was blocked by tooling before it ran.
 
 ## M4 — Productization + evidence hardening ⬜
 
