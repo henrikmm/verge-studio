@@ -217,5 +217,5 @@ PY
 
 echo
 echo "Instance is STILL WARM and STILL BILLING."
-echo "Save artifacts with scripts/save-run.sh BEFORE scripts/teardown.sh — they live on"
-echo "the container's local disk and die with it."
+echo "Artifacts are in gs://verge-lab-runs and survive teardown, but only for three days."
+echo "Save anything worth keeping with scripts/save-run.sh, then run scripts/teardown.sh."

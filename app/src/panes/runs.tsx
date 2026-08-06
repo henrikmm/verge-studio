@@ -66,12 +66,31 @@ function RunRow({
               ? run.available
                 ? formatBytes(run.sizeBytes)
                 : "payload missing"
-              : degraded
-                ? "▲ transient"
-                : "transient"}
+              : "transient"}
         </span>
       </button>
       <span className="run-actions">
+        {/*
+          Outside the run-pick button on purpose. A transient run cannot be selected, so that
+          button is disabled and rendered at opacity 0.5 — and a warning inside it inherited the
+          dimming, which put the one row that urgently needs action at half the contrast of every
+          calm row beside it. Measured 2026-08-06 during the design review. It sits next to Save
+          because Save is the action it is asking for.
+        */}
+        {/*
+          The glyph alone, not "▲ instance only". Spelling it out cost 224 px of a 335 px row and
+          squeezed the run label down to "de…", so the row shouted that something was wrong while
+          hiding which run it was. The pane's note below defines the mark, and the tooltip carries
+          the full sentence. Measured 2026-08-06.
+        */}
+        {degraded && (
+          <span
+            className="run-warning mono"
+            title="Publishing to durable storage failed for this run, so its artifacts exist only on the cloud instance and die with it. Save it before teardown."
+          >
+            ▲
+          </span>
+        )}
         {!run.persisted && (
           <button
             className="pane-btn"

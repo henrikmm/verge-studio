@@ -41,10 +41,15 @@ python3 -m venv /tmp/verge-venv && /tmp/verge-venv/bin/pip install fastapi pydan
 The cloud service is not running by default, and starting it costs money.
 
 ```bash
-./scripts/deploy.sh      # start the service (builds only if server/ changed)
-./scripts/smoke-infer.sh # one short real run
-./scripts/teardown.sh    # ALWAYS run when done
+./scripts/create-bucket.sh # once: output bucket, retention rule, permissions (free)
+./scripts/deploy.sh        # start the service (builds only if server/ changed)
+./scripts/smoke-infer.sh   # one short real run
+./scripts/teardown.sh      # ALWAYS run when done
 ```
+
+`create-bucket.sh` is a precondition of `deploy.sh`, which refuses to start without the bucket.
+It is idempotent, costs nothing, and re-reads the retention rule it sets rather than assuming it
+took.
 
 Deploying, connecting and deleting the service can also be done from the app: open the Inspector
 and find **Cloud control**. It reports whether you are signed in, whether the service exists, and
@@ -52,10 +57,14 @@ whether the next deploy takes about two minutes or about twenty. Those checks ar
 wake anything.
 
 **You pay for the machine's whole lifetime, not the seconds of computation** — including roughly
-three minutes of startup and the idle time afterwards. The service is deliberately configured to
-keep one machine alive, because results are stored on that machine's own disk and would otherwise
-disappear underneath you. That makes deleting the service a correctness requirement rather than
-tidiness. **Save any run you want to keep before deleting**, because its results die with it.
+three minutes of startup and the idle time afterwards. So delete the service when you finish; it
+scales to zero between runs but only teardown ends the charge for good.
+
+Deleting it no longer destroys anything. Results are written to a private bucket rather than to the
+machine, and the app reads them through links that expire after twelve hours. **Save any run you
+want to keep** — the bucket deletes its contents after three days, and Save is what puts a copy in
+`~/verge-runs`. One case still has the old urgency, and the Runs pane marks it ▲: if publishing to
+the bucket failed, that run exists only on the instance and must be saved before teardown.
 
 `teardown.sh` keeps the built image, which costs about a dollar a month and saves twenty minutes
 of rebuilding every session. `PURGE_IMAGE=1 ./scripts/teardown.sh` removes it too, when the

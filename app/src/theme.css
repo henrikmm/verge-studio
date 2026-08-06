@@ -1106,6 +1106,16 @@ canvas {
   cursor: default;
 }
 
+/* A run whose artifacts never reached durable storage. Lives outside .run-pick so the dimming
+   above cannot reach it — see the comment in panes/runs.tsx. The shape carries the meaning, so
+   this survives greyscale; the amber only reinforces it. Not --accent-err: the run itself is
+   fine and fully usable, it is the storage that degraded. */
+.run-warning {
+  color: var(--accent-busy);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .run-label {
   flex: 1;
   min-width: 0;

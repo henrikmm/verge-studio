@@ -6,6 +6,59 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [PROGRESS.md](PROGRESS.md); findings below describe the state on their own date.
 
+## 2026-08-06 — durable storage states in the Runs pane, 1280×516
+
+Graded after the Runs pane learned to distinguish where an unsaved run's bytes actually are.
+**Viewport was 1280×516, not the checklist's 1280×800** — this display allows 1204×753, so the
+required height is physically unreachable here. Width, type, colour and density measurements are
+unaffected; anything height-dependent is marked below. Two findings, both in the new work, both
+fixed during the pass and re-measured.
+
+The degraded state has no natural way to occur on demand, so it was produced by adding a synthetic
+`publishMode: "degraded"` stub to `~/verge-runs/index.json`, screenshotting, and restoring from a
+backup — the file was confirmed byte-identical afterwards by sha256. Without that, the one state
+that must not look like the others would have been graded from reading the code.
+
+1. Dark surfaces — **PASS** (`body` computed `rgb(13,13,15)`).
+2. No status by hue alone — **PASS**. Every instance of the old green `rgb(74,222,128)` and of
+   `rgb(90,160,232)` is a `.port-dot` or a React Flow handle — the type legend decision 10 exempts,
+   never a status. The new degraded mark is a **▲ glyph**, so it survives greyscale; its amber only
+   reinforces it.
+3. Six panes with tabs — **PASS** (Depth 2D, Viewport 3D, Graph, Inspector, Objects, Runs).
+4. Chrome density — **PASS** (tab strips measured 26 px, ≤ 28; labels 11 px).
+5. Viewport orbit, count, gizmo — **PASS on appearance** (`1.000.000 pts`, gizmo visible, door-clip
+   cloud rendered). Orbit itself unchanged by this work and not re-dragged this pass.
+6. Turbo depth with metric legend — **N/A this pass.** The pane showed its empty state, because the
+   new clip has no measurement targets — the deferred limitation in REGISTRY section 7, unrelated.
+7. Live status rows — **PASS** (four rows carrying digits, including `6 runs · 185 MB on disk ·
+   1 transient`).
+8. No horizontal scroll — **PASS** (`scrollWidth === clientWidth === 1280`).
+9. Type scale — **PASS** (rendered sizes inside `.pane` are 9/10/11/12/13.33 px; **0** above 14.
+   Readouts in JetBrains Mono, the new badge included).
+10. Squint test — **PASS**, unchanged in character from the previous entry.
+11–14. Inspector controls, memory in both places, measured/interpolated labelling, capped frame
+    plan — **PASS**, all re-seen live during the cloud session: the plan reported
+    `VRAM (interpolated) 18.48 GiB / 22.03 GiB` and explained the cap as
+    `10 fps × 35.6s = 355 frames, over the 81-frame cap. FPS lowered to 2.28 so the frames still
+    span the whole clip.`
+15. Mock labelling — **PASS** (`cloud: local fixture` in the status bar when disconnected).
+16–18. Focus/Escape, parameter refresh, wire select-and-delete — **N/A this pass**, untouched by
+    this change and verified in the entry below.
+
+**Fixed during the pass.**
+
+- **The degraded warning was rendered at half opacity.** `.run-state` sits inside `.run-pick`,
+  which is `disabled` for any unselectable run and styled `opacity: 0.5` — so the ▲ inherited the
+  dimming, and the one row that urgently needed action had exactly half the contrast of every calm
+  row beside it. Measured, not eyeballed: effective opacity 0.5 against 1.0 on all five other rows.
+  The badge moved out of the button into `.run-actions`, beside the Save it is asking for. Now
+  effective opacity **1.0**, contrast **8.49:1** against the pane.
+- **The fix then ate the run label.** Spelling the badge out as "▲ instance only" pushed
+  `.run-actions` to **224 px of a 335 px row** and collapsed the label to `de…` — the row announced
+  that something was wrong while hiding which run it was. Reduced to the bare glyph, which the
+  pane's own note already defines and the tooltip spells out: actions **139 px**, label back to
+  **119 px**, versus ~133 px for an ordinary transient row. The mark costs ~14 px.
+
 ## 2026-08-06 — documentation refactor + three local fixes, 1280×800
 
 Graded after the harness rewrite and the graph/temp-file fixes. Browser console clean. Two

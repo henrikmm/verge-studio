@@ -20,48 +20,7 @@ Every task states five things:
 
 ## Now
 
-### 1. Make cloud results outlive the machine that produced them
-
-**Outcome.** Results are written to private cloud storage instead of the service's own disk, and
-reached through short-lived signed links. Deleting the service stops costing money without
-destroying anything, so the machine no longer has to be kept permanently alive. Saving still
-produces the durable local copy in `~/verge-runs`; nothing is kept unless the user saves it.
-
-**Owner.** Agent.
-
-**Gate.** Cloud spend + user confirmation. One deploy and one short run are needed to prove it.
-
-**Evidence / starting points.** `server/main.py` already has a half-written storage branch
-(`_publish`) that was never given a bucket to write to. The 32 MiB response cap and the chunked
-download that works around it are described in REGISTRY section 8. Google's own guidance covers
-[signed links](https://docs.cloud.google.com/storage/docs/access-control/signed-urls),
-[uniform bucket access](https://docs.cloud.google.com/storage/docs/using-uniform-bucket-level-access)
-and [lifecycle rules](https://docs.cloud.google.com/storage/docs/lifecycle). Editing `server/`
-forces a ~20 minute rebuild, so batch every server change into this one deploy.
-
-**`server/` changes are already staged for this deploy.** On 2026-08-06 the frame-discard and
-run-sweep described in REGISTRY decision 13 were written and unit-tested but never built or run.
-They ride along with this task's rebuild — do not deploy separately for them, and do exercise them
-here, because no deployed instance has executed that code yet.
-
-**The lifecycle rule is a precondition, not a step.** Set it when the bucket is created, before a
-single run writes to it — `_publish` has no deletion path, and `expires_after_days` in the manifest
-is a statement of intent that no code enforces. The rule must match **`runs/transient/`**, the
-prefix `_publish` actually writes to. The donor bucket is the cautionary case: it carries five
-carefully written lifecycle rules, none of which matches the `runs/` prefix its output went to, so
-those objects never expire. Verify by prefix, not by the presence of rules.
-
-**Done when.** In a single guided session: the browser loads a result through a signed link, Save
-brings it home, a reload still finds it, the lifecycle rule is confirmed to match `runs/transient/`
-at three days or fewer, a deployed run is observed discarding its frames and sweeping an expired
-run, the minimum-machine setting is returned to zero, and a check confirms no service is left
-running and exactly one image remains.
-
----
-
-## Next
-
-### 2. Take the system outdoors, guided, and find out what breaks
+### 1. Take the system outdoors, guided, and find out what breaks
 
 **Outcome.** We know whether the ground plane and the measurement hold up outside, on a surface
 that is not a flat indoor floor. Either it works and we can say so with numbers, or it fails and
@@ -84,7 +43,11 @@ error, how well it agrees with the camera-derived vertical, the margin between t
 candidate grounds, the measured dimensions and the tape truth. The evidence is saved, and the
 result is stated plainly as either a pass or a named limitation.
 
-### 3. Let the app say "I cannot find the ground"
+---
+
+## Next
+
+### 2. Let the app say "I cannot find the ground"
 
 **Outcome.** When the evidence for a ground plane is weak or ambiguous, the app says so instead of
 picking a winner. The margin between competing candidates is exposed — a narrow margin means the
@@ -96,11 +59,16 @@ fit is a coin flip, and nothing currently reports it.
 
 **Evidence / starting points.** `geometry/plane.ts` already scores competing hypotheses; the
 margin between them is computed and discarded. A seeded fit (`fitPlaneFromSeeds`) exists and has
-never been reachable from the interface — add that route only if task 2 shows the automatic
+never been reachable from the interface — add that route only if task 1 shows the automatic
 evidence genuinely is not enough. Abstention must propagate: a measurement resting on an
 untrustworthy ground should refuse, not guess.
 
-**Done when.** Outdoor evidence from task 2 has been used to set the thresholds, "ground cannot be
+A live example is already on disk and costs nothing to look at: the door run saved on 2026-08-06
+(`~/verge-runs/20260806-173802-d354a2`) fits a floor with **3.1% support**, against the 24.6% of
+the run beside it. Whatever the threshold turns out to be, that run is the kind of case it has to
+judge, and it needs no cloud session to study.
+
+**Done when.** Outdoor evidence from task 1 has been used to set the thresholds, "ground cannot be
 established" is a first-class result that downstream steps respect, and the user has agreed the
 warning reads correctly.
 
@@ -108,7 +76,7 @@ warning reads correctly.
 
 ## Later
 
-### 4. Decide what measuring grass actually means, then build it
+### 3. Decide what measuring grass actually means, then build it
 
 **Outcome.** The system can report vegetation height over an area, with an honest statement of
 where it has enough evidence and where it does not.
@@ -130,19 +98,28 @@ of this workflow — the raster approach does not use them.
 user, the raster is implemented, and it has been checked against a physical reference with its
 error, valid-area coverage and abstention rate all reported.
 
-### 5. Find out how frame shape affects memory, or lower the limit for landscape
+### 4. Explain the 112-frame landscape excess, now that orientation is ruled out
 
-**Outcome.** The memory model accounts for the shape of the frame, or the frame limit drops for
-landscape clips to a level that is safe by measurement rather than by hope.
+**Outcome.** The 22.02 GiB reading that broke the memory ladder has a named cause, and the app's
+estimate matches what a real run does at the top of the range.
 
 **Owner.** Agent.
 
 **Gate.** Cloud spend + user confirmation.
 
-**Evidence / starting points.** REGISTRY section 3 has the measured ladder and the landscape
-result that broke it: 22.02 GiB against a predicted 21.28, at 99.96% of the device. The ladder
-was built entirely on a portrait clip. Until this is resolved, landscape input is limited to 81
-frames at 504 px.
+**Evidence / starting points.** This task got smaller on 2026-08-06 and its question changed.
+Orientation is no longer a suspect: two 81-frame runs at 504 px, one landscape and one portrait,
+returned **byte-identical** driver and allocator peaks (REGISTRY section 3). Shape is free at equal
+pixel count, so "landscape costs more" cannot be the explanation.
 
-**Done when.** A short ladder has been measured on a landscape clip in one warm session, the
-stored measurements include the frame shape, and the app's estimate matches what was observed.
+Two candidates remain, and they are cheap to tell apart. Either the aspect ratio changed the
+**pixels per frame** — `upper_bound_resize` fixes the long edge at 504 and lets the short edge
+follow, so a 4:3 clip carries ~35% more pixels than a 16:9 one at the same setting — or the driver
+figure simply **saturated**, which REGISTRY section 3 already observes near the ceiling (144 frames
+reads lower than 128). The allocator peak does not saturate and is the number to trust.
+
+The stored ladder does not record pixels per frame, which is why this is still open. Record it.
+
+**Done when.** The excess is attributed to pixel count or to driver saturation with a measurement
+behind it, `docs/vram-measurements.json` carries pixels per frame for each rung, and the app's
+estimate is checked against one real run near the top of the range.

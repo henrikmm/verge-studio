@@ -28,6 +28,10 @@ Around that spine:
 - **Runs are temporary until saved.** A finished run is selectable immediately but nothing large
   is written to disk until the user presses Save, which copies it to `~/verge-runs`, outside the
   repository. Runs can be deleted from the same pane.
+- **Results outlive the machine that produced them.** Artifacts go to a private bucket and reach
+  the browser through signed links that expire in twelve hours, so deleting the service destroys
+  nothing and the browser never touches the instance to read a result. The objects themselves are
+  deleted after three days by a rule GCS enforces. Saving is still the only way to keep a run.
 - **Measurement targets belong to a clip**, keyed by the video's content digest. A clip nobody has
   measured before starts with an empty set, never another clip's objects.
 - **Repeat measurements accumulate.** Each recorded trial freezes the exact mask it was measured
@@ -50,6 +54,13 @@ On 2026-08-05 a clip that had never been through the pipeline (`da3Test.mp4`, 19
 was deployed, run, displayed, saved and torn down entirely from the app: 112 frames at 8.27 fps,
 36.9 seconds of GPU time, a 102 MiB result file fetched in five chunks and verified by checksum,
 128 MB brought home to `~/verge-runs`, service deleted afterwards.
+
+On 2026-08-06 the same path ran again with results in cloud storage rather than on the instance
+(`test-demo-door.mp4`, 35.57 s, 81 frames at 504 px, 28.21 s of GPU time). The browser fetched
+`scene.glb` and a **76.3 MB npz in one request each, straight from the bucket** — no ranged chunks,
+because the 32 MiB cap belongs to Cloud Run and not to storage. Save brought 91.4 MB home through
+`gs://` at 34.5 MiB/s, a page reload re-opened it with the cloud disconnected, and teardown left
+no service and exactly one image. Whole session: **25 minutes of instance lifetime.**
 
 ---
 
@@ -135,12 +146,28 @@ the device, which is a coin flip rather than an operating point. 112 leaves abou
 **Ten frames per second is reachable, just not at full resolution.** Resolution buys frames as its
 square: 256 frames run comfortably at 252 px and fit at 356 px.
 
-⚠️ **The shape of the frame is a memory variable and this table does not model it.** The ladder
-was built on a portrait clip. A landscape 1920×1080 clip measured **22.02 GiB at the same 112
-frames and 504 px on 2026-08-05 — 0.74 GiB above the table, and 99.96% of the device.** It did not
-fail; there was simply nothing left. For landscape input, reduce frames or resolution rather than
-trusting the table. Until this is characterised, treat **81 frames at 504 px** as the verified
-conservative setting for landscape.
+**Orientation is free. Measured, not assumed.** Two runs at 81 frames and 504 px — one landscape
+(504×280) and one portrait (280×504), different clips, different content, different GPU seconds —
+returned **byte-identical** peaks: 20,489,175,040 driver and 16,165,363,712 allocator. Same pixels
+per frame (141,120), same memory. A transposed tensor reserves the same blocks, so "landscape costs
+more" is not a mechanism. (`~/verge-runs/20260805-151526-a99a78` and `.../20260806-173802-d354a2`.)
+
+That 81-frame run is also the ladder's cleanest confirmation: the fit predicts
+0.0700 × 81 + 9.39 = **15.06 GiB** allocator and both runs measured **15.055 GiB**.
+
+⚠️ **The 112-frame landscape excess is still unexplained — but shape is no longer the suspect.**
+A 1920×1080 clip measured **22.02 GiB at 112 frames and 504 px on 2026-08-05, 0.74 GiB above the
+table and 99.96% of the device.** With orientation ruled out, the live candidates are a different
+**pixel count per frame** (`upper_bound_resize` fixes only the long edge, so aspect ratio moves the
+short one) or **driver saturation**, which this table already shows near the ceiling. The ladder
+does not record pixels per frame, which is what leaves the question open. Until it is settled,
+**81 frames at 504 px** remains the verified conservative setting near the top of the range.
+
+⚠️ **Coded dimensions are not the shape the model sees.** `test-demo-door.mp4` is coded 1920×1080
+with `rotation=-90` in its side data, so it displays — and extracts — as 1080×1920 portrait. ffprobe's
+`stream=width,height` reports the coded pair and reads as landscape. Anything characterising frame
+shape must read the rotation metadata, or it will label its own clips wrongly. Found 2026-08-06,
+after this run was planned as a landscape test and turned out to be a portrait one.
 
 ### Inference settings, and why each one
 
@@ -198,10 +225,16 @@ the entire donor repository were deleted the same day; only the current image re
 Registry reclaims shared layers asynchronously**, so the repository still reported 16,679 MB
 immediately after the deletion — the figure lags the delete and was not re-checked here.
 
-No output bucket has ever existed in `verge-lab`, so no depth artifact was ever orphaned in cloud
-storage. The donor bucket shows what happens when one does: its lifecycle rules cover `temporary/`,
+The donor bucket shows what happens when a rule misses: its lifecycle rules cover `temporary/`,
 `incoming/`, `source-archives/` and `viewer/` — **but not `runs/`, which is where its output
 actually went**. Those objects have no expiry at all.
+
+**`gs://verge-lab-runs` was created on 2026-08-06** and is the first output bucket this project has
+had. Its rule was applied and re-read *before the first object was written*: `Delete` at `age: 3`
+matching `runs/transient/`. Checked again after the session's runs, by listing every object rather
+than by trusting the rule's existence — **10 of 10 objects under the matched prefix, no orphans.**
+It held 113.6 MiB at teardown, about 1.1 cents a month, and empties itself in three days.
+(`scripts/create-bucket.sh`, `scripts/bucket-lifecycle.json`.)
 - Extracting a whole ladder of frame counts takes **13 seconds** in one pass. Doing it one rung
   at a time took 435 seconds and once locked up the machine — see the lessons section.
 
@@ -293,6 +326,43 @@ actually went**. Those objects have no expiry at all.
     (six hours) at the top of each `/infer`. The window is deliberately generous: a batched session
     saves its runs at the end, and deleting one early would destroy something already paid for.
 
+    **The sweep was watched working on a deployed instance on 2026-08-06**, which is what this
+    entry was missing — the code had shipped without ever running. With the TTL temporarily set to
+    60 s, run A's `/artifact` went **404** after it expired while run B's stayed **200**, and run
+    A's copies in the bucket were untouched. That is the whole design in one observation: the
+    instance reclaims its disk, the result survives anyway.
+
+    The frame discard is honestly *not* independently verified. It runs unconditionally on the
+    `/infer` success path, so it executed in all four deployed runs, and unit tests pin its
+    behaviour — but it has no signal through the API, so nothing was observed. Said plainly rather
+    than counted as proven.
+
+14. **Artifacts live in a bucket, reached by signed link; the durable address travels beside it.**
+    Writing results to the container's own disk made a result address meaningful only on the
+    instance that produced it, which is what forced `--min-instances=1` and made teardown a
+    correctness requirement rather than hygiene. Objects have no such affinity, so the service now
+    scales to zero and the two settings move together — `deploy.sh` refuses to deploy at
+    `--min-instances=0` if the bucket is missing, because splitting them is how 2026-08-05 happened.
+
+    **Each artifact carries two addresses, and the pair is the point.** `url` is a signed HTTPS
+    link the browser fetches directly — no dev-server hop, no Cloud Run in the path, and therefore
+    no 32 MiB response cap, so a 76 MB npz arrives in one request instead of five ranged chunks.
+    `gs_uri` is the permanent address, and it is what Save resolves. Collapsing them would break
+    saving: a signed link expires in twelve hours, while `save-run.sh` copies the manifest into the
+    run directory as that run's archive record. A run saved the next morning comes home through
+    `gs_uri` and would have failed through `url`.
+
+    **Publishing may never fail a run.** It happens after `model.inference` has returned, so the
+    GPU is already paid for; a storage permission slip that raised would throw away a finished run
+    to report a problem that costs nothing to route around. `_publish` falls back to the local
+    `/artifact` path and records why, surfacing as `diagnostics.publish_mode: "degraded"`. That
+    mode is reported on screen, because a degraded run is otherwise indistinguishable from a
+    durable one right up to the moment teardown destroys it.
+
+    Signing inside Cloud Run has no private key, so it goes through the IAM `signBlob` API and the
+    runtime account needs Token Creator **on itself** — the failure that would otherwise be
+    discovered after a GPU run. `/publish-check` proves the whole chain for one HTTP request.
+
 ---
 
 ## 5. What has been measured, and how well
@@ -369,12 +439,12 @@ These are stated, not scheduled. Anything being actively worked on is in `PROGRE
   which do not depend on it.
 - **Accuracy across scenes is unverified.** One room, one operator, one camera path. A second
   capture with different orientation and motion remains the largest untested risk.
-- **Landscape clips are constrained** to at most 81 frames at 504 px until the aspect-ratio effect
-  on memory is characterised. See the warning in section 3.
-- **Artifacts live on the machine that produced them.** The service writes results to its own
-  local disk, so a result address is only meaningful on that instance. The workaround is to keep
-  one machine permanently alive, which is why deleting the service is a correctness requirement.
-  The durable fix is private cloud storage with short-lived links.
+- **The top of the memory range is not modelled.** 81 frames at 504 px is the verified
+  conservative setting; the 22.02 GiB reading at 112 frames is still unexplained, though
+  orientation has been ruled out as its cause. See the warning in section 3.
+- **A signed link outlives neither the day nor the bucket.** Links expire after twelve hours and
+  objects after three days, so an unsaved run is recoverable for three days and no longer. The
+  manifest's `gs_uri` is what makes a late Save work at all; nothing re-signs on demand.
 - **One object cannot be graded** on the primary clip: the laptop hides the monitor stand's
   contact point. Inventing that endpoint was rejected.
 - **Two open scientific questions**, recorded rather than scheduled: whether measurements repeat
@@ -429,4 +499,12 @@ Kept because each one was paid for once.
   `expires_after_days: 3` since the contract was written; no code has ever honoured it, and the
   donor bucket's lifecycle rules missed the one prefix its output was actually written to. Both
   looked like a policy from the outside. Check the prefix that receives data, not the presence of
-  a rule.
+  a rule. Since 2026-08-06 the rule exists and is verified by listing objects, not by reading it.
+- **Work that happens after the GPU must never be able to fail the run.** Uploading, signing and
+  manifest-writing all run once inference has returned and the money is spent. Anything there that
+  raises converts a finished result into a 500. Degrade, record why, and surface it.
+- **`ffprobe`'s width and height are the coded pair, not the displayed one.** A phone clip carries
+  `rotation=-90` in side data; ffmpeg auto-rotates on extraction, so the model sees the transpose
+  of what a naive probe reports. A run planned as a landscape test on 2026-08-06 turned out to be
+  portrait, and would have been recorded under the wrong label had the manifest's own frame
+  dimensions not been checked against the probe.
