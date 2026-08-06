@@ -335,6 +335,64 @@ describe("runGraph", () => {
     expect(calls).toEqual({ source: 1, gpu: 0, cloud: 1, sink: 1 });
   });
 
+  /**
+   * `deny` is the rail under the refresh that follows a parameter edit. The A/P badge is the
+   * user saying "keep this up to date for me", and `allowManual` honours it — but the Inspector
+   * is where the DA3 sampling controls live, so a pass the user did not ask for has to be able
+   * to overrule the badge. Otherwise flipping DA3 to auto turns every slider drag into a paid
+   * run, which is the one thing the execution model exists to prevent.
+   */
+  it("refuses a denied node even when its badge says auto", async () => {
+    const { nodes, edges } = pipeline();
+    const alwaysOn = nodes.map((n) => (n.id === "n-gpu" ? { ...n, auto: true } : n));
+    const h = makeHarness();
+    const report = await runGraph({
+      nodes: alwaysOn,
+      edges,
+      registry: registry(),
+      runtime: h.runtime,
+      onChange: h.onChange,
+      allowManual: false,
+      deny: new Set(["n-gpu"]),
+    });
+
+    expect(calls.gpu).toBe(0);
+    expect(report.blocked).toEqual(["n-gpu", "n-cloud", "n-sink"]);
+  });
+
+  it("still runs the free nodes ahead of a denied one", async () => {
+    const { nodes, edges } = pipeline();
+    const h = makeHarness();
+    const report = await runGraph({
+      nodes,
+      edges,
+      registry: registry(),
+      runtime: h.runtime,
+      onChange: h.onChange,
+      allowManual: false,
+      deny: new Set(["n-gpu"]),
+    });
+
+    expect(report.ran).toEqual(["n-source"]);
+    expect(calls).toEqual({ source: 1, gpu: 0, cloud: 0, sink: 0 });
+  });
+
+  /** An explicit Run must still reach the node; `deny` is only set by the implicit refresh. */
+  it("leaves the explicit Run path unaffected", async () => {
+    const { nodes, edges } = pipeline();
+    const h = makeHarness();
+    await runGraph({
+      nodes,
+      edges,
+      registry: registry(),
+      runtime: h.runtime,
+      onChange: h.onChange,
+      allowManual: new Set(["n-gpu"]),
+    });
+
+    expect(calls.gpu).toBe(1);
+  });
+
   it("allows a single named manual node — the per-node Run button", async () => {
     const { nodes, edges } = pipeline();
     const h = makeHarness();

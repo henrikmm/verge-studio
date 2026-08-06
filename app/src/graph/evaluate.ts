@@ -184,12 +184,24 @@ export interface RunOptions {
    * stops a slider drag from billing a GPU run.
    */
   allowManual?: boolean | ReadonlySet<string>;
+  /**
+   * Nodes this pass may never run, whatever their badge says.
+   *
+   * `allowManual` is about the A/P badge, which the user is entitled to flip: setting a costly
+   * node to auto means "yes, keep this up to date for me". `deny` is stronger and exists for
+   * passes the user did not ask for. The refresh that follows a parameter edit is one — the
+   * Inspector is where the DA3 sampling controls live, so without this a slider drag there
+   * could start a paid run, which is the one thing the execution model exists to prevent.
+   */
+  deny?: ReadonlySet<string>;
   onChange: (id: string, patch: Partial<NodeRuntime>) => void;
   signal?: AbortSignal;
   now?: () => number;
 }
 
-function mayRun(node: GraphNode, allow: RunOptions["allowManual"]): boolean {
+function mayRun(node: GraphNode, options: RunOptions): boolean {
+  if (options.deny?.has(node.id)) return false;
+  const allow = options.allowManual;
   if (node.auto) return true;
   if (allow === true) return true;
   if (!allow) return false;
@@ -260,7 +272,7 @@ export async function runGraph(options: RunOptions): Promise<RunReport> {
       continue;
     }
 
-    if (!mayRun(node, options.allowManual)) {
+    if (!mayRun(node, options)) {
       // Not an error — this is the paused/manual node doing its job.
       report.blocked.push(id);
       onChange(id, { status: "stale" });

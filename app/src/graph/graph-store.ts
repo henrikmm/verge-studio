@@ -26,6 +26,11 @@ export interface GraphStoreState {
   /** Node id → the cache key its current configuration wants. */
   desiredKeys: Record<string, string>;
   selectedId: string | null;
+  /**
+   * The highlighted wire, if any. Purely a view concern — it is never saved and never
+   * reaches a cache key, so selecting a wire cannot restale a node or change a result.
+   */
+  selectedEdgeId: string | null;
   running: boolean;
   /** Structural problems (a cycle, an unknown node type), not node failures. */
   error: string | null;
@@ -106,6 +111,7 @@ const state: GraphStoreState = {
   runtime: Object.fromEntries(initial.nodes.map((n) => [n.id, emptyRuntime()])),
   desiredKeys: {},
   selectedId: "fixture-run",
+  selectedEdgeId: null,
   running: false,
   error: null,
 };
@@ -156,6 +162,11 @@ export function setNodes(nodes: GraphNode[]) {
 
 export function setEdges(edges: GraphEdge[]) {
   state.edges = edges;
+  // A highlight pointing at a wire that no longer exists would leave Backspace armed at
+  // nothing, and the next wire to reuse that id would inherit the selection.
+  if (state.selectedEdgeId && !edges.some((e) => e.id === state.selectedEdgeId)) {
+    state.selectedEdgeId = null;
+  }
   recomputeKeys();
   commit();
 }
@@ -177,6 +188,54 @@ export function setNodeParams(nodeId: string, patch: Record<string, JsonValue>) 
   commit();
 }
 
+/**
+ * Change a parameter and then bring the graph back up to date on its own.
+ *
+ * `setNodeParam` only marks work as out of date; something else has to actually redo it. The
+ * Inspector never did, so changing a value there left the graph stranded: switching Run Source
+ * from the recorded fixture to the live output stalled eight nodes with no visible way forward,
+ * and the panes went on showing the old room. The run had already been paid for. It recovered
+ * only because nudging an unrelated Depth 2D slider happens to call `runAuto()` — which is not
+ * an affordance anyone could be expected to find.
+ *
+ * Only free work is redone — see `runAutoFree()`, which bars every costly node outright, so
+ * cloud inference can never be started by moving a control. That safety property is why the
+ * raw setters stay available for the callers that drive their own run.
+ *
+ * The short delay coalesces a slider drag into one pass at the end. Without it, every
+ * intermediate value starts a run that the next value immediately aborts.
+ */
+export const PARAM_RUN_DELAY_MS = 180;
+
+let pendingRun: ReturnType<typeof setTimeout> | null = null;
+
+/** Redo the free work shortly, folding a burst of edits into a single pass. */
+export function scheduleAutoRun(delayMs: number = PARAM_RUN_DELAY_MS): void {
+  if (pendingRun) clearTimeout(pendingRun);
+  pendingRun = setTimeout(() => {
+    pendingRun = null;
+    void runAutoFree();
+  }, delayMs);
+}
+
+/** Tests and teardown: drop a scheduled pass without running it. */
+export function cancelScheduledAutoRun(): void {
+  if (pendingRun) clearTimeout(pendingRun);
+  pendingRun = null;
+}
+
+/** `setNodeParam`, then catch the graph up. The Inspector's control path. */
+export function setNodeParamAndRun(nodeId: string, key: string, value: JsonValue) {
+  setNodeParam(nodeId, key, value);
+  scheduleAutoRun();
+}
+
+/** `setNodeParams`, then catch the graph up. */
+export function setNodeParamsAndRun(nodeId: string, patch: Record<string, JsonValue>) {
+  setNodeParams(nodeId, patch);
+  scheduleAutoRun();
+}
+
 /** The A/P badge. */
 export function setNodeAuto(nodeId: string, auto: boolean) {
   state.nodes = state.nodes.map((n) => (n.id === nodeId ? { ...n, auto } : n));
@@ -187,8 +246,19 @@ export function selectNode(nodeId: string | null) {
   // Idempotent on purpose. React Flow reports the selection on every render pass,
   // including an empty one at mount; committing unconditionally re-renders the
   // canvas, which reports again, which is an infinite loop.
-  if (state.selectedId === nodeId) return;
+  if (state.selectedId === nodeId && state.selectedEdgeId === null) return;
   state.selectedId = nodeId;
+  // One selection at a time: the Inspector follows the node, and Backspace has to have
+  // exactly one meaning. Picking a node therefore drops any highlighted wire.
+  state.selectedEdgeId = null;
+  commit();
+}
+
+/** Highlight a wire, or clear the highlight with `null`. */
+export function selectEdge(edgeId: string | null) {
+  if (state.selectedEdgeId === edgeId && (edgeId === null || state.selectedId === null)) return;
+  state.selectedEdgeId = edgeId;
+  if (edgeId !== null) state.selectedId = null;
   commit();
 }
 
@@ -249,6 +319,8 @@ export interface RunRequest {
   target?: string;
   /** Manual nodes cleared to run this pass — the explicit Run the user pressed. */
   allowManual?: boolean | ReadonlySet<string>;
+  /** Nodes barred from this pass regardless of their badge. See `RunOptions.deny`. */
+  deny?: ReadonlySet<string>;
 }
 
 export async function run(request: RunRequest = {}): Promise<RunReport> {
@@ -266,6 +338,7 @@ export async function run(request: RunRequest = {}): Promise<RunReport> {
       runtime: state.runtime,
       target: request.target,
       allowManual: request.allowManual,
+      deny: request.deny,
       signal: controller.signal,
       onChange: (id, patch) => {
         state.runtime = { ...state.runtime, [id]: { ...(state.runtime[id] ?? emptyRuntime()), ...patch } };
@@ -293,6 +366,22 @@ export function runNode(nodeId: string): Promise<RunReport> {
 /** Re-evaluate everything that can run for free. Manual nodes stay stale. */
 export function runAuto(): Promise<RunReport> {
   return run({ allowManual: false });
+}
+
+/**
+ * The refresh that follows an edit the user made to a control.
+ *
+ * Stricter than `runAuto()` on purpose. `runAuto()` honours the A/P badge, so a node the user
+ * deliberately set to auto will run — that is what the badge is for. This pass does not, because
+ * the user asked to change a value, not to start a run, and the Inspector is exactly where the
+ * DA3 sampling controls live. Every node the registry calls costly stays out of it, so no
+ * amount of slider dragging can reach the GPU.
+ */
+export function runAutoFree(): Promise<RunReport> {
+  const costly = new Set(
+    state.nodes.filter((n) => REGISTRY[n.type]?.execution === "manual").map((n) => n.id),
+  );
+  return run({ allowManual: false, deny: costly });
 }
 
 recomputeKeys();

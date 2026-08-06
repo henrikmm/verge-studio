@@ -7,7 +7,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { extractFrames, probeVideo } from "../../scripts/extract-frames.mjs";
 import { cloudStatus, invalidateCloudStatus, proxyToService } from "./cloud.mjs";
@@ -20,6 +19,13 @@ import {
   resolveRunArtifact,
   saveRun,
 } from "./runs.mjs";
+import {
+  FRAME_ROOT,
+  UPLOAD_ROOT,
+  describeSweep,
+  maybePruneTempDirs,
+  pruneTempDirs,
+} from "./temp-store.mjs";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -41,11 +47,10 @@ const FIXTURE_DIR = new URL("../../fixtures/roadside/", import.meta.url);
  */
 const FIXTURE_FRAME_COUNT = 4;
 
-// Dropped videos and extracted frames both live under the OS temp dir. Nothing here
-// is ever uploaded anywhere by this middleware -- the cloud only ever receives the
-// JPEG frames, and only when the user runs the DA3 node.
-const UPLOAD_ROOT = join(tmpdir(), "verge-uploads");
-const FRAME_ROOT = join(tmpdir(), "verge-frames");
+// Dropped videos and extracted frames both live under the OS temp dir (UPLOAD_ROOT and
+// FRAME_ROOT, defined in temp-store.mjs, which also ages them out). Nothing here is ever
+// uploaded anywhere by this middleware -- the cloud only ever receives the JPEG frames, and
+// only when the user runs the DA3 node.
 
 /**
  * Measured on a real L4 by scripts/vram-sweep.sh (2026-08-01), per-run isolated with
@@ -138,6 +143,15 @@ export function localApi() {
       // rolling out a revision nobody is watching, and a half-applied deploy is worse than
       // none — the operator would have no log and no way to know it happened.
       server.httpServer?.on("close", killAllJobs);
+
+      // Clear yesterday's scratch data once, at startup. Failing to tidy up is never a reason
+      // for the dev server not to come up, so this deliberately swallows its own errors.
+      void pruneTempDirs()
+        .then((sweep) => {
+          const line = describeSweep(sweep);
+          if (line) server.config.logger.info(line);
+        })
+        .catch(() => {});
       process.once("exit", killAllJobs);
 
       server.middlewares.use(async (req, res, next) => {
@@ -308,6 +322,9 @@ export function localApi() {
               const name = basename(String(req.headers["x-filename"] ?? "upload.mp4"));
               const body = await readRawBody(req);
               if (body.length === 0) return json(res, 400, { detail: "empty upload" });
+              // Tidy up before adding to the pile, so the work that fills these directories
+              // is also the work that empties them.
+              await maybePruneTempDirs().catch(() => {});
               await mkdir(UPLOAD_ROOT, { recursive: true });
               const path = join(UPLOAD_ROOT, `${randomUUID().slice(0, 8)}-${name}`);
               await writeFile(path, body);
@@ -323,6 +340,7 @@ export function localApi() {
 
             case "POST /api/extract": {
               const { path, fps = 10, maxFrames = 32, longEdge } = await readJsonBody(req);
+              await maybePruneTempDirs().catch(() => {});
               const outDir = join(FRAME_ROOT, randomUUID().slice(0, 8));
               // longEdge is left undefined unless the caller asks, so extractFrames'
               // own 1024 px default applies -- the browser upload path must downscale

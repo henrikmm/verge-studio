@@ -23,15 +23,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   getGraph,
   isNodeStale,
+  selectEdge,
   selectNode,
   setEdges,
   setNodes,
   useGraph,
 } from "../graph/graph-store";
 import { toggleFocus, useDock } from "../lib/dock-store";
+import { canConnect, connectEdges, portTypeOf } from "../graph/connect";
 import { NodeCard } from "../graph/node-card";
 import { REGISTRY } from "../graph/nodes";
-import { portColor, type PortType } from "../graph/types";
+import { portColor } from "../graph/types";
 
 const nodeTypes = { card: NodeCard };
 const LIVE_ONLY_NODES = new Set(["frame-source", "da3-depth"]);
@@ -43,13 +45,6 @@ const NODE_HEIGHT = 175;
 const FIT_PADDING_PX = 28;
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 1.4;
-
-function portTypeOf(nodeType: string, portId: string, side: "in" | "out"): PortType | null {
-  const spec = REGISTRY[nodeType];
-  if (!spec) return null;
-  const ports = side === "in" ? spec.inputs : spec.outputs;
-  return ports.find((p) => p.id === portId)?.type ?? null;
-}
 
 function GraphCanvas() {
   const graph = useGraph();
@@ -79,19 +74,27 @@ function GraphCanvas() {
     () =>
       graph.edges.filter((edge) => visibleIds.has(edge.source) && visibleIds.has(edge.target)).map((e) => {
         const source = graph.nodes.find((n) => n.id === e.source);
-        const type = source ? portTypeOf(source.type, e.sourcePort, "out") : null;
+        const type = source ? portTypeOf(REGISTRY, source.type, e.sourcePort, "out") : null;
         // A wire out of a stale node is showing old data; dim it to say so.
         const dim = source ? isNodeStale(graph, source.id) : false;
+        // React Flow is fully controlled here, so it cannot hold a selection of its own:
+        // whatever it marks is overwritten on our next render. Carrying `selected` on the
+        // edge the way nodes already do is what makes a wire selectable at all — and
+        // Backspace only ever acts on selected elements, which is why deleting a wire was
+        // unreachable before this. The stroke thickens too, so the highlight survives
+        // grayscale and does not lean on the port hue.
+        const selected = graph.selectedEdgeId === e.id;
         return {
           id: e.id,
           source: e.source,
           target: e.target,
           sourceHandle: e.sourcePort,
           targetHandle: e.targetPort,
+          selected,
           style: {
-            stroke: type ? portColor(type) : "var(--text-dim)",
-            strokeWidth: 1.5,
-            opacity: dim ? 0.35 : 0.9,
+            stroke: selected ? "var(--emph-hi)" : type ? portColor(type) : "var(--text-dim)",
+            strokeWidth: selected ? 3 : 1.5,
+            opacity: dim && !selected ? 0.35 : 0.9,
           },
         };
       }),
@@ -193,46 +196,35 @@ function GraphCanvas() {
     if (touched) setNodes(nodes);
   }, []);
 
+  /**
+   * Removals are applied; React Flow's own selection reports are not.
+   *
+   * Selection is driven from `onEdgeClick` into our store, exactly as nodes are driven from
+   * `onNodeClick`. Consuming React Flow's `select` changes as well would make the two fight:
+   * it applies our flag, reports the change back, we rewrite the flag, forever. Backspace
+   * still works because React Flow's delete handler reads the `selected` flag we hand it, so
+   * only the highlighted wire is ever in the removal set.
+   */
   const onEdgesChange = useCallback((changes: EdgeChange[]) => {
     const removed = new Set(changes.filter((c) => c.type === "remove").map((c) => c.id));
     if (removed.size === 0) return;
     setEdges(getGraph().edges.filter((e) => !removed.has(e.id)));
   }, []);
 
-  const isValidConnection = useCallback((connection: Connection | Edge) => {
-    const { source, target, sourceHandle, targetHandle } = connection;
-    if (!source || !target || !sourceHandle || !targetHandle) return false;
-    if (source === target) return false;
-    const nodes = getGraph().nodes;
-    const from = nodes.find((n) => n.id === source);
-    const to = nodes.find((n) => n.id === target);
-    if (!from || !to) return false;
-    const out = portTypeOf(from.type, sourceHandle, "out");
-    const inp = portTypeOf(to.type, targetHandle, "in");
-    return out !== null && out === inp;
-  }, []);
-
-  const onConnect = useCallback(
-    (connection: Connection) => {
-      if (!isValidConnection(connection)) return;
-      const { source, target, sourceHandle, targetHandle } = connection;
-      const existing = getGraph().edges.filter(
-        // One wire per input port: connecting replaces rather than stacks.
-        (e) => !(e.target === target && e.targetPort === targetHandle),
-      );
-      setEdges([
-        ...existing,
-        {
-          id: `e-${source}-${sourceHandle}-${target}-${targetHandle}`,
-          source: source!,
-          sourcePort: sourceHandle!,
-          target: target!,
-          targetPort: targetHandle!,
-        },
-      ]);
-    },
-    [isValidConnection],
+  // Both rules live in `graph/connect.ts` so they can be tested without a mouse. A port handle
+  // is ~11 px even zoomed in, which makes a drag a poor way to assert a rule.
+  const isValidConnection = useCallback(
+    (connection: Connection | Edge) => canConnect(REGISTRY, getGraph().nodes, connection),
+    [],
   );
+
+  const onConnect = useCallback((connection: Connection) => {
+    const graph = getGraph();
+    const next = connectEdges(REGISTRY, graph.nodes, graph.edges, connection);
+    if (next.length !== graph.edges.length || next.some((e, i) => e.id !== graph.edges[i]?.id)) {
+      setEdges(next);
+    }
+  }, []);
 
   const staleCount = visibleNodes.filter((n) => isNodeStale(graph, n.id)).length;
   const visibleWireCount = graph.edges.filter(
@@ -249,7 +241,11 @@ function GraphCanvas() {
           {staleCount === 0 ? "all current" : `${staleCount} stale`}
         </span>
         {graph.error && <span style={{ color: "var(--accent-err)" }}>{graph.error}</span>}
-        <span className="hint">{scope === "measurement" ? "Measurement view · open Full graph for live DA3" : "Full pipeline · drag a port to rewire"}</span>
+        <span className="hint">
+          {scope === "measurement"
+            ? "Measurement view · open Full graph for live DA3"
+            : "Full pipeline · drag a port to rewire · click a wire, Backspace to cut it"}
+        </span>
       </div>
       <div className="pane-body graph-canvas" ref={hostRef}>
         <div className="graph-banner">
@@ -295,7 +291,11 @@ function GraphCanvas() {
           // makes the two oscillate — RF applies our flag, reports the change back, we
           // rewrite the flag, forever.
           onNodeClick={(_, node) => selectNode(node.id)}
-          onPaneClick={() => selectNode(null)}
+          onEdgeClick={(_, edge) => selectEdge(edge.id)}
+          onPaneClick={() => {
+            selectNode(null);
+            selectEdge(null);
+          }}
           // No `fitView` prop: React Flow's mount-time fit runs against the stale internal
           // viewport described above and would fight the framing computed in `refit`.
           minZoom={MIN_ZOOM}

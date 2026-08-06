@@ -49,7 +49,7 @@ import {
   nodeById,
   runNode,
   setNodeAuto,
-  setNodeParam,
+  setNodeParamAndRun,
   useGraph,
 } from "../graph/graph-store";
 import { REGISTRY } from "../graph/nodes";
@@ -397,7 +397,7 @@ export function Inspector() {
                     key={control.key}
                     spec={control}
                     value={selected.params[control.key]}
-                    onChange={(v) => setNodeParam(selected.id, control.key, v)}
+                    onChange={(v) => setNodeParamAndRun(selected.id, control.key, v)}
                   />
                 ))}
                 {spec.execution === "manual" && (
