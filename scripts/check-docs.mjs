@@ -27,12 +27,24 @@ const IGNORED = new Set(["node_modules", ".git", "dist", "donor", ".runs", "fixt
  * These are ceilings on attention, not on effort. The instruction files are read at the start of
  * every session, so they pay their cost every time; the registry is consulted, so it may be
  * longer; the task list has to stay short enough that an out-of-date entry is obvious.
+ *
+ * The registry's ceiling was raised 400 -> 2000 on 2026-08-06, deliberately and once. It is the
+ * only document that grows with the project rather than with the current sprint: every decision
+ * that holds and every measurement worth not re-deriving lands there permanently, so a cap sized
+ * for the other files was forcing real evidence back out of the record. The other three are
+ * unchanged and should stay that way — they are read at the start of every session.
+ *
+ * A wider ceiling is not an invitation. Detail that belongs in an evidence file still goes to an
+ * evidence file; see section 6 of the registry for where those live.
  */
 const BUDGETS = [
   { file: "AGENTS.md", lines: 180, bytes: 16 * 1024 },
   { file: "CLAUDE.md", lines: 40, bytes: 4 * 1024 },
   { file: "docs/PROGRESS.md", lines: 180, bytes: 16 * 1024 },
-  { file: "docs/REGISTRY.md", lines: 400, bytes: 32 * 1024 },
+  // Bytes scale with the lines, or the byte cap silently becomes the real limit: the registry
+  // measured 64 bytes/line on 2026-08-06, so 2000 lines is ~125 KiB. 160 KiB leaves headroom
+  // for tables, which run wider than prose.
+  { file: "docs/REGISTRY.md", lines: 2000, bytes: 160 * 1024 },
 ];
 
 /** The one file allowed to contain unfinished work. */

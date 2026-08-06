@@ -2,6 +2,7 @@
 import io
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -117,6 +118,69 @@ with tempfile.TemporaryDirectory() as tmp:
     assert by_kind["glb"] == "scene.glb", by_kind
     assert "notes.txt" not in {a.name for a in arts}, "unknown suffixes must be skipped"
 print("npz kind disambiguation OK:", by_kind)
+
+# Transience is enforced, not inherited from the instance dying. Two mechanisms:
+# frames go as soon as inference returns, whole runs go once they pass the TTL.
+import os  # noqa: E402
+
+with tempfile.TemporaryDirectory() as tmp:
+    run_dir = Path(tmp) / "run-1"
+    (run_dir / "frames").mkdir(parents=True)
+    (run_dir / "exports").mkdir()
+    (run_dir / "frames" / "frame-0000.jpg").write_bytes(b"x" * 1024)
+    (run_dir / "frames" / "frame-0001.jpg").write_bytes(b"x" * 2048)
+    (run_dir / "exports" / "scene.glb").write_bytes(b"g")
+
+    released = main._discard_frames(run_dir)
+    assert released == 3072, released
+    assert not (run_dir / "frames").exists(), "frames must not survive inference"
+    assert (run_dir / "exports" / "scene.glb").is_file(), "exports must survive; the client fetches them"
+    # Idempotent: a re-entered run must not explode on the second call.
+    assert main._discard_frames(run_dir) == 0
+print("frame discard OK: released 3072 bytes, exports intact")
+
+with tempfile.TemporaryDirectory() as tmp:
+    original_root = main.RUN_ROOT
+    main.RUN_ROOT = Path(tmp) / "verge-runs"
+    try:
+        fresh = main.RUN_ROOT / "20260806-120000-aaaaaa"
+        stale = main.RUN_ROOT / "20260801-010000-bbbbbb"
+        for d in (fresh, stale):
+            (d / "exports").mkdir(parents=True)
+            (d / "exports" / "verge-result.npz").write_bytes(b"n")
+        old = time.time() - (48 * 60 * 60)
+        os.utime(stale, (old, old))
+
+        removed = main._sweep_expired_runs(ttl_seconds=6 * 60 * 60)
+        assert removed == [stale.name], removed
+        assert not stale.exists() and fresh.exists(), "the sweep must take only what expired"
+
+        # A run inside the window is never touched, however many times /infer fires.
+        assert main._sweep_expired_runs(ttl_seconds=6 * 60 * 60) == []
+        assert fresh.exists()
+
+        # A symlink is skipped, not followed: RUN_ROOT sits in the OS temp directory and
+        # rmtree through a link would delete a tree that is not ours.
+        outsider = Path(tmp) / "outsider"
+        (outsider / "keep").mkdir(parents=True)
+        link = main.RUN_ROOT / "linked"
+        link.symlink_to(outsider, target_is_directory=True)
+        os.utime(link, (old, old), follow_symlinks=False)
+        main._sweep_expired_runs(ttl_seconds=6 * 60 * 60)
+        assert (outsider / "keep").is_dir(), "the sweep followed a symlink"
+    finally:
+        main.RUN_ROOT = original_root
+print("run sweep OK: expired taken, live kept, symlink skipped")
+
+# A missing root is the normal cold-start state, not an error.
+with tempfile.TemporaryDirectory() as tmp:
+    original_root = main.RUN_ROOT
+    main.RUN_ROOT = Path(tmp) / "never-created"
+    try:
+        assert main._sweep_expired_runs() == []
+    finally:
+        main.RUN_ROOT = original_root
+print("sweep on missing root OK")
 
 diag = Diagnostics(native_npz={"result.npz": ["depth", "conf"]}, export_dir_listing=["a"])
 assert diag.native_npz["result.npz"] == ["depth", "conf"]

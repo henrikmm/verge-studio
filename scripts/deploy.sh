@@ -51,8 +51,15 @@ fi
 # Content-addressed image tag. The ~12 GB build takes 15-20 min and is the single
 # largest cost of a cloud session -- in wall-clock time, not dollars (Cloud Build's
 # free tier usually covers it). Keeping the image in Artifact Registry instead costs
-# ~$0.10/GB/month. So we rebuild ONLY when server/ actually changes, and reuse the
-# stored image every other time, turning a 15-20 min session start into ~1 min.
+# ~$0.10/GB/month, so ~$1/month PER IMAGE. So we rebuild ONLY when server/ actually
+# changes, and reuse the stored image every other time, turning a 15-20 min session
+# start into ~1 min.
+#
+# The per-source tag means a changed server/ leaves the OLD image behind as well. Nothing
+# here deletes it -- reaping belongs at teardown, once the new image has served a real run
+# and earned promotion. See "One image in the repository, ever" in AGENTS.md. If you are
+# reading this because the registry looks bigger than it should: that is the reason, and
+# scripts/teardown.sh is the fix.
 #
 # Hashing the source rather than trusting a mutable tag means a stale image can never
 # be silently deployed: different source, different tag, no match, rebuild.

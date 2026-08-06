@@ -39,9 +39,23 @@ download that works around it are described in REGISTRY section 8. Google's own 
 and [lifecycle rules](https://docs.cloud.google.com/storage/docs/lifecycle). Editing `server/`
 forces a ~20 minute rebuild, so batch every server change into this one deploy.
 
+**`server/` changes are already staged for this deploy.** On 2026-08-06 the frame-discard and
+run-sweep described in REGISTRY decision 13 were written and unit-tested but never built or run.
+They ride along with this task's rebuild — do not deploy separately for them, and do exercise them
+here, because no deployed instance has executed that code yet.
+
+**The lifecycle rule is a precondition, not a step.** Set it when the bucket is created, before a
+single run writes to it — `_publish` has no deletion path, and `expires_after_days` in the manifest
+is a statement of intent that no code enforces. The rule must match **`runs/transient/`**, the
+prefix `_publish` actually writes to. The donor bucket is the cautionary case: it carries five
+carefully written lifecycle rules, none of which matches the `runs/` prefix its output went to, so
+those objects never expire. Verify by prefix, not by the presence of rules.
+
 **Done when.** In a single guided session: the browser loads a result through a signed link, Save
-brings it home, a reload still finds it, the lifecycle rule is set to three days or fewer, the
-minimum-machine setting is returned to zero, and a check confirms no service is left running.
+brings it home, a reload still finds it, the lifecycle rule is confirmed to match `runs/transient/`
+at three days or fewer, a deployed run is observed discarding its frames and sweeping an expired
+run, the minimum-machine setting is returned to zero, and a check confirms no service is left
+running and exactly one image remains.
 
 ---
 

@@ -143,6 +143,11 @@ class InferManifest(BaseModel):
 
     # Transient by policy — the client must call Save explicitly to retain.
     transient: bool = True
+    # The retention this run's artifacts are promised in DURABLE storage, and the number the
+    # output bucket's lifecycle rule must be set to. It is a statement of intent that only
+    # becomes a guarantee once that rule exists: no code reads this field, and nothing in
+    # GCS honours it by itself. On local-disk runs the real bound is VERGE_RUN_TTL_SECONDS
+    # in main.py, which is hours rather than days.
     expires_after_days: int = 3
 
 

@@ -158,10 +158,50 @@ the arithmetic and says so. It never silently shortens the clip.
 
 ### Other measured numbers
 
-- Building the 12 GB service image takes **19 min 30 s**. The stored image is 9.8 GB and costs
-  roughly $1 a month to keep, which is why it is kept rather than rebuilt.
+- Building the 12 GB service image takes **19 min 30 s**. One stored image is 9.8 GB and costs
+  roughly $1 a month to keep, which is why it is kept rather than rebuilt. That price is **per
+  image**, and images used to accumulate — see the standing-cost audit below.
 - Result files are large: **108 MB at 112 frames and 504 px**. The 3D scene file is only ~16 MB.
 - The model writes no result file of its own; ours is the only one. This was measured, not assumed.
+
+### What a run actually weighs, in both directions
+
+Measured 2026-08-06 from the saved door run at 112 frames and 504 px
+(`fixtures/door/504px-112f/manifest.json`):
+
+| | Content | Size |
+|---|---|---|
+| Sent up | 112 JPEG frames | **4.7 MB**, ~39 KB per frame |
+| Came back | `scene.glb` | 16.1 MB |
+| Came back | `verge-result.npz` | 105.5 MB |
+| | **total returned** | **121.6 MB — about 26× what was sent** |
+
+The output is **not** "depth images". The depth preview PNG is a ~10 KB thumbnail; the 105.5 MB is
+four float arrays — depth, confidence, extrinsics, intrinsics — across every frame. That asymmetry
+is why the 32 MiB response cap matters and why saving a run is chunked.
+
+That run's diagnostics also confirm the model wrote **no npz of its own**: `native_npz` was empty
+and the export directory held only `scene.glb`, `scene.jpg` and our `verge-result.npz`.
+
+### Standing cloud cost, audited 2026-08-06
+
+Nothing was reaping container images, and the documented cost was roughly a third of the real one.
+
+| Where | Held | Reported size |
+|---|---|---|
+| `verge-lab` → `verge` | **two** `da3-service` images, one per `server/` source hash | 16.68 GB |
+| `motiva-verge-lab-dev` → `mvl-worker` | a third copy, from the retired donor project | 11.80 GB |
+| `motiva-verge-lab-dev-fdcfc626` | donor run outputs under `runs/**` | 29.69 MB |
+
+About 28.5 GB, roughly $2.85 a month, against scripts that claimed ~$1. The stale `verge` image and
+the entire donor repository were deleted the same day; only the current image remains. **Artifact
+Registry reclaims shared layers asynchronously**, so the repository still reported 16,679 MB
+immediately after the deletion — the figure lags the delete and was not re-checked here.
+
+No output bucket has ever existed in `verge-lab`, so no depth artifact was ever orphaned in cloud
+storage. The donor bucket shows what happens when one does: its lifecycle rules cover `temporary/`,
+`incoming/`, `source-archives/` and `viewer/` — **but not `runs/`, which is where its output
+actually went**. Those objects have no expiry at all.
 - Extracting a whole ladder of frame counts takes **13 seconds** in one pass. Doing it one rung
   at a time took 435 seconds and once locked up the machine — see the lessons section.
 
@@ -229,11 +269,29 @@ the arithmetic and says so. It never silently shortens the clip.
     seeded. Confirmed on real data: nine independent user recordings produced byte-identical floor
     diagnostics.
 
-12. **Keep the built image, delete the service.** Storage is about a dollar a month; rebuilding
-    costs twenty minutes of every session. The deploy script tags the image with a digest of the
-    `server/` directory and skips the build when that exact source is already stored, so a stale
-    image can never be deployed by accident. This was reversed on 2026-07-31 — the previous rule
-    optimised the cheap axis.
+12. **Keep the built image, delete the service — but keep exactly one.** Storage is about a dollar
+    a month; rebuilding costs twenty minutes of every session. The deploy script tags the image
+    with a digest of the `server/` directory and skips the build when that exact source is already
+    stored, so a stale image can never be deployed by accident. This was reversed on 2026-07-31 —
+    the previous rule optimised the cheap axis.
+
+    The per-image tag has a cost the original rule missed: every change to `server/` leaves another
+    ~12 GB image beside the last one, and nothing deleted it. By 2026-08-06 that was two images and
+    three times the assumed charge. So a new image is now **promoted** rather than added — it is on
+    trial until it has served a real run, and the previous one is deleted in that same session.
+    `scripts/teardown.sh` does this, and refuses to when no image matches the current `server/`
+    source, because reaping "everything that is not current" would otherwise delete the only image
+    there is. `REAP_OLD_IMAGES=0` keeps both when a session's runs failed and rollback matters more
+    than a dollar.
+
+13. **Transience is enforced by the service, not by the instance dying.** "Nothing is kept unless
+    the user saves it" was, until 2026-08-06, an accident of scheduling: nothing deleted a
+    successful run, and only the machine shutting down reclaimed anything. With `--min-instances=1`
+    holding a machine alive for a whole session, every run's frames and exports stayed resident the
+    entire time. The service now discards uploaded frames the moment inference returns — they are
+    input, nothing reads them again — and sweeps run directories past `VERGE_RUN_TTL_SECONDS`
+    (six hours) at the top of each `/infer`. The window is deliberately generous: a batched session
+    saves its runs at the end, and deleting one early would destroy something already paid for.
 
 ---
 
@@ -362,3 +420,13 @@ Kept because each one was paid for once.
   even though we never decode video on the server. The build now checks its own imports.
 - **Saving the pane layout while one pane is maximised corrupts it** — the maximised state sizes
   its neighbours to nothing, and those sizes are what gets stored.
+- **A cost written into a comment stops being true and nobody notices.** Two scripts described the
+  standing charge as "~12 GB, about a dollar a month". It was 28.5 GB across three image copies in
+  two projects, roughly $2.85 a month, and had been wrong for days — nothing checks a comment
+  against the account. Cleanup that is documented but not executable is a wish. The rule now has a
+  script behind it (`teardown.sh` reaps) and the audit is in section 3 with the date it was taken.
+- **A retention field nobody reads is worse than none.** The manifest has advertised
+  `expires_after_days: 3` since the contract was written; no code has ever honoured it, and the
+  donor bucket's lifecycle rules missed the one prefix its output was actually written to. Both
+  looked like a policy from the outside. Check the prefix that receives data, not the presence of
+  a rule.

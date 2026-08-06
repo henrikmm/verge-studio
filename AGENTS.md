@@ -60,6 +60,37 @@ Checking costs nothing. The app's Inspector has a **Cloud control** panel that r
 you are signed in, whether the service exists, and whether the next deploy will be quick or slow.
 Those are all read-only lookups and cannot wake anything.
 
+### One image in the repository, ever
+
+The built image is kept between sessions on purpose: storing it costs about ten cents per
+gigabyte per month, rebuilding it costs twenty minutes at the start of every session. That trade
+only holds for **one** image. Copies accumulate silently, because `deploy.sh` tags each build with
+a hash of `server/` — so every change to that directory mints another ~12 GB image beside the last
+one, and nothing has ever deleted the old one.
+
+That is not hypothetical. On 2026-08-06 the repository held two images totalling 16.68 GB while
+both scripts still described the cost as "~12 GB, about a dollar a month", and a third full copy
+of essentially the same image was still sitting in the retired `motiva-verge-lab-dev` project.
+Roughly three times the standing charge anyone believed they were paying.
+
+So a new image is **promoted**, never merely added:
+
+1. **A freshly built image is on trial until it has served a real run.** Deploy it, run inference,
+   and confirm the run completed without errors. Until that happens the previous image is the only
+   way back, so do not touch it.
+2. **Once the new one has worked, the previous one goes, in the same session.** Not next time —
+   the person who built it is the only one who knows it was good.
+3. **Never end a session with two images in the repository.** Two means somebody stopped halfway,
+   and whoever arrives next cannot tell which one is trusted.
+
+`scripts/teardown.sh` does step 2 for you: after deleting the service it removes every image
+except the one matching the current `server/` source. If this session's runs **failed**, pass
+`REAP_OLD_IMAGES=0` to keep the older image so you can roll back to it. `PURGE_IMAGE=1` still
+removes the repository outright when the project is finished for good.
+
+The same rule applies to anything else the cloud accumulates without being asked: check what a
+session left behind before you call it finished. Listing costs nothing.
+
 ## When the work needs the user
 
 Some tasks cannot be finished by an agent alone: recording a video, holding a tape measure,

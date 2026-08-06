@@ -10,6 +10,11 @@ Design notes that matter:
   never resamples and never downloads video.
 * Artifacts go to GCS when `VERGE_OUTPUT_BUCKET` is set, otherwise they stay on
   local disk and are served from `/artifact`. The mock server uses the same shape.
+* Transience is enforced here, not left to chance. Uploaded frames are discarded the
+  moment inference returns, and run directories are swept once they pass
+  `VERGE_RUN_TTL_SECONDS`. Before 2026-08-06 nothing deleted a successful run at all --
+  the instance dying was the only cleanup, which made the "nothing is kept unless the
+  user saves it" policy an accident of scheduling rather than a property of the service.
 """
 
 from __future__ import annotations
@@ -48,6 +53,17 @@ MODEL_DIR = os.environ.get("VERGE_MODEL_DIR", "/opt/mvl-models/da3_nested_giant_
 OUTPUT_BUCKET = os.environ.get("VERGE_OUTPUT_BUCKET", "")
 OUTPUT_PREFIX = os.environ.get("VERGE_OUTPUT_PREFIX", "runs/transient").strip("/")
 RUN_ROOT = Path(os.environ.get("VERGE_RUN_ROOT", tempfile.gettempdir())) / "verge-runs"
+
+# How long a finished run's exports stay fetchable on this instance.
+#
+# Generous on purpose. A batched session runs several experiments against one warm machine
+# and saves them at the end, so a short window would delete artifacts the user has already
+# paid for but not yet fetched. Six hours outlives any session we have run while still
+# bounding growth on an instance that --min-instances=1 keeps alive indefinitely.
+#
+# This bounds LOCAL disk only. Durable storage expiry is the bucket's lifecycle rule; see
+# expires_after_days in contract.py.
+RUN_TTL_SECONDS = int(os.environ.get("VERGE_RUN_TTL_SECONDS", 6 * 60 * 60))
 
 app = FastAPI(title="Verge Studio DA3 service")
 
@@ -246,6 +262,48 @@ def _publish(path: Path, run_id: str) -> str:
     return f"gs://{OUTPUT_BUCKET}/{OUTPUT_PREFIX}/{run_id}/{path.name}"
 
 
+def _discard_frames(run_dir: Path) -> int:
+    """Drop a run's uploaded frames. Returns the bytes released.
+
+    Frames are input. Once `model.inference` has returned, nothing reads them again --
+    `_collect_artifacts` and `/artifact` both work exclusively out of `exports/`. Keeping
+    them was pure residue: measured on the door clip, 4.7 MB of the 126 MB a 112-frame run
+    left behind, held for the life of the instance for no reader.
+    """
+    frame_dir = run_dir / "frames"
+    if not frame_dir.is_dir():
+        return 0
+    released = sum(p.stat().st_size for p in frame_dir.rglob("*") if p.is_file())
+    shutil.rmtree(frame_dir, ignore_errors=True)
+    return released
+
+
+def _sweep_expired_runs(ttl_seconds: int = RUN_TTL_SECONDS, now: float | None = None) -> list[str]:
+    """Delete run directories that have outlived the retention window.
+
+    Called at the top of every /infer, which is the only moment new disk gets claimed and
+    therefore the only moment the sweep is worth its syscalls. A symlinked entry is skipped
+    rather than followed -- RUN_ROOT lives under the OS temp directory, and rmtree through
+    a link would delete somebody else's tree.
+    """
+    if not RUN_ROOT.is_dir():
+        return []
+    cutoff = (now if now is not None else time.time()) - ttl_seconds
+    removed: list[str] = []
+    for path in sorted(RUN_ROOT.iterdir()):
+        if path.is_symlink() or not path.is_dir():
+            continue
+        try:
+            if path.stat().st_mtime >= cutoff:
+                continue
+        except OSError:  # vanished under us, or unreadable; either way not ours to chase
+            continue
+        shutil.rmtree(path, ignore_errors=True)
+        if not path.exists():
+            removed.append(path.name)
+    return removed
+
+
 @app.post("/infer", response_model=InferManifest)
 async def infer(
     frames: list[UploadFile] = File(...),
@@ -271,6 +329,9 @@ async def infer(
         )
     if not vram.cuda_available():
         raise HTTPException(status_code=503, detail="no CUDA device")
+
+    # Before claiming new disk, release any that has expired.
+    _sweep_expired_runs()
 
     run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}"
     run_dir = RUN_ROOT / run_id
@@ -299,6 +360,9 @@ async def infer(
             raise HTTPException(status_code=500, detail=f"inference failed: {exc}") from exc
         finally:
             _busy = False
+
+    # The GPU is done with them, so they stop costing us anything to keep.
+    _discard_frames(run_dir)
 
     manifest = InferManifest(
         run_id=run_id,
