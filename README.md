@@ -1,48 +1,87 @@
 # Verge Studio
 
-A Sentinel-style node-graph web app for cloud depth inference and 3D measurement.
+Measure real-world heights from ordinary video.
 
-Drop in a video → a Cloud Run L4 GPU runs Depth Anything 3 → depth maps and point clouds
-appear live in docked viewports → measure object heights against a fitted ground plane.
-Gaussian splats are intentionally out of scope: the measurement path uses metric depth,
-camera poses and point clouds directly.
+Drop in a clip, a GPU in the cloud reconstructs the scene in three dimensions, and you measure
+things in it against a fitted ground plane — with an honest uncertainty attached, and graded
+against a tape measure when one is available. The interface is a node graph: boxes wired
+together, each doing one step, so nothing happens inside a black box.
 
-**Video is the standard input.** DA3's quality comes from cross-view attention over many
-frames; a single image never engages it and produces badly flawed geometry. Frames are
-sampled by FPS (the same way DA3's own demo does it) and extracted locally with ffmpeg —
-the cloud only ever sees the frames, never the video.
+**Video is the input, not photographs.** The depth model's accuracy comes from comparing many
+frames of the same scene against each other. A single image never engages that and produces badly
+wrong geometry. Frames are sampled by rate across the whole clip and extracted locally — the
+cloud only ever sees the frames, never the video.
 
 ## Running it
 
 ```bash
-cd app && npm install && npm run dev     # http://localhost:5173
+cd app && npm install && npm run dev
 ```
 
-The dev server ships a fixture-backed mock of the inference service plus real local ffmpeg,
-so the whole UI works offline at zero cloud cost. Point `VITE_INFER_BASE` at a deployed
-service to use a real GPU.
+That serves the app at http://localhost:5173. It works completely offline: the dev server answers
+the inference request from a stored reconstruction and runs the real local ffmpeg, so the whole
+interface can be used at zero cost. Anything produced that way is labelled as a mock on screen.
 
-M3b's Run Source defaults to saved, reproducible DA3 runs and can also accept the latest manual
-live run. An operator paints endpoint evidence on a registered RGB/depth frame, sees those exact
-points highlighted in 3D, and records raw measurements plus explicitly labelled door-scale
-diagnostics. See [MEASUREMENTS.md](MEASUREMENTS.md) for the current grading tables and
-resolution/frame-count verdict.
+To check your work:
 
 ```bash
-./scripts/verify.sh                      # typecheck + unit tests + fixture smoke
-./scripts/deploy.sh                      # build + deploy to Cloud Run (L4)
-./scripts/smoke-infer.sh                 # one short real run
-./scripts/teardown.sh                    # ALWAYS run when done — the image bills while it exists
+./scripts/verify.sh
 ```
 
-- `app/` — local web app (React + TypeScript + Vite; Dockview panes, React Flow graph, Three.js viewport)
-- `server/` — FastAPI + Docker DA3 inference service (Cloud Run, 1× NVIDIA L4, scale-to-zero)
-- `geometry/` — measurement code DA3 doesn't provide (ground plane, scale check, height)
-- `fixtures/` — real DA3 output used for offline development and tests
-- `docs/` — **[PROGRESS.md](docs/PROGRESS.md) (what's done, what's next — start here)**,
-  [DESIGN.md](docs/DESIGN.md) (UI spec), [SOURCES.md](docs/SOURCES.md) (canon references)
-- `donor/` — verbatim staging copies from the predecessor repo (read-only reference)
+That runs the type check, the unit tests, a fixture smoke test and the documentation check. One
+part of it — the server contract test — needs Python with FastAPI, and **silently skips without
+it**, so run it properly at least once per session:
 
-Conventions and agent workflow: see [CLAUDE.md](CLAUDE.md).
+```bash
+python3 -m venv /tmp/verge-venv && /tmp/verge-venv/bin/pip install fastapi pydantic python-multipart httpx numpy && VERGE_PY=/tmp/verge-venv/bin/python ./scripts/verify.sh
+```
 
-Personal/research project. Uses DA3NESTED-GIANT-LARGE-1.1 (CC-BY-NC-4.0) — no commercial use.
+## Using the GPU
+
+The cloud service is not running by default, and starting it costs money.
+
+```bash
+./scripts/deploy.sh      # start the service (builds only if server/ changed)
+./scripts/smoke-infer.sh # one short real run
+./scripts/teardown.sh    # ALWAYS run when done
+```
+
+Deploying, connecting and deleting the service can also be done from the app: open the Inspector
+and find **Cloud control**. It reports whether you are signed in, whether the service exists, and
+whether the next deploy takes about two minutes or about twenty. Those checks are free and cannot
+wake anything.
+
+**You pay for the machine's whole lifetime, not the seconds of computation** — including roughly
+three minutes of startup and the idle time afterwards. The service is deliberately configured to
+keep one machine alive, because results are stored on that machine's own disk and would otherwise
+disappear underneath you. That makes deleting the service a correctness requirement rather than
+tidiness. **Save any run you want to keep before deleting**, because its results die with it.
+
+`teardown.sh` keeps the built image, which costs about a dollar a month and saves twenty minutes
+of rebuilding every session. `PURGE_IMAGE=1 ./scripts/teardown.sh` removes it too, when the
+project is finished for good.
+
+## Where things are
+
+| Directory | What it holds |
+|---|---|
+| `app/` | The local web app — React, TypeScript, Vite; docked panes, a node graph, a 3D viewport |
+| `server/` | The FastAPI service wrapping the depth model, and its Docker image |
+| `geometry/` | Measurement code the model does not provide: ground plane, scale check, height |
+| `fixtures/` | Real reconstructions used for offline development and tests |
+| `scripts/` | Deploy, teardown, frame extraction, run download, verification |
+| `donor/` | Read-only reference copies from an earlier project; never imported |
+
+## Where to read next
+
+| Question | Document |
+|---|---|
+| How do I work in this repository? | [AGENTS.md](AGENTS.md) |
+| What already works, and why was it built that way? | [docs/REGISTRY.md](docs/REGISTRY.md) |
+| What should be done next? | [docs/PROGRESS.md](docs/PROGRESS.md) |
+| How accurate is it, measured against what? | [MEASUREMENTS.md](MEASUREMENTS.md) |
+| What must the interface look like and do? | [docs/DESIGN.md](docs/DESIGN.md) |
+| Where do the external facts come from? | [docs/SOURCES.md](docs/SOURCES.md) |
+
+Personal and research project. It uses DA3NESTED-GIANT-LARGE-1.1, whose licence is
+non-commercial — no commercial use.

@@ -1,59 +1,63 @@
-# Verge Studio — UI design specification
+# Interface design — the contract
 
-Visual north star: Spencer Sterling's **Sentinel**. Reference captures in `docs/reference/`:
+What the interface must look like and do. The acceptance checklist at the end is what the
+design-review workflow grades against.
 
-- `sentinel-streamdiff-brush-canvas.png` — 3 viewport panes + properties + terminal + graph
-- `sentinel-scientific-organism.png` — many-tab pane groups, denser inspector, graph banner
+Visual reference: Spencer Sterling's **Sentinel**, captured in `reference/`:
 
-Lineage: TouchDesigner / ComfyUI — dense, dark, professional, everything observable.
+- `sentinel-streamdiff-brush-canvas.png` — viewport panes, properties, terminal, graph
+- `sentinel-scientific-organism.png` — many tabs per group, denser inspector, graph banner
 
-## Design principles
+Lineage: TouchDesigner and ComfyUI. Dense, dark, professional, everything observable.
 
-1. **Everything observable** — every node shows a thumbnail of its output; every pane shows a
-   status/cost readout. No black boxes, no spinners without numbers.
-2. **The graph is the program** — viewports are taps on wires; users rewire instead of re-running.
-3. **Inspector bound to selection** — click a node → its parameters appear as compact rows.
-4. **Density over whitespace** — this is a tool, not a landing page. Small type, tight rows,
-   thin borders, minimal padding.
-5. **Dark always** — no light theme. No pure white, no pure black.
+## Principles
 
-## Layout map (M0)
+1. **Everything is observable.** Every node shows a thumbnail of its output; every pane shows a
+   status readout with numbers in it. No black boxes, and no spinner without a figure beside it.
+2. **The graph is the program.** Viewports are taps on wires. Users rewire rather than re-run.
+3. **The inspector follows the selection.** Click a node, its parameters appear as compact rows.
+4. **Density over whitespace.** This is a tool, not a landing page: small type, tight rows, thin
+   borders, minimal padding.
+5. **Dark always.** No light theme, no pure white, no pure black.
 
-Dockview, gaps ≤ 4px, panes fill the window edge-to-edge:
+## Panes
+
+Six panes in a Dockview layout, gaps of 4 px or less, filling the window edge to edge:
 
 ```
 +--------------------+--------------------------------+-------------+
 | Depth 2D           | Viewport 3D                    | Inspector   |
-| (colormapped depth)| (point cloud, orbit/fly)       | (params)    |
+| (colour-mapped     | (point cloud, orbit)           | Objects     |
+|  depth, mask brush)|                                | Runs        |
 +--------------------+--------------------------------+             |
 | Graph (React Flow, full width)                      |             |
 +-----------------------------------------------------+-------------+
 ```
 
-All panes draggable/resizable/closable via Dockview. Graph row ~40% height; Inspector ~280px.
+Every pane is draggable, resizable, and carries two verbs on its tab:
 
-## Design tokens (CSS variables, defined once in `app/src/theme.css`)
+- **Focus** (double-click the tab, or the button in the pane's own control row) fills the window
+  with that pane. The others yield their space but stay mounted, so nothing is torn down and
+  nothing is re-uploaded. Escape restores. Focus is a transient view mode and is deliberately
+  **not saved** — reopening the app with one pane filling the screen and no visible way back is a
+  bad default, and saving the layout while focused corrupts the stored sizes.
+- **Hide** (the ✕ on the tab) closes the pane and gives its space to the rest. A view bar in the
+  status bar brings it back. There is no non-destructive hide available in Dockview, so a hidden
+  pane is genuinely unmounted and remounts when reopened.
 
-| Token | Value | Use |
-|---|---|---|
-| `--bg-app` | `#0d0d0f` | window background |
-| `--bg-pane` | `#151517` | pane body |
-| `--bg-header` | `#1a1a1d` | pane tab bars, node headers base |
-| `--bg-node` | `#1e1e21` | node card body, inspector rows |
-| `--border` | `#2a2a2e` | 1px borders everywhere |
-| `--text` | `#d4d4d8` | primary text |
-| `--text-dim` | `#8a8a90` | labels, hints, units |
-| `--emph-hi` | `#f4f4f6` | the highlighted thing: ok/current/selected/accepted |
-| `--emph` | `#c7c7cd` | secondary emphasis: truths, budget rule, VRAM fill |
-| `--emph-dim` | `#8a8a90` | de-emphasised state |
-| `--accent-busy` | `#f59e0b` | pending/stale/warm-up/experimental — the one state hue |
-| `--accent-err` | `#b4574f` | hard failure only; destructive buttons |
-| `--slider` | `#e05252` | slider thumbs/filled tracks (Sentinel red) — marks *controls*, not state |
+Layout otherwise persists across reloads, with a Reset control.
 
-**Colour rule: hue encodes data *type*, never *status*.** The port colours below are a type
-legend and are load-bearing — a wire's colour tells you what flows through it. Status rides the
-neutral `--emph*` ramp plus a **status glyph**, so state survives desaturation, colour blindness
-and a grayscale screenshot:
+**Pane chrome.** Tab strip 28 px or shorter, labels 11–12 px. Directly beneath it a status row
+carrying live numbers, not just words — point counts, elapsed time, stale counts, selected pixels.
+
+⚠️ That status row is `nowrap` with hidden overflow, so **a control placed at its right edge
+silently leaves the viewport** in a narrow pane. Put controls in a wrapping row instead.
+
+## Colour
+
+**Hue encodes the type of data, never status.** The port colours below are a legend and are
+load-bearing: a wire's colour tells you what flows through it. Status rides a neutral brightness
+ramp plus a glyph, so state survives desaturation, colour blindness and a greyscale screenshot.
 
 | Glyph | Meaning |
 |---|---|
@@ -62,15 +66,35 @@ and a grayscale screenshot:
 | `○` | idle / paused / cold |
 | `▲` | hard failure |
 
-Two deliberate exceptions, both because the mark sits on photographic content where a neutral
-would disappear: the **2D mask overlay** (amber unreviewed, teal accepted, pink brush) and the
-**port hues** themselves. Clip B's room is white walls — a white mask would vanish on the door.
-| `--font-ui` | `"Inter", system-ui` | labels, 11–12px |
-| `--font-mono` | `"JetBrains Mono", ui-monospace` | numbers, readouts, terminal |
+Two deliberate exceptions, both because the mark sits on a photograph where a neutral would
+disappear: the **2D mask overlay** (amber unreviewed, teal accepted, pink brush) and the **port
+hues** themselves. The primary clip's room is white walls — a white mask would vanish on the door.
 
-Port/wire colors (typed ports — wire inherits source port color):
+### Tokens
 
-| Port type | Color |
+Defined once in `app/src/theme.css`.
+
+| Token | Value | Use |
+|---|---|---|
+| `--bg-app` | `#0d0d0f` | window background |
+| `--bg-pane` | `#151517` | pane body |
+| `--bg-header` | `#1a1a1d` | tab bars, node header base |
+| `--bg-node` | `#1e1e21` | node card body, inspector rows |
+| `--border` | `#2a2a2e` | every 1 px border |
+| `--text` | `#d4d4d8` | primary text |
+| `--text-dim` | `#8a8a90` | labels, hints, units |
+| `--emph-hi` | `#f4f4f6` | the highlighted thing: ok, current, selected, accepted |
+| `--emph` | `#c7c7cd` | secondary emphasis: truths, budget rule, memory fill |
+| `--emph-dim` | `#8a8a90` | de-emphasised state |
+| `--accent-busy` | `#f59e0b` | pending, stale, warming, experimental — the one state hue |
+| `--accent-err` | `#b4574f` | hard failure only, and destructive buttons |
+| `--slider` | `#e05252` | slider thumbs and filled tracks — marks *controls*, never state |
+| `--font-ui` | `"Inter", system-ui` | labels, 11–12 px |
+| `--font-mono` | `"JetBrains Mono", ui-monospace` | every number and readout |
+
+Port and wire colours — a wire inherits its source port's colour:
+
+| Port type | Colour |
 |---|---|
 | `frames` | `#d8d8d8` |
 | `depth_field` | `#5aa0e8` |
@@ -78,94 +102,102 @@ Port/wire colors (typed ports — wire inherits source port color):
 | `plane` | `#f3c969` |
 | `selection` | `#fb7185` |
 | `measurement` | `#e8a95b` |
-| `splat` | `#c084fc` |
 | `camera` | `#e879a0` |
 | `scalar` | `#f59e0b` |
 
-## Component specs
+## Components
 
-**Pane chrome** — tab strip ≤ 28px tall, 11px labels, close ✕ per tab. Pane groups hold many
-tabs side by side (reference shows 8+ in one group), overflowing horizontally rather than
-shrinking. Directly below the tab strip, a **control row**:
+**Node card**, about 180 px wide: coloured header by category, name at the left with small `A`/`P`
+badges at the right, labelled port rows with a type-coloured dot (inputs left, outputs right), an
+output thumbnail filling the card width, and elapsed milliseconds in mono at the bottom left. A
+selected card carries a 1 px `--emph-hi` outline.
 
-- left: `Running` in `--accent-run` + elapsed in mono (`11.8 ms`, `0.0 ms`)
-- right: `Remove` and `Pause` buttons — every pane is individually pausable
+**Graph canvas**: a warm dark surface distinct from the pane bodies, so the graph reads as its own
+place. Dot grid. A banner across the top with the pipeline title in capitals and a one-line
+description of the chain. Fit, view-scope and Focus controls at the top right.
 
-Below that, an **OUTPUT row**: the literal label `OUTPUT`, then toggle chips selecting which
-output is displayed (`Color`|`Depth`, `Out`|`Edge Map`, `Pattern Canvas`|`Accumulated Depth`) —
-active chip filled, inactive chip dim. Then dim hint text in parentheses describing the
-controls: `(Left-drag=orbit, wheel=zoom, X=feedback)` or a prose note about the output.
+**Wires** are long bezier curves passing *over* nodes, not behind. Clicking one selects it —
+selection thickens the stroke and switches it to `--emph-hi`, so the highlight does not depend on
+the port hue. Backspace deletes the selected wire. Node selection and wire selection are mutually
+exclusive; clicking the empty canvas clears both. Dragging from a port rewires, and connecting to
+an input that already has a wire replaces it rather than stacking a second one. Connections are
+type-checked: ports of different types refuse to join.
 
-**Node card** (M2+) — width ~180px:
+**Inspector**: collapsible sections; rows are label, control, value — label 11 px `--text-dim` at
+the left, numeric value right-aligned in mono, control filling the middle. Controls are mixed, not
+sliders only: sliders with `--slider` thumbs, dropdowns, checkboxes. Sections are tightly stacked.
+**Changing a control refreshes the graph by itself**, after a short delay that folds a slider drag
+into one pass — and that refresh can never reach a costly node, whatever its badge says.
 
-- Colored header, category hue, ~35% sat (purple = source/generator, teal = analysis,
-  magenta/red = compositing in the reference). Name left, small `A` / `P` badges right.
-- Named port rows: label + dot, inputs left-aligned, outputs right-aligned, dot colored by type.
-  Ports are labelled text rows (`Video Input`, `Spawn Points`, `Detections`), not bare dots.
-- Output thumbnail filling the card width, below the ports.
-- Footer readout in mono, bottom-left: elapsed ms (`15.3ms`, `0.0ms`).
-- Selected: 1px `--accent-run` outline; the reference also shows a yellow selection frame on
-  the *thumbnail* of the selected node.
+The inspector also carries **Cloud control**: sign-in state, project and region, whether the
+service exists, whether the stored image matches the current server source, and whether the next
+deploy is the quick path or the twenty-minute one. Deploy and Delete service both stream their
+logs. Every status read is free and cannot wake a machine.
 
-**Graph canvas** — warm dark brown-grey, not neutral black (distinct from pane bodies so the
-graph reads as its own surface). Dot grid. A **banner** across the top: pipeline title in caps
-(`SCIENTIFIC ORGANISM / LIVE INSTRUMENT`) plus a one-line prose description of the chain
-(`Authored source → native Features → temporal agents → …`). A `Fit` control sits top-right.
+**Objects pane**: one row per measurement target — raw value, truth and error, internal spread,
+selected-point count, and the current error model. Rows never mix incompatible reconstruction
+settings. Targets belong to a clip, keyed by its content digest; an unknown clip starts empty.
+A blind mode hides every reading except the tape truths, so a repeat measurement can be painted
+without the previous answer on screen.
 
-**Wires** — pale near-white by default with light-blue accents for active/typed connections,
-drawn as long bezier curves. They pass *over* nodes, not behind.
+**Runs pane**: one row per run, with its size on disk. Runs are temporary until an explicit Save,
+which is shown with a byte estimate. Delete is available. The built-in fixtures are read-only.
 
-**Inspector** — collapsible sections (▼ header rows), rows are `label — control — value`:
-label 11px `--text-dim` left, numeric value right in mono, control filling the middle. Controls
-are **mixed**, not sliders only: sliders with `--slider` thumbs, dropdowns (`Shi-Tomasi`, `Fast`,
-`Off`), checkboxes, and inline row-level checkbox groups (`Tasks: ☑ Blob ☑ Corner ☑ Line`).
-Sections are numerous and tightly stacked (reference shows 6+ visible at once). Section order
-mirrors node port/param order. A `▾ Output Routing` section and a `Presets` section with
-`+ Save New` sit at the bottom.
+**Provenance banner**: the panes that display geometry state where it came from — a mock, a
+recorded fixture, or a live run. This exists because a mock result wears the new clip's picture
+while carrying old geometry, which once read as a successful run on an unrelated video.
 
-**Status bar** (bottom, 24px) — left: GPU instance chip with a hollow dot when cold, filled
-neutral when warm, filled amber pulsing when busy, then live VRAM (`VRAM 8.53 GiB / 24.00 GiB`), then last-run summary
-(`16f · 7.7s GPU`); right: session cost ticker in mono (`$0.14`). The reference's terminal pane
-carries the same idea for the agent (`32% · $22.85`) — cost and capacity are always on screen.
+**Status bar** (24 px, bottom): the GPU instance chip with its state glyph, live memory use, the
+last-run summary, the instance-alive meter, and the view bar for hidden panes.
 
-**VRAM readout** — a horizontal budget bar against the L4's 24 GiB, green below 75%, amber to
-92%, red above. During a run it tracks live usage; idle it shows the last peak. Predicted (not
-yet measured) values are rendered as a **range**, never a single number, and labelled
-`unmeasured` — see the VRAM-honesty rule below.
+**Memory readout**: a horizontal bar against the device's real 22.03 GiB — not the advertised 24.
+It tracks live usage during a run and shows the last peak when idle. It uses the neutral ramp with
+amber for pressure; there is no green.
 
-**Buttons** — flat, 1px border, no gradients; destructive = `--accent-err` text, not filled.
+**Buttons**: flat, 1 px border, no gradients. Destructive actions use `--accent-err` as text
+colour, not as a fill.
 
 ## Honesty rules
 
-These are design constraints, not just copy guidelines:
+Design constraints, not copy guidelines.
 
-1. **Never render an unmeasured quantity as a precise number.** The VRAM predictor is fitted to
-   one datapoint against a two-unknown model — it is underdetermined, so the UI shows the
-   bracket (`11.50 GiB – 33.95 GiB`) and says `unmeasured`. Replace with a point value only once
-   `scripts/vram-sweep.sh` has ≥3 real measurements.
-2. **Never silently alter the user's settings.** When the frame cap forces a lower sampling FPS,
-   say so, show the arithmetic, and state that the frames still span the whole clip.
-3. **Distinguish mock from real.** Fixture/mock-backed readouts are labelled (`NVIDIA L4 (mock)`)
-   so a screenshot can never be mistaken for a real GPU run.
+1. **Never present a prediction as though it were a measurement.** The memory readout says which
+   it is: `VRAM (measured)` when the frame count sits on a rung of the real ladder,
+   `VRAM (interpolated)` when it sits between rungs, and beyond the highest rung a note stating
+   that the figure is a projection and the sweep never ran that high. A single number is
+   permitted only because five real rungs now exist; before the sweep it was shown as a bracket,
+   and it must go back to one if the model ever rests on fewer than three measurements again.
+2. **Never silently change the user's settings.** When the frame limit forces a lower sampling
+   rate, say so, show the arithmetic, and state that the frames still span the whole clip.
+3. **Distinguish mock from real.** Anything backed by a fixture or the offline mock is labelled,
+   so a screenshot can never be mistaken for a real run.
+4. **No invented currency figures.** The app has no billing data and the machine's lifetime starts
+   before our first contact, so it reports elapsed instance time rather than a made-up cost.
 
-## Acceptance checklist (design-review QA runs this)
+## Acceptance checklist
 
-1. App background ≤ `#151517`; no white surfaces; no default-blue links or focus rings.
-1b. **No status is signalled by hue alone.** Grayscale the app and every state must still be
-    readable from its glyph, weight or position. Green is absent entirely; red appears only on
-    hard failure and on slider thumbs.
-2. Four panes present (Depth 2D, Viewport 3D, Graph, Inspector) with Dockview tabs; drag-resize works.
-3. Pane tab strip ≤ 28px; labels 11–12px; density comparable to reference screenshot.
-4. Viewport 3D renders the fixture point cloud; drag-orbit visibly changes the view; overlay shows point count; axis gizmo visible.
-5. Depth 2D shows turbo-colormapped depth from fixture NPZ with min/max meters legend.
-6. Every pane has a live status row (numbers, not just text).
-7. No horizontal window scroll at 1280×800; gaps between panes ≤ 4px.
-8. Fonts: UI text ≤ 12px, numeric readouts in mono; no font-size > 14px except empty-state hints.
-9. Side-by-side squint test vs `docs/reference/`: comparable darkness, density, contrast.
-10. Inspector exposes every inference param (fps, process res, max frames, ref view) with
-    mixed control types, and each shows its current value in mono on the right.
-    *Splats were removed on 2026-08-04 — no measurement node consumes them (see PROGRESS.md).*
-11. VRAM is visible in both the inspector and the status bar; during a run the live bar moves.
-12. Unmeasured predictions render as a labelled range, never a bare number (honesty rule 1).
-13. A capped frame plan explains itself in-place, showing the arithmetic (honesty rule 2).
-14. Mock-backed readouts are labelled as mock (honesty rule 3).
+1. App background is `#151517` or darker; no white surfaces; no default-blue links or focus rings.
+2. **No status is signalled by hue alone.** In greyscale, every state is still readable from its
+   glyph, weight or position. Green is absent; red appears only on hard failure and slider thumbs.
+3. All six panes are present with Dockview tabs, and drag-resize works.
+4. Tab strip is 28 px or shorter; labels 11–12 px; density comparable to the reference captures.
+5. Viewport 3D renders the point cloud, drag-orbit visibly changes the view, the point count is
+   shown, and the axis gizmo is visible.
+6. Depth 2D shows turbo-colour-mapped depth with a legend in metres.
+7. Every pane has a live status row containing numbers, not just text.
+8. No horizontal window scroll at 1280×800; gaps between panes are 4 px or less.
+9. Fonts: interface text 12 px or smaller, numeric readouts in mono, nothing above 14 px except
+   empty-state hints.
+10. Side-by-side squint test against `reference/`: comparable darkness, density and contrast.
+11. The inspector exposes every inference parameter with mixed control types, each showing its
+    current value in mono at the right.
+12. Memory is visible in both the inspector and the status bar, and the bar moves during a run.
+13. The memory figure says whether it is measured, interpolated or extrapolated, and a frame
+    count beyond the measured ladder carries the projection warning.
+14. A capped frame plan explains itself in place, showing the arithmetic.
+15. Mock-backed readouts are labelled as mock, including in the panes that display geometry.
+16. Focus fills the window without remounting, Escape restores, and hiding a pane reflows the
+    rest with a way to bring it back.
+17. Changing a parameter in the inspector refreshes the graph without any other interaction, and
+    never starts a costly node.
+18. A wire can be selected by clicking it and deleted with Backspace; only that wire is removed.

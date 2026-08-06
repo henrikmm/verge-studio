@@ -4,6 +4,9 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+echo "== docs =="
+node scripts/check-docs.mjs
+
 echo "== fixture smoke =="
 node scripts/check-fixtures.mjs
 

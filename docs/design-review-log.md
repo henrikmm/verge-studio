@@ -1,5 +1,153 @@
 # Design review log
 
+Dated evidence from interface reviews, newest first. Each entry records what was graded against
+the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed at the time.
+
+This is a record, not a task list. Anything a review found and left unfixed becomes a task in
+[PROGRESS.md](PROGRESS.md); findings below describe the state on their own date.
+
+## 2026-08-06 — documentation refactor + three local fixes, 1280×800
+
+Graded after the harness rewrite and the graph/temp-file fixes. Browser console clean. Two
+long-standing "never verified" items were closed by measurement rather than by argument.
+
+1. Dark surfaces — **PASS** (`body` computed `rgb(13,13,15)`; **0** white-background elements).
+2. No status by hue alone — **PASS** (state glyphs render as `::before` content on `.running` /
+   `.ok`; **0** elements using the old green `rgb(74,222,128)` as text colour).
+3. Six panes with tabs — **PASS** (Depth 2D, Viewport 3D, Graph, Inspector, Objects, Runs).
+4. Chrome density — **PASS** (tab strip 26 px measured; labels 11 px).
+5. Viewport orbit, count, gizmo — **PASS**. A drag inside the canvas visibly rotated the room
+   between two screenshots and the gizmo turned with it; `1,000,000 pts` reported.
+6. Turbo depth with metric legend — **PASS** (legend reads `0.52 m` – `2.66 m`).
+7. Live status rows — **PASS** (5 rows carrying numbers: two pane control rows, two pane status
+   rows, the status bar).
+8. No horizontal scroll — **PASS** (`scrollWidth === clientWidth === 1280`).
+9. Type scale — **PASS** (**0** rendered elements inside `.pane` above 14 px; readouts in
+   JetBrains Mono).
+10. Squint test vs `reference/sentinel-scientific-organism.png` — **PASS**. Same family: warm
+    graph canvas, coloured node headers, A/P badges, millisecond footers, dense inspector rows
+    with red slider thumbs. Divergences remain deliberate — Sentinel uses green for `Running`
+    where we use a neutral glyph, and puts values inside the slider track where we right-align
+    them in mono.
+11. Inspector exposes the inference parameters with mixed controls — **PASS**.
+12. Memory in both places — **PASS** (`0 B / 22.03 GiB` in the inspector and the status bar).
+13. Measured / interpolated / extrapolated labelling — **PASS, and the checklist was corrected.**
+    At 112 frames it reads `VRAM (measured) 21.28 GiB / 22.03 GiB`; pushed to 256 frames it
+    reads `VRAM (interpolated) 24.27 GiB` plus "Beyond 144 frames is extrapolated — the sweep has
+    not run that high" and an expect-an-OOM warning. The old checklist demanded a *bracket*, which
+    was the right rule when the predictor rested on a single datapoint. Five real rungs now exist,
+    which the original rule itself named as the condition for a point value, so DESIGN.md was
+    updated to describe the labelling the app actually does rather than a superseded requirement.
+14. A capped frame plan explains itself — **PASS, first time graded.** Previous passes recorded
+    this as N/A for want of a loaded clip. With the real 13.55 s clip: `10 fps × 13.5s = 135
+    frames, over the 112-frame cap. FPS lowered to 8.27 so the frames still span the whole clip.`
+    (The duration was supplied directly rather than through the file picker, which needs a native
+    dialog no tool can drive; the arithmetic under test is the same.)
+15. Mock and provenance labelling — **PASS** (`NVIDIA L4 (mock)` in the inspector, and both
+    geometry panes carry `RECORDED RUN · Door · 504 px · 112f`).
+16. Focus and Hide — **PASS**. Hiding Depth 2D dropped it from six tabs to five, the status-bar
+    view bar brought it back, and Reset restored the default order. No horizontal scroll at any
+    point.
+17. A parameter change refreshes the graph by itself — **PASS**, and this is the session's main
+    fix. Switching Run Source to the live output stranded **8 stale** nodes, exactly as reported;
+    switching back returned the graph to **2 stale** with nothing else touched. Under the old
+    build it stayed stranded until an unrelated slider was moved.
+18. Wire selection and deletion — **PASS**, previously impossible. Clicking a wire set
+    `selectedEdgeId`, cleared the node selection, and rendered the edge with
+    `stroke: var(--emph-hi)` at `strokeWidth: 3` and React Flow's own `selected` class. Backspace
+    took the graph from **15 wires to 14**, removed exactly `e-points`, and left all 10 nodes.
+
+### The costly node cannot be reached by a control
+
+Verified directly, because this is the property the execution model exists for. DA3 Depth was
+badged **auto** through the inspector, then its resolution slider was dragged from 504 to 392.
+The value applied and the graph refreshed, while DA3 stayed `blocked` at `0.0 ms` and the network
+log shows **no `POST /infer`**. The refresh that follows an edit bars every costly node outright,
+whatever the badge says.
+
+### Rewiring by port drag — verified, after being unverifiable for five days
+
+Previous passes recorded this as needing a human hand: the port handle is ~5 px at fit zoom and a
+drag that misses pans the canvas instead, which is indistinguishable from a refusal. **No human
+was needed — the technique was the blocker, exactly as it had been for orbit.** Zooming the canvas
+to 1.2× puts the handles at 11 px, and hit-testing with `elementFromPoint` before dragging
+confirms the start and end points land on the handles rather than on the node card behind them.
+
+- **A real drag reconnected Point Cloud → Viewport 3D**, restoring the wire Backspace had just
+  cut. Edge count 14 → 15, and Viewport 3D returned to `ok`.
+- **An invalid drag was refused**: point cloud output onto a plane input left the count at 15 and
+  the existing wire untouched.
+- **Reconnecting an existing pair did not duplicate it** — one wire, same id.
+
+The replace rule is pinned by unit tests rather than by drags (`src/graph/connect.test.ts`): the
+rules moved into `src/graph/connect.ts` so they can be asserted without a mouse. A drag is a poor
+instrument for a rule when a miss looks like a refusal.
+
+### Worth remembering
+
+- **The browser tool's coordinates are screenshot-space, not CSS pixels.** At 1280×800 the
+  screenshot is 800×500, so CSS × 0.625. A drag aimed with un-scaled coordinates landed in the
+  Inspector and selected text instead of orbiting. Convert, or read the target's rect and scale it.
+- **`resize_window` with a preset does not necessarily give the preset's size** — it reported
+  "desktop" and left the viewport at 800×450. Pass explicit width and height and then confirm
+  with `window.innerWidth` before trusting any measurement.
+- **Zooming about a pointer moves nodes out of the pane.** After zooming, re-check that both
+  endpoints are inside the graph pane's own box, not merely inside the window: a handle scrolled
+  out of the pane still returns a plausible-looking rectangle.
+
+---
+
+## 2026-08-04 — P2 pass (commit `e26aa79` + two fixes), 1280×800
+
+Full re-grade after the P2 session (cloud control plane, run registry, per-clip targets, pane
+focus/hide, neutral colour system). Layout reset to default before grading.
+
+1. Background ≤ `#151517`, no white surfaces, no default blue — **FAIL → fixed**, see below.
+1b. No status signalled by hue alone (new item) — PASS (`●` current · `◐` working · `○` idle ·
+   `▲` failure, on pane status rows, control rows and node footers; green absent from the app).
+2. Panes with tabs, drag-resize — PASS (6 panes in 4 groups tiling 1280×695 exactly).
+3. Chrome density — PASS (tab strip 26px measured, labels 11px).
+4. Cloud + orbit + count + gizmo — PASS (drag visibly rotated the room; gizmo turned with it;
+   1,000,000 pts reported).
+5. Turbo depth with metric legend — PASS (0.52–2.66 m).
+6. Live status rows everywhere — PASS, including the new Runs pane (`3 runs · — on disk`).
+7. No horizontal scroll, gaps ≤ 4px — PASS (`scrollWidth == clientWidth`; sashes 4px, group
+   gaps 0).
+8. Type scale — PASS (only `<script>`/`<style>`/`<title>` exceed 14px, none rendered).
+9. Squint test vs `docs/reference/` — PASS. Comparable darkness and density. The deliberate
+   divergence is that Sentinel uses green for `Running` and we now use a neutral `●`; our red is
+   confined to slider thumbs, which is where the reference uses it too.
+10. Inspector exposes inference params with mixed controls — PASS (selection-bound by design).
+11. VRAM in inspector and status bar — PASS.
+12. Unmeasured predictions as a labelled range — N/A, needs a loaded clip (unchanged).
+13. Capped frame plan explains itself — N/A, needs a loaded clip (unchanged).
+14. Mock readouts labelled — PASS (`NVIDIA L4 (mock)` in pane status and GPU Device).
+
+### Findings, both fixed in the same session
+
+- ⚠️ **Item 1 FAIL: five unstyled `input[type=range]`** in the Depth 2D brush/frame toolbars —
+  `background-color: rgb(255,255,255)` with `accent-color: auto`, i.e. a white track and the OS
+  accent (system blue on macOS) on the filled portion. Both are explicitly forbidden by item 1.
+  **Pre-existing since M3b**: only `.inspector-row input[type="range"]` was ever styled, so every
+  slider outside the inspector fell back to the UA control. Fixed by styling the ELEMENT rather
+  than a container, so the next toolbar cannot reintroduce it; `-moz-` track/thumb rules added
+  alongside the `-webkit-` ones. Verified: all five now report `rgb(42,42,46)` and the page has
+  **0 white surfaces**.
+- **Minor: Reset activated the wrong tab.** The right group showed *Runs* rather than Inspector,
+  because Runs is added last and nothing claimed the group. `buildDefaultLayout` now sets
+  Inspector active explicitly.
+
+### Worth remembering
+
+- A **custom Dockview tab component silently breaks click-to-activate** — it replaces the default
+  tab, which is what normally calls `setActive()`. Caught in-browser when clicking Inspector did
+  nothing. Check this before adding any other custom Dockview renderer.
+- **Screenshots taken immediately after a reload can show a stale graph fit.** The refit is
+  debounced 90 ms; a screenshot inside that window shows the pre-fit transform and looks like the
+  thumbnail-in-the-corner bug. Measure `.react-flow__viewport`'s transform before concluding.
+
+---
+
 ## 2026-08-04 — uncertainty budget, sittings, blind mode (commit pending, from `ff62f1f`)
 
 In-browser pass at 1280×800 after the honesty fixes. Browser console: **0 errors**. Storage was
@@ -43,7 +191,7 @@ Fixed during the pass:
 - Viewport 3D's **Pause button did nothing** — `paused` was state that the rAF loop never read.
   The loop now skips its work while paused (via a ref, so pausing cannot tear down the context).
 
-Found and NOT fixed — logged as PROGRESS follow-ups:
+Found, and still broken on this date (both fixed on 2026-08-06 — see the entry above):
 - **Edges can never be selected, so edge deletion is unreachable.** `rfEdges` never sets
   `selected` and `onEdgesChange` drops every non-`remove` change, so React Flow's selection is
   overwritten on each render and Backspace has nothing to delete. A real click was confirmed to
@@ -51,6 +199,8 @@ Found and NOT fixed — logged as PROGRESS follow-ups:
   (10 → 9 nodes, and its wire went with it).
 - Rewiring by port drag remains **unverified**: handles are ~8px, and automated drags that miss
   pan the canvas instead. Needs a human hand or a zoomed-in graph.
+
+---
 
 ## 2026-08-02 — M3b evidence workflow + coordinate review (commit pending)
 
@@ -117,6 +267,8 @@ Remaining review item: direct 3D add/remove painting is a useful future correcti
 occlusion and sparse per-frame evidence, but it is not needed to repair registration. B4 remains
 ungraded because its stand/table contact is occluded; no endpoint was invented.
 
+---
+
 ## 2026-08-01 — M2a node graph (commit pending)
 
 In-browser at the default dock layout, mock-backed, driven end to end (drop → Run).
@@ -157,6 +309,8 @@ Not measured this pass:
 2. `Pause` on a pane stops the depth pane re-fetching but does not stop the 3D render loop.
 3. React Flow logs a `nodeTypes` recreation warning under HMR; harmless, but check it is absent
    on a cold load before treating the console as clean.
+
+---
 
 ## 2026-07-31 — inference controls + VRAM telemetry (commit c1d3765)
 
@@ -202,6 +356,8 @@ interaction via ref-based input or synthetic pointer events dispatched on the ca
 checksum rather than by eyeballing screenshots — identical-looking screenshots here were a
 measurement artifact, not a broken control.
 
+---
+
 ## 2026-07-31 — M0 shell (initial pass)
 
 Graded against docs/DESIGN.md acceptance checklist, in-browser at 1280×800:
@@ -225,52 +381,3 @@ Findings fixed during the pass:
 - worker-report keys are `inference_gpu_seconds` / `peak_vram_bytes` / `wall_seconds`.
 
 ---
-
-## 2026-08-04 — P2 pass (commit `e26aa79` + two fixes), 1280×800
-
-Full re-grade after the P2 session (cloud control plane, run registry, per-clip targets, pane
-focus/hide, neutral colour system). Layout reset to default before grading.
-
-1. Background ≤ `#151517`, no white surfaces, no default blue — **FAIL → fixed**, see below.
-1b. No status signalled by hue alone (new item) — PASS (`●` current · `◐` working · `○` idle ·
-   `▲` failure, on pane status rows, control rows and node footers; green absent from the app).
-2. Panes with tabs, drag-resize — PASS (6 panes in 4 groups tiling 1280×695 exactly).
-3. Chrome density — PASS (tab strip 26px measured, labels 11px).
-4. Cloud + orbit + count + gizmo — PASS (drag visibly rotated the room; gizmo turned with it;
-   1,000,000 pts reported).
-5. Turbo depth with metric legend — PASS (0.52–2.66 m).
-6. Live status rows everywhere — PASS, including the new Runs pane (`3 runs · — on disk`).
-7. No horizontal scroll, gaps ≤ 4px — PASS (`scrollWidth == clientWidth`; sashes 4px, group
-   gaps 0).
-8. Type scale — PASS (only `<script>`/`<style>`/`<title>` exceed 14px, none rendered).
-9. Squint test vs `docs/reference/` — PASS. Comparable darkness and density. The deliberate
-   divergence is that Sentinel uses green for `Running` and we now use a neutral `●`; our red is
-   confined to slider thumbs, which is where the reference uses it too.
-10. Inspector exposes inference params with mixed controls — PASS (selection-bound by design).
-11. VRAM in inspector and status bar — PASS.
-12. Unmeasured predictions as a labelled range — N/A, needs a loaded clip (unchanged).
-13. Capped frame plan explains itself — N/A, needs a loaded clip (unchanged).
-14. Mock readouts labelled — PASS (`NVIDIA L4 (mock)` in pane status and GPU Device).
-
-### Findings, both fixed in the same session
-
-- ⚠️ **Item 1 FAIL: five unstyled `input[type=range]`** in the Depth 2D brush/frame toolbars —
-  `background-color: rgb(255,255,255)` with `accent-color: auto`, i.e. a white track and the OS
-  accent (system blue on macOS) on the filled portion. Both are explicitly forbidden by item 1.
-  **Pre-existing since M3b**: only `.inspector-row input[type="range"]` was ever styled, so every
-  slider outside the inspector fell back to the UA control. Fixed by styling the ELEMENT rather
-  than a container, so the next toolbar cannot reintroduce it; `-moz-` track/thumb rules added
-  alongside the `-webkit-` ones. Verified: all five now report `rgb(42,42,46)` and the page has
-  **0 white surfaces**.
-- **Minor: Reset activated the wrong tab.** The right group showed *Runs* rather than Inspector,
-  because Runs is added last and nothing claimed the group. `buildDefaultLayout` now sets
-  Inspector active explicitly.
-
-### Worth remembering
-
-- A **custom Dockview tab component silently breaks click-to-activate** — it replaces the default
-  tab, which is what normally calls `setActive()`. Caught in-browser when clicking Inspector did
-  nothing. Check this before adding any other custom Dockview renderer.
-- **Screenshots taken immediately after a reload can show a stale graph fit.** The refit is
-  debounced 90 ms; a screenshot inside that window shows the pre-fit transform and looks like the
-  thumbnail-in-the-corner bug. Measure `.react-flow__viewport`'s transform before concluding.
