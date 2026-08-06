@@ -104,3 +104,22 @@ echo "remaining Cloud Run services:"
 gcloud run services list --region="${REGION}" --project="${PROJECT_ID}" 2>&1 | tail -3
 echo "remaining artifact repositories:"
 gcloud artifacts repositories list --location="${REGION}" --project="${PROJECT_ID}" 2>&1 | tail -3
+
+# Run artifacts are DELIBERATELY left in place: they now outlive the service, which is the
+# whole reason the service can be deleted so freely. They are not left forever, though, and
+# "not forever" is a claim worth showing rather than asserting -- so print what is actually
+# sitting there and when the lifecycle rule will take it.
+#
+# Deleting the bucket is not part of teardown. A saved run is already home in ~/verge-runs,
+# and an unsaved one is the only copy of something already paid for.
+OUTPUT_BUCKET="${VERGE_OUTPUT_BUCKET:-verge-lab-runs}"
+OUTPUT_PREFIX="${VERGE_OUTPUT_PREFIX:-runs/transient}"
+if gcloud storage buckets describe "gs://${OUTPUT_BUCKET}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "transient run artifacts still in gs://${OUTPUT_BUCKET}/${OUTPUT_PREFIX}/:"
+  gcloud storage du -s "gs://${OUTPUT_BUCKET}/${OUTPUT_PREFIX}" \
+    --project="${PROJECT_ID}" 2>/dev/null || echo "  (empty)"
+  echo "  retained by lifecycle rule:"
+  gcloud storage buckets describe "gs://${OUTPUT_BUCKET}" --project="${PROJECT_ID}" \
+    --format='value(lifecycle_config.rule)' 2>/dev/null | sed 's/^/    /'
+  echo "  save anything you want to keep: it expires on the schedule above."
+fi

@@ -58,6 +58,32 @@ print(
     f"{vram['total_bytes'] / 1024 ** 3:.2f} GiB · "
     f"artifacts {sorted(kinds)}"
 )
+
+# Durable storage is the difference between a result that survives teardown and one that
+# does not, and it fails SILENTLY by design -- _publish degrades rather than raising, so a
+# run with no bucket access looks completely healthy right up to the moment the service is
+# deleted. This is the cheapest place to notice.
+diagnostics = manifest.get("diagnostics") or {}
+mode = diagnostics.get("publish_mode", "local")
+print(f"    publish_mode: {mode}")
+for error in diagnostics.get("publish_errors", []):
+    print(f"    !! {error}")
+
+if mode != "gcs":
+    raise SystemExit(
+        f"\nFAILED: artifacts did not reach durable storage (publish_mode={mode}).\n"
+        "The run itself is fine and is on the instance, but it dies with it, and this\n"
+        "revision deploys with --min-instances=0. Fix before running anything expensive."
+    )
+
+for artifact in manifest["artifacts"]:
+    assert artifact.get("gs_uri", "").startswith("gs://"), f"no gs_uri on {artifact['name']}"
+    # The prefix the bucket lifecycle rule matches. A mismatch here means the objects
+    # never expire -- the exact way the donor bucket accumulated forever.
+    assert "/runs/transient/" in artifact["gs_uri"], artifact["gs_uri"]
+    assert artifact["url"].startswith("https://storage.googleapis.com/"), artifact["url"]
+    assert "X-Goog-Signature=" in artifact["url"], f"{artifact['name']} url is not signed"
+print(f"    all {len(manifest['artifacts'])} artifacts signed and under runs/transient/")
 PY
 
 echo

@@ -31,6 +31,23 @@ function RunRow({
   onDelete: () => void;
 }) {
   const estimate = estimateSaveBytes(run);
+  /**
+   * Where an unsaved run's bytes actually are, which changed on 2026-08-06 and used to be
+   * one answer for everybody: "on the instance, dies with it".
+   *
+   * Saving is still the only way to KEEP a run. What differs now is the consequence of not
+   * saving yet, and a "degraded" run is the case that must not look like the healthy one —
+   * it carries exactly the old urgency while sitting in a list where nothing else does.
+   */
+  const publishMode = run.manifest?.diagnostics?.publishMode;
+  const degraded = !run.persisted && publishMode === "degraded";
+  const saveHint = run.persisted
+    ? ""
+    : degraded
+      ? `Download this run's artifacts to disk — about ${formatBytes(estimate)}. Publishing to durable storage FAILED for this run, so they exist only on the cloud instance and die with it. Save before teardown.`
+      : publishMode === "gcs"
+        ? `Download this run's artifacts to disk — about ${formatBytes(estimate)}. They are in durable storage and survive teardown, but only until the bucket expires them in ${run.manifest?.expiresAfterDays ?? 3} days.`
+        : `Download this run's artifacts to disk — about ${formatBytes(estimate)}. Until then they exist only on the cloud instance and die with it.`;
   return (
     <div className={`run-row${active ? " active" : ""}`}>
       <button className="run-pick" onClick={onSelect} disabled={!run.persisted || !run.available}>
@@ -49,7 +66,9 @@ function RunRow({
               ? run.available
                 ? formatBytes(run.sizeBytes)
                 : "payload missing"
-              : "transient"}
+              : degraded
+                ? "▲ transient"
+                : "transient"}
         </span>
       </button>
       <span className="run-actions">
@@ -57,7 +76,7 @@ function RunRow({
           <button
             className="pane-btn"
             disabled={busy}
-            title={`Download this run's artifacts to disk — about ${formatBytes(estimate)}. Until then they exist only on the cloud instance and die with it.`}
+            title={saveHint}
             onClick={onSave}
           >
             Save {formatBytes(estimate)}
@@ -152,8 +171,10 @@ export function RunsPane() {
         ))}
         <small className="honesty-note">
           Runs are transient by default. A completed cloud run is registered here as a manifest
-          stub so it stays selectable, but nothing large is written until you press Save — and a
-          stub dies with the instance it came from.
+          stub so it stays selectable, but nothing large is written until you press Save. A stub's
+          artifacts sit in cloud storage and are deleted after three days — sooner if you delete
+          the bucket. A stub marked ▲ failed to reach storage and dies with its instance instead,
+          so save that one before teardown.
         </small>
       </div>
     </div>
