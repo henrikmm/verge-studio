@@ -39,15 +39,35 @@ export const ENV_INFER_TOKEN: string = import.meta.env.VITE_INFER_TOKEN ?? "";
  * against the *page* origin unless we rebase them — so with a remote service every GLB
  * and npz would 404 against the Vite dev server. The mock's URLs (`/roadside/...`) are
  * genuinely served by Vite, so they are left alone.
+ *
+ * Absolute URLs pass through untouched, which is how a signed GCS link works: the browser
+ * fetches the bucket directly, with no dev server and no Cloud Run instance in the path.
  */
 export function artifactUrl(url: string): string {
   if (/^https?:\/\//i.test(url)) return url;
   if (url.startsWith("gs://")) {
+    // Not reachable from a well-formed manifest: the service puts a signed https link in
+    // `url` and keeps the gs:// address in `gs_uri`. Worth keeping as a loud failure —
+    // if the two ever swap, this says so instead of producing a mystery network error.
     throw new Error(
-      `artifact is in GCS (${url}) and needs a signed URL — the browser cannot fetch gs:// directly`,
+      `artifact url is a gs:// address (${url}); the browser needs the signed link, and the ` +
+        `durable address belongs in gsUri`,
     );
   }
   return isRemote() ? `${inferBase()}${url}` : url;
+}
+
+/**
+ * True for a signed GCS link, which must be fetched differently from a service path.
+ *
+ * Two consequences, both of which fail confusingly if missed. GCS rejects a request that
+ * carries an `Authorization` header *and* a URL signature — the header wins and the
+ * signature is treated as an unauthenticated attempt — so the dev server's identity token
+ * must not travel here. And the 32 MiB response cap is Cloud Run's, not the bucket's, so a
+ * 105 MB npz comes down whole rather than in five ranged pieces.
+ */
+export function isSignedStorageUrl(url: string): boolean {
+  return /^https:\/\/storage\.googleapis\.com\//i.test(url) && /[?&]X-Goog-Signature=/i.test(url);
 }
 
 export function requestHeaders(extra: Record<string, string> = {}): Record<string, string> {
@@ -140,11 +160,15 @@ export function manifestFromWire(w: any): InferManifest {
       sizeBytes: a.size_bytes,
       sha256: a.sha256,
       url: a.url,
+      // Absent on local-disk runs and on anything written before durable storage existed.
+      gsUri: a.gs_uri ?? undefined,
     })),
     diagnostics: w.diagnostics
       ? {
           nativeNpz: w.diagnostics.native_npz ?? {},
           exportDirListing: w.diagnostics.export_dir_listing ?? [],
+          publishMode: w.diagnostics.publish_mode ?? undefined,
+          publishErrors: w.diagnostics.publish_errors ?? undefined,
         }
       : undefined,
     transient: w.transient,

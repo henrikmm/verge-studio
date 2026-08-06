@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
-# Bring a run's artifacts home BEFORE the instance dies.
+# Bring a run's artifacts home -- the durable local copy in ~/verge-runs.
 #
-# THIS IS NOT OPTIONAL AND IT IS NOT REVERSIBLE. No GCS bucket exists
-# (VERGE_OUTPUT_BUCKET was never set), so /infer serves artifacts from the container's
-# LOCAL DISK via /artifact/{run_id}/{name}. Delete the Cloud Run service and every byte
-# goes with it -- there is no copy anywhere else, and the only way back is another cold
-# start plus another GPU run. Run this before scripts/teardown.sh, every time.
+# The urgency here changed on 2026-08-06. Artifacts now go to gs://verge-lab-runs, so
+# tearing the service down no longer destroys them: they survive until the bucket's
+# lifecycle rule deletes them three days later. Saving is still the only way to KEEP a run
+# ("nothing is kept unless the user saves it"), it is simply no longer a race against
+# teardown.
+#
+# One case keeps the old urgency in full, and the manifest names it: when
+# diagnostics.publish_mode is "degraded", publishing failed and the artifacts exist only on
+# the instance. Then this script must run before scripts/teardown.sh or the run is gone.
 #
 # Verifies each download against the sha256 in the manifest, because a silently
 # truncated GLB looks exactly like a good one until M3 tries to fit a plane to it.
@@ -74,11 +78,18 @@ cp "${MANIFEST}" "${DEST}/manifest.json"
 echo "== saving run ${RUN_ID} -> ${DEST} =="
 
 # One line per artifact: name, sha256, url.
+#
+# gs_uri WINS over url when both are present, and that ordering is the whole point of
+# having two fields. `url` is a signed link with a ~12 hour life; `gs_uri` is the object's
+# permanent address, resolved below with the operator's own credentials. A run saved the
+# morning after it was computed, or after the service was torn down, comes home through
+# gs_uri and would fail through url.
 python3 - "${MANIFEST}" > "${DEST}/.artifacts.tsv" <<'PY'
 import json, sys
 manifest = json.load(open(sys.argv[1]))
 for a in manifest["artifacts"]:
-    print(f"{a['name']}\t{a['sha256']}\t{a['url']}\t{a['kind']}\t{a['size_bytes']}", flush=True)
+    address = a.get("gs_uri") or a["url"]
+    print(f"{a['name']}\t{a['sha256']}\t{address}\t{a['kind']}\t{a['size_bytes']}", flush=True)
 PY
 
 FAILED=0
@@ -90,8 +101,8 @@ while IFS=$'\t' read -r NAME SHA URL KIND SIZE; do
 
   case "${URL}" in
     gs://*)
-      # The GCS branch of _publish. Never exercised -- no bucket has ever been set --
-      # but if one appears, this is the path that must work.
+      # The durable path, and now the normal one. No signature, no 32 MiB cap, no
+      # dependency on the service still existing -- gcloud authenticates as the operator.
       echo "-- ${NAME} (${KIND}) from GCS"
       gcloud storage cp "${URL}" "${OUT}" --quiet
       ;;

@@ -224,6 +224,11 @@ export function toWireManifest(manifest) {
       name: a.name,
       sha256: a.sha256,
       url: a.url,
+      // The durable address, and the reason a run can be saved after its signed links have
+      // expired or its service has been deleted. Dropping it here would strand exactly the
+      // runs this field exists to rescue, and — per bug 2 above — permanently, because this
+      // object is copied into the run directory as its archive record.
+      gs_uri: a.gsUri ?? null,
       kind: a.kind,
       size_bytes: a.sizeBytes,
     })),
@@ -231,6 +236,8 @@ export function toWireManifest(manifest) {
       ? {
           native_npz: manifest.diagnostics.nativeNpz ?? {},
           export_dir_listing: manifest.diagnostics.exportDirListing ?? [],
+          publish_mode: manifest.diagnostics.publishMode ?? "local",
+          publish_errors: manifest.diagnostics.publishErrors ?? [],
         }
       : undefined,
     transient: manifest.transient,

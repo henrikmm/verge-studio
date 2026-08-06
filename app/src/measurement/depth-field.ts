@@ -1,6 +1,12 @@
 import type { Frame } from "../../../geometry";
 import type { InferManifest } from "../lib/contract";
-import { artifactUrl, frameUrl, manifestFromWire, requestHeaders } from "../lib/infer-client";
+import {
+  artifactUrl,
+  frameUrl,
+  isSignedStorageUrl,
+  manifestFromWire,
+  requestHeaders,
+} from "../lib/infer-client";
 import { parseNpz, type NpyArray } from "../lib/npz";
 import type { FramesValue } from "../graph/nodes/frame-source";
 
@@ -41,9 +47,27 @@ const RANGE_BYTES = 24 * 1024 * 1024;
  * Cloud Run cannot return a >32 MiB response in one piece. Fetch the NPZ in ranges,
  * while accepting a normal 200 response from hosts that ignore Range (including some
  * local static servers). The manifest's byte count makes assembly deterministic.
+ *
+ * A signed GCS link skips all of that. The cap belongs to Cloud Run, not to the bucket, so
+ * the whole 105 MB arrives in one request — and the identity token must be withheld, since
+ * GCS treats a request carrying both a header credential and a URL signature as an
+ * unauthenticated one and answers 401.
  */
 export async function fetchArtifactBuffer(url: string, sizeBytes: number): Promise<ArrayBuffer> {
   const resolved = artifactUrl(url);
+  if (isSignedStorageUrl(resolved)) {
+    const response = await fetch(resolved);
+    if (!response.ok) throw new Error(`signed artifact fetch ${response.status}`);
+    const buffer = await response.arrayBuffer();
+    // The signature covers the object, so a short read is a transport failure rather than
+    // the wrong object — but it would surface as a corrupt point cloud, so check it here.
+    if (buffer.byteLength !== sizeBytes) {
+      throw new Error(
+        `signed artifact: expected ${sizeBytes} bytes, got ${buffer.byteLength}`,
+      );
+    }
+    return buffer;
+  }
   if (!(sizeBytes > RANGE_BYTES)) {
     const response = await fetch(resolved, { headers: requestHeaders() });
     if (!response.ok) throw new Error(`artifact fetch ${response.status}`);

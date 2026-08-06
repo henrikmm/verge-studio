@@ -1,6 +1,78 @@
-import { describe, expect, it } from "vitest";
-import { canonicalFrameMap } from "./depth-field";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { canonicalFrameMap, fetchArtifactBuffer } from "./depth-field";
 import { resampleMaskNearest } from "../graph/nodes/measurement";
+import { connectCloud, disconnectCloud } from "../lib/cloud-store";
+
+/**
+ * How a 105 MB npz is fetched depends on where it lives, and getting it wrong produces a
+ * corrupt point cloud rather than an error that names its cause.
+ *
+ * Through Cloud Run: ranged 24 MiB chunks, because a >32 MiB response returns 500 with zero
+ * bytes, and the identity token must be attached.
+ *
+ * Through a signed GCS link: one request, and the token must NOT be attached — GCS answers
+ * 401 to anything carrying both a header credential and a URL signature.
+ */
+describe("fetchArtifactBuffer", () => {
+  const SIGNED =
+    "https://storage.googleapis.com/verge-lab-runs/runs/transient/r/verge-result.npz" +
+    "?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Signature=deadbeef";
+
+  afterEach(() => {
+    disconnectCloud();
+    vi.unstubAllGlobals();
+  });
+
+  it("fetches a signed link whole, with no Authorization header and no Range", async () => {
+    // A token IS connected, which is the point: it must not travel to the bucket.
+    connectCloud("https://verge-da3.run.app", "an-identity-token");
+    const size = 40 * 1024 * 1024; // over RANGE_BYTES, so chunking would engage if it applied
+    const calls: RequestInit[] = [];
+    vi.stubGlobal("fetch", (_url: string, init?: RequestInit) => {
+      calls.push(init ?? {});
+      return Promise.resolve(
+        new Response(new Uint8Array(size), { status: 200, headers: { "content-length": String(size) } }),
+      );
+    });
+
+    const buffer = await fetchArtifactBuffer(SIGNED, size);
+
+    expect(buffer.byteLength).toBe(size);
+    expect(calls).toHaveLength(1); // one request, not two 24 MiB chunks
+    const headers = (calls[0].headers ?? {}) as Record<string, string>;
+    expect(headers.authorization).toBeUndefined();
+    expect(headers.Range).toBeUndefined();
+  });
+
+  it("rejects a short read rather than parsing a truncated npz", async () => {
+    const size = 40 * 1024 * 1024;
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve(new Response(new Uint8Array(size - 10), { status: 200 })),
+    );
+    await expect(fetchArtifactBuffer(SIGNED, size)).rejects.toThrow(/expected \d+ bytes/);
+  });
+
+  it("still range-chunks a Cloud Run artifact, where the 32 MiB cap does apply", async () => {
+    connectCloud("https://verge-da3.run.app", "an-identity-token");
+    const size = 40 * 1024 * 1024;
+    const ranges: string[] = [];
+    vi.stubGlobal("fetch", (_url: string, init?: RequestInit) => {
+      const headers = (init?.headers ?? {}) as Record<string, string>;
+      ranges.push(headers.Range);
+      const [start, end] = /bytes=(\d+)-(\d+)/.exec(headers.Range)!.slice(1).map(Number);
+      expect(headers.authorization).toBe("Bearer an-identity-token");
+      return Promise.resolve(new Response(new Uint8Array(end - start + 1), { status: 206 }));
+    });
+
+    const buffer = await fetchArtifactBuffer("/artifact/r/verge-result.npz", size);
+
+    expect(buffer.byteLength).toBe(size);
+    expect(ranges).toEqual([
+      "bytes=0-25165823",
+      `bytes=25165824-${size - 1}`,
+    ]);
+  });
+});
 
 describe("canonicalFrameMap", () => {
   it("reproduces the exact 112-frame ladder mapping", () => {

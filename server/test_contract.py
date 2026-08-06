@@ -111,13 +111,117 @@ with tempfile.TemporaryDirectory() as tmp:
     # handed the client DA3's file. This is the regression this check exists for.
     for name in ("result.npz", main.VERGE_NPZ_NAME, "scene.glb", "notes.txt"):
         (d / name).write_bytes(b"x")
-    arts = main._collect_artifacts(d, "run")
+    arts = main._collect_artifacts(d, "run", [])
     by_kind = {a.kind: a.name for a in arts}
     assert by_kind["npz"] == main.VERGE_NPZ_NAME, by_kind
     assert by_kind["npz_native"] == "result.npz", by_kind
     assert by_kind["glb"] == "scene.glb", by_kind
     assert "notes.txt" not in {a.name for a in arts}, "unknown suffixes must be skipped"
 print("npz kind disambiguation OK:", by_kind)
+
+# ----------------------------------------------------------------- durable publishing
+#
+# Results have to outlive the instance that produced them. Everything below runs against
+# fakes: the point is the BRANCHING, which is what decides whether a paid run survives.
+
+with tempfile.TemporaryDirectory() as tmp:
+    d = Path(tmp)
+    (d / "scene.glb").write_bytes(b"g" * 16)
+
+    # No bucket configured -> the local path, exactly as before, and no gs_uri to mislead
+    # save-run.sh into trying `gcloud storage cp` on nothing.
+    original_bucket = main.OUTPUT_BUCKET
+    try:
+        main.OUTPUT_BUCKET = ""
+        notes: list[str] = []
+        url, gs_uri = main._publish(d / "scene.glb", "run-1", notes)
+        assert url == "/artifact/run-1/scene.glb", url
+        assert gs_uri is None and notes == []
+        assert main._publish_mode(notes) == "local"
+        print("publish without a bucket OK:", url)
+
+        # Bucket configured and everything works -> a signed link for the browser AND the
+        # durable address for Save. Both, because they expire differently.
+        uploaded = {}
+
+        class FakeBlob:
+            def upload_from_filename(self, path, if_generation_match=None):
+                uploaded["path"] = path
+                uploaded["guard"] = if_generation_match
+
+            def generate_signed_url(self, **kw):
+                uploaded["sign_kwargs"] = kw
+                return "https://storage.googleapis.com/signed?x=1"
+
+        class FakeBucket:
+            def blob(self, name):
+                uploaded["object"] = name
+                return FakeBlob()
+
+        class FakeClient:
+            def bucket(self, name):
+                uploaded["bucket"] = name
+                return FakeBucket()
+
+        main.OUTPUT_BUCKET = "verge-lab-runs"
+        main._storage_client = FakeClient()
+        main._signing_credentials = type(
+            "C", (), {"valid": True, "token": "t", "service_account_email": "sa@x.iam"}
+        )()
+
+        notes = []
+        url, gs_uri = main._publish(d / "scene.glb", "run-1", notes)
+        assert url.startswith("https://"), url
+        assert gs_uri == "gs://verge-lab-runs/runs/transient/run-1/scene.glb", gs_uri
+        assert notes == [] and main._publish_mode(notes) == "gcs"
+        # The prefix the lifecycle rule matches. If this ever changes, scripts/bucket-lifecycle.json
+        # stops covering the objects and they never expire -- the exact donor-bucket failure.
+        assert uploaded["object"].startswith("runs/transient/"), uploaded["object"]
+        # Never overwrite: a run id collision means something is badly wrong.
+        assert uploaded["guard"] == 0
+        assert uploaded["sign_kwargs"]["version"] == "v4"
+        assert uploaded["sign_kwargs"]["method"] == "GET"
+        # Signing must go through IAM signBlob; there is no private key inside Cloud Run.
+        assert uploaded["sign_kwargs"]["service_account_email"] == "sa@x.iam"
+        assert uploaded["sign_kwargs"]["access_token"] == "t"
+        print("publish to GCS OK:", gs_uri)
+
+        # THE ONE THAT MATTERS. Publishing runs after the GPU has been paid for, so a
+        # storage failure must degrade rather than raise -- a 500 here throws away a
+        # finished run to report a problem that costs nothing to route around.
+        class ExplodingClient:
+            def bucket(self, name):
+                raise RuntimeError("403 caller lacks storage.objects.create")
+
+        main._storage_client = ExplodingClient()
+        notes = []
+        url, gs_uri = main._publish(d / "scene.glb", "run-1", notes)
+        assert url == "/artifact/run-1/scene.glb", url
+        assert gs_uri is None, gs_uri
+        assert len(notes) == 1 and "RuntimeError" in notes[0], notes
+        # ...and it must be VISIBLE. A silent fallback would quietly restore the
+        # instance-lifetime dependency this whole path exists to remove.
+        assert main._publish_mode(notes) == "degraded"
+        print("publish failure degrades without failing the run OK:", notes[0][:52])
+    finally:
+        main.OUTPUT_BUCKET = original_bucket
+        main._storage_client = None
+        main._signing_credentials = None
+
+# /publish-check refuses honestly when there is nothing to check, rather than 500ing
+# somewhere inside the storage client.
+r = client.get("/publish-check")
+assert r.status_code == 503, r.text
+assert "VERGE_OUTPUT_BUCKET" in r.json()["detail"], r.json()
+print("publish-check without a bucket OK:", r.json()["detail"][:60])
+
+# An Artifact written before gs_uri existed must still parse -- saved manifests on disk
+# predate this field and loading one is how a run is re-opened.
+from contract import Artifact  # noqa: E402
+
+legacy = Artifact(kind="glb", name="scene.glb", size_bytes=1, sha256="x", url="/artifact/r/scene.glb")
+assert legacy.gs_uri is None
+print("legacy artifact without gs_uri parses OK")
 
 # Transience is enforced, not inherited from the instance dying. Two mechanisms:
 # frames go as soon as inference returns, whole runs go once they pass the TTL.
@@ -185,6 +289,10 @@ print("sweep on missing root OK")
 diag = Diagnostics(native_npz={"result.npz": ["depth", "conf"]}, export_dir_listing=["a"])
 assert diag.native_npz["result.npz"] == ["depth", "conf"]
 assert Diagnostics().native_npz == {} and Diagnostics().export_dir_listing == []
+# Defaults describe the pre-bucket world, so a manifest written before publishing existed
+# still parses and reads as what it was: artifacts on one machine's disk.
+assert Diagnostics().publish_mode == "local" and Diagnostics().publish_errors == []
+assert Diagnostics(publish_mode="degraded", publish_errors=["x"]).publish_mode == "degraded"
 print("diagnostics OK")
 
 print("\nALL SERVER CONTRACT CHECKS PASSED")

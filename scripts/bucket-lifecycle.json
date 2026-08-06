@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Retention for transient run artifacts, enforced by GCS itself.",
+    "",
+    "The prefix MUST match what server/main.py::_publish actually writes, which is",
+    "VERGE_OUTPUT_PREFIX (default 'runs/transient') + '/<run_id>/<name>'. Verify by the",
+    "prefix that receives data, never by the presence of a rule: the donor bucket carries",
+    "five carefully written rules covering temporary/, incoming/, source-archives/ and",
+    "viewer/ -- and none of them matches runs/, which is where its output actually went.",
+    "Those objects have no expiry at all.",
+    "",
+    "3 days matches expires_after_days in server/contract.py. That field has advertised a",
+    "retention since the contract was written and no code has ever honoured it; this rule",
+    "is what turns it from a statement of intent into a guarantee. Change both together.",
+    "",
+    "matchesPrefix has no leading slash -- it is relative to the bucket root."
+  ],
+  "lifecycle": {
+    "rule": [
+      {
+        "action": { "type": "Delete" },
+        "condition": {
+          "age": 3,
+          "matchesPrefix": ["runs/transient/"]
+        }
+      }
+    ]
+  }
+}

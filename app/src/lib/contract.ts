@@ -181,7 +181,20 @@ export interface Artifact {
   name: string;
   sizeBytes: number;
   sha256: string;
+  /**
+   * What to fetch NOW. Either a signed GCS link (short-lived, ~12 h) or a path on the
+   * service, `/artifact/{runId}/{name}`, which is only valid while that instance lives.
+   */
   url: string;
+  /**
+   * The durable `gs://` address, present only once the artifact reached the bucket.
+   *
+   * `url` is for this session; `gsUri` is for the archive. Save resolves this one with the
+   * operator's own credentials, so a run saved long after its signed links expired — or
+   * after the service was deleted — still comes home. Absent on local-disk runs and on
+   * every manifest written before 2026-08-06.
+   */
+  gsUri?: string;
 }
 
 /**
@@ -207,6 +220,14 @@ export interface Diagnostics {
   /** Each npz DA3 itself wrote, mapped to its array key names. */
   nativeNpz: Record<string, string[]>;
   exportDirListing: string[];
+  /**
+   * Where the artifacts actually ended up: "gcs" durable, "local" no bucket configured,
+   * "degraded" a bucket was configured and publishing failed. "degraded" means the run is
+   * intact but lives only on the instance — so it must be saved before teardown, exactly
+   * as it had to be before durable storage existed.
+   */
+  publishMode?: "gcs" | "local" | "degraded";
+  publishErrors?: string[];
 }
 
 export interface Timing {

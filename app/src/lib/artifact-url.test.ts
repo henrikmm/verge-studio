@@ -13,7 +13,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 import { connectCloud, disconnectCloud } from "./cloud-store";
-import { artifactUrl } from "./infer-client";
+import { artifactUrl, isSignedStorageUrl } from "./infer-client";
 
 afterEach(() => {
   disconnectCloud();
@@ -49,9 +49,47 @@ describe("artifactUrl with a remote service", () => {
 
   it("fails loudly on a gs:// URL rather than producing an unfetchable string", () => {
     connectCloud(REMOTE, "");
-    // _publish emits gs:// when VERGE_OUTPUT_BUCKET is set. No bucket exists today, but
-    // silently building "https://…/gs://…" would be a baffling 404 if one ever appears.
-    expect(() => artifactUrl("gs://bucket/runs/scene.glb")).toThrow(/signed URL/);
+    // A well-formed manifest never puts gs:// in `url` — that address belongs in `gsUri`,
+    // and `url` carries the signed link. If the two are ever swapped, this says so instead
+    // of silently building "https://…/gs://…" and producing a baffling 404.
+    expect(() => artifactUrl("gs://bucket/runs/scene.glb")).toThrow(/gsUri/);
+  });
+});
+
+/**
+ * A signed link has to be fetched differently from a service path, and both differences
+ * fail in ways that do not point at their cause.
+ *
+ * GCS treats a request carrying an `Authorization` header AND a URL signature as an
+ * unauthenticated one — the header wins, the signature is ignored, and the answer is a 401
+ * that looks like a credential problem. And the 32 MiB response cap belongs to Cloud Run,
+ * not to the bucket, so range-chunking a signed link is pointless work that only adds ways
+ * to be wrong.
+ */
+describe("isSignedStorageUrl", () => {
+  it("recognises a signed GCS link", () => {
+    expect(
+      isSignedStorageUrl(
+        "https://storage.googleapis.com/verge-lab-runs/runs/transient/r/scene.glb" +
+          "?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Signature=deadbeef",
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects an unsigned storage URL, which the browser cannot read anyway", () => {
+    // public-access-prevention is on, so this would 403. Treating it as signed would send
+    // it without the token and lose the only credential that might have worked.
+    expect(isSignedStorageUrl("https://storage.googleapis.com/verge-lab-runs/x.glb")).toBe(false);
+  });
+
+  it("rejects a Cloud Run artifact URL, which DOES need the token and the range chunking", () => {
+    expect(
+      isSignedStorageUrl("https://verge-da3-abc123-uc.a.run.app/artifact/run/verge-result.npz"),
+    ).toBe(false);
+  });
+
+  it("rejects a service-relative path", () => {
+    expect(isSignedStorageUrl("/artifact/run/scene.glb")).toBe(false);
   });
 });
 

@@ -8,21 +8,22 @@
 # holds a lock), but the extra slots keep /gpu answerable during a run, which is what
 # feeds the app's live VRAM bar.
 #
-# --min-instances=1 is NOT an optimisation, it is a correctness requirement, and it was
-# added on 2026-08-05 after it cost a real GPU session. Artifacts are written to the
-# CONTAINER'S LOCAL DISK (server/main.py: RUN_ROOT = tempfile.gettempdir()), so an
-# /artifact URL is only valid on the instance that produced it. With min-instances=0,
-# Cloud Run had already scheduled a replacement while inference was still running: the
-# instance was drained 86 ms after its /infer response, and the browser's GLB fetch
-# 120 ms later was answered by a different instance that had never seen the file.
+# --min-instances=0 is correct again as of 2026-08-06, and the reason is worth keeping.
 #
-# The cost of this flag is real and must be respected: the instance NEVER scales to zero
-# while the service exists, so it bills continuously from deploy to teardown. That is
-# already the operating assumption of a warm batched session -- but it makes
-# scripts/teardown.sh non-optional rather than merely good hygiene.
+# It was forced to 1 on 2026-08-05 after it cost a real GPU session: artifacts were written
+# to the CONTAINER'S LOCAL DISK, so an /artifact URL was only valid on the instance that
+# produced it. Cloud Run drained that instance 86 ms after its /infer response, and the
+# browser's GLB fetch 120 ms later was answered by a different instance that had never seen
+# the file. Pinning one machine alive was the only available workaround.
 #
-# The durable fix is the GCS + signed-URL path that _publish() already half-implements;
-# until VERGE_OUTPUT_BUCKET exists, this flag is what keeps artifacts reachable.
+# It is no longer needed, because the artifacts no longer live on the machine. VERGE_OUTPUT_BUCKET
+# sends them to GCS, where an object has no instance affinity at all -- so a replacement,
+# a scale-down or a teardown costs nothing. Scaling to zero is what stops the meter between
+# runs; teardown remains the thing that stops it for good.
+#
+# If you ever unset VERGE_OUTPUT_BUCKET, put --min-instances=1 back in the same edit. The
+# two settings are one decision, and splitting them is how 2026-08-05 happened.
+# The service reports which path a run actually took as diagnostics.publish_mode.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -32,6 +33,11 @@ SERVICE="${SERVICE:-verge-da3}"
 REPOSITORY="${REPOSITORY:-verge}"
 IMAGE_NAME="${IMAGE_NAME:-da3-service}"
 IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}"
+# Durable artifact storage. Create it with scripts/create-bucket.sh, which also sets the
+# lifecycle rule that bounds retention -- the bucket is a precondition of this deploy, not
+# a side effect of it, because _publish has no deletion path of its own.
+OUTPUT_BUCKET="${VERGE_OUTPUT_BUCKET:-verge-lab-runs}"
+OUTPUT_PREFIX="${VERGE_OUTPUT_PREFIX:-runs/transient}"
 
 echo "== project =="
 gcloud config set project "${PROJECT_ID}" --quiet
@@ -91,6 +97,30 @@ DIGEST="$(gcloud artifacts docker images describe "${IMAGE_URI}:${SRC_TAG}" \
   --format='value(image_summary.digest)' --project="${PROJECT_ID}")"
 echo "image digest: ${DIGEST}"
 
+# Scaling to zero is only safe because artifacts leave the instance. If the bucket is
+# missing, this deploy would recreate the exact 2026-08-05 failure -- results on a disk that
+# Cloud Run may reclaim mid-session -- so refuse rather than deploy something that looks
+# fine until it silently eats a paid run.
+echo "== output bucket =="
+if gcloud storage buckets describe "gs://${OUTPUT_BUCKET}" \
+     --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "  gs://${OUTPUT_BUCKET}/${OUTPUT_PREFIX}/ ready"
+else
+  cat >&2 <<EOF
+
+REFUSING TO DEPLOY: gs://${OUTPUT_BUCKET} does not exist.
+
+This deploy sets --min-instances=0, which is only safe when artifacts are written to a
+bucket rather than to the instance's own disk. Without it, Cloud Run can replace the
+instance mid-session and a finished, paid-for run becomes unreachable.
+
+  ./scripts/create-bucket.sh
+
+creates it and applies the lifecycle rule that bounds retention.
+EOF
+  exit 1
+fi
+
 echo "== deploy =="
 gcloud run deploy "${SERVICE}" \
   --image="${IMAGE_URI}@${DIGEST}" \
@@ -101,11 +131,12 @@ gcloud run deploy "${SERVICE}" \
   --cpu=8 \
   --memory=32Gi \
   --no-cpu-throttling \
-  --min-instances=1 \
+  --min-instances=0 \
   --max-instances=1 \
   --concurrency=4 \
   --timeout=900 \
   --no-allow-unauthenticated \
+  --set-env-vars="VERGE_OUTPUT_BUCKET=${OUTPUT_BUCKET},VERGE_OUTPUT_PREFIX=${OUTPUT_PREFIX}" \
   --quiet --project="${PROJECT_ID}"
 
 URL="$(gcloud run services describe "${SERVICE}" --region="${REGION}" \

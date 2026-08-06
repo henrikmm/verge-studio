@@ -64,7 +64,17 @@ class Artifact(BaseModel):
     size_bytes: int
     sha256: str
     # Either a signed GCS URL or a path on this service (/artifact/{run_id}/{name}).
+    # SHORT-LIVED when signed: this is what the browser fetches now, not an archive address.
     url: str
+    # The durable gs:// address, present only when the artifact reached the bucket.
+    #
+    # Both fields exist because they answer different questions, and collapsing them into
+    # one breaks Save. `url` expires; a manifest does not. save-run.sh COPIES the manifest
+    # into the run directory as that run's permanent record, so a user who saves hours after
+    # the run would find every `url` dead — while `gs_uri` still resolves through
+    # `gcloud storage cp` under the operator's own credentials, with no signature involved
+    # and no service required to be alive. Signed link for now, gs:// for later.
+    gs_uri: str | None = None
 
 
 class VramStats(BaseModel):
@@ -125,6 +135,20 @@ class Diagnostics(BaseModel):
     native_npz: dict[str, list[str]] = Field(default_factory=dict)
     export_dir_listing: list[str] = Field(default_factory=list)
 
+    # Where this run's artifacts actually ended up, and why, if it was not the bucket.
+    #
+    # "gcs"      every artifact published to durable storage
+    # "local"    no bucket configured; artifacts serve from this instance's disk
+    # "degraded" a bucket WAS configured and publishing failed — the run is fine and the
+    #            artifacts are reachable, but only until this instance goes away
+    #
+    # `degraded` is the case worth naming loudly. Publishing happens after the GPU has
+    # already been paid for, so a permission slip must never fail the request — but a
+    # silent fallback would reintroduce the instance-lifetime dependency this whole path
+    # exists to remove, and nobody would know until teardown destroyed the results.
+    publish_mode: Literal["gcs", "local", "degraded"] = "local"
+    publish_errors: list[str] = Field(default_factory=list)
+
 
 class InferManifest(BaseModel):
     schema_version: str = SCHEMA_VERSION
@@ -143,10 +167,15 @@ class InferManifest(BaseModel):
 
     # Transient by policy — the client must call Save explicitly to retain.
     transient: bool = True
-    # The retention this run's artifacts are promised in DURABLE storage, and the number the
-    # output bucket's lifecycle rule must be set to. It is a statement of intent that only
-    # becomes a guarantee once that rule exists: no code reads this field, and nothing in
-    # GCS honours it by itself. On local-disk runs the real bound is VERGE_RUN_TTL_SECONDS
+    # The retention this run's artifacts are promised in DURABLE storage.
+    #
+    # This stopped being a wish on 2026-08-06. GCS enforces it: gs://verge-lab-runs carries a
+    # Delete rule at age 3 matching the prefix `runs/transient/`, which is the prefix _publish
+    # actually writes to. The rule lives in scripts/bucket-lifecycle.json and is applied and
+    # RE-READ by scripts/create-bucket.sh; change that file and this number together.
+    #
+    # Still true, and still worth stating: no code reads this field. It documents the rule,
+    # it does not implement it. On local-disk runs the real bound is VERGE_RUN_TTL_SECONDS
     # in main.py, which is hours rather than days.
     expires_after_days: int = 3
 

@@ -182,6 +182,9 @@ describe("toWireManifest", () => {
       name: "scene.glb",
       sha256: "aa",
       url: "/artifact/x/scene.glb",
+      // Null rather than absent: this run predates durable storage, and save-run.sh reads
+      // `gs_uri or url`, so an explicit null is what makes it fall back to the local path.
+      gs_uri: null,
       kind: "glb",
       size_bytes: 16098484,
     });
@@ -246,6 +249,85 @@ describe("toWireManifest", () => {
     expect(restored.frames.count).toBe(81);
     expect(restored.timing.gpuSeconds).toBe(36.9);
     expect(restored.vram.peakBytes).toBe(23_648_000_000);
+  });
+
+  /**
+   * The durable address has to survive the same round trip, and it is the field with the
+   * least forgiving failure mode in the whole manifest.
+   *
+   * save-run.sh prefers `gs_uri` over `url` precisely because `url` expires. Drop it here and
+   * Save silently falls back to a signed link — which works all afternoon and then stops,
+   * stranding exactly the runs the field exists to rescue. And because this object IS the
+   * run's archive record, the loss is permanent and only shows up much later.
+   */
+  it("round-trips the durable gs:// address and the publish mode", () => {
+    const original: InferManifest = {
+      schemaVersion: "verge.infer-manifest/0.1.0",
+      runId: "20260806-090000-abc123",
+      modelRepositoryId: "depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+      modelRevision: "b2359bdf726fb44ef62acca04d629dcf158053e7",
+      depthMode: "metric",
+      linearUnit: "metre",
+      params: {
+        fps: 6,
+        processRes: 504,
+        processResMethod: "upper_bound_resize",
+        refViewStrategy: "middle",
+        maxFrames: 112,
+      },
+      frames: { count: 81, requestedCount: 81, width: 1024, height: 576, capped: true },
+      timing: { gpuSeconds: 30, wallSeconds: 35 },
+      vram: {
+        peakBytes: 1,
+        currentBytes: 1,
+        totalBytes: 1,
+        deviceName: "NVIDIA L4",
+        torchPeakBytes: 0,
+        baselineBytes: 0,
+      },
+      artifacts: [
+        {
+          kind: "npz",
+          name: "verge-result.npz",
+          sizeBytes: 107_434_959,
+          sha256: "bb",
+          url: "https://storage.googleapis.com/verge-lab-runs/runs/transient/r/verge-result.npz?X-Goog-Signature=aa",
+          gsUri: "gs://verge-lab-runs/runs/transient/r/verge-result.npz",
+        },
+      ],
+      diagnostics: {
+        nativeNpz: {},
+        exportDirListing: ["scene.glb", "verge-result.npz"],
+        publishMode: "gcs",
+        publishErrors: [],
+      },
+      transient: true,
+      expiresAfterDays: 3,
+      mock: false,
+    };
+
+    const restored = manifestFromWire(toWireManifest(original));
+    expect(restored).toEqual(original);
+    expect(restored.artifacts[0].gsUri).toBe(
+      "gs://verge-lab-runs/runs/transient/r/verge-result.npz",
+    );
+    expect(restored.diagnostics?.publishMode).toBe("gcs");
+
+    // The wire field save-run.sh actually reads, under the name it reads it by.
+    expect(toWireManifest(original).artifacts[0].gs_uri).toBe(
+      "gs://verge-lab-runs/runs/transient/r/verge-result.npz",
+    );
+  });
+
+  it("emits a null gs_uri for a local-disk run, so save-run.sh falls back to url", () => {
+    const wire = toWireManifest({
+      runId: "x",
+      artifacts: [
+        { kind: "glb", name: "scene.glb", sizeBytes: 1, sha256: "a", url: "/artifact/x/scene.glb" },
+      ],
+    });
+    expect(wire.artifacts[0].gs_uri).toBeNull();
+    expect(wire.artifacts[0].url).toBe("/artifact/x/scene.glb");
   });
 });
 

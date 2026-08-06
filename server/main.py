@@ -10,6 +10,12 @@ Design notes that matter:
   never resamples and never downloads video.
 * Artifacts go to GCS when `VERGE_OUTPUT_BUCKET` is set, otherwise they stay on
   local disk and are served from `/artifact`. The mock server uses the same shape.
+  Publishing is what lets results outlive the instance, and it is why this service no
+  longer needs `--min-instances=1`: an /artifact URL was only ever valid on the machine
+  that produced it, so Cloud Run replacing an instance destroyed a paid run (it did, on
+  2026-08-05, 86 ms after the /infer response). A bucket object has no such affinity.
+  Publishing NEVER fails a run — see _publish — because the GPU is already paid for by
+  the time it happens.
 * Transience is enforced here, not left to chance. Uploaded frames are discarded the
   moment inference returns, and run directories are swept once they pass
   `VERGE_RUN_TTL_SECONDS`. Before 2026-08-06 nothing deleted a successful run at all --
@@ -28,6 +34,7 @@ import tempfile
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -218,7 +225,7 @@ def _run_inference(frame_paths: list[str], params: InferParams, export_dir: Path
 VERGE_NPZ_NAME = "verge-result.npz"
 
 
-def _collect_artifacts(export_dir: Path, run_id: str) -> list[Artifact]:
+def _collect_artifacts(export_dir: Path, run_id: str, notes: list[str]) -> list[Artifact]:
     kinds = {
         ".glb": "glb",
         ".npz": "npz",
@@ -239,27 +246,108 @@ def _collect_artifacts(export_dir: Path, run_id: str) -> list[Artifact]:
         # filename can never shadow ours in the client's `find`.
         if kind == "npz" and path.name != VERGE_NPZ_NAME:
             kind = "npz_native"
+        url, gs_uri = _publish(path, run_id, notes)
         artifacts.append(
             Artifact(
                 kind=kind,  # type: ignore[arg-type]
                 name=path.name,
                 size_bytes=path.stat().st_size,
                 sha256=_sha256(path),
-                url=_publish(path, run_id),
+                url=url,
+                gs_uri=gs_uri,
             )
         )
     return artifacts
 
 
-def _publish(path: Path, run_id: str) -> str:
-    """Upload to the transient GCS prefix, or fall back to serving from disk."""
-    if not OUTPUT_BUCKET:
-        return f"/artifact/{run_id}/{path.name}"
-    from google.cloud import storage
+# How long a signed link stays usable. Comfortably longer than a working session and far
+# shorter than the 7-day maximum V4 allows. It does not need to cover archival: Save reads
+# `gs_uri` under the operator's own credentials, so a link expiring never strands a run.
+SIGNED_URL_TTL_SECONDS = int(os.environ.get("VERGE_SIGNED_URL_TTL_SECONDS", 12 * 60 * 60))
 
-    blob = storage.Client().bucket(OUTPUT_BUCKET).blob(f"{OUTPUT_PREFIX}/{run_id}/{path.name}")
-    blob.upload_from_filename(str(path), if_generation_match=0)
-    return f"gs://{OUTPUT_BUCKET}/{OUTPUT_PREFIX}/{run_id}/{path.name}"
+_storage_client: Any = None
+_signing_credentials: Any = None
+
+
+def _client() -> Any:
+    """One GCS client for the process. Building it per artifact would re-read ADC each time."""
+    global _storage_client
+    if _storage_client is None:
+        from google.cloud import storage
+
+        _storage_client = storage.Client()
+    return _storage_client
+
+
+def _sign(blob: Any) -> str:
+    """A V4 signed GET link for `blob`, signed through the IAM API.
+
+    There is no private key inside Cloud Run — the runtime identity is a metadata-server
+    token, and `generate_signed_url` cannot sign with that on its own. Passing
+    `service_account_email` plus `access_token` routes the signature through the IAM
+    `signBlob` API instead, which is why the runtime account needs
+    `roles/iam.serviceAccountTokenCreator` ON ITSELF (granted by scripts/create-bucket.sh).
+
+    A signed URL carries the SIGNER's authority, so the same account also needs read access
+    to the object it signs for — objectAdmin on the bucket, not merely objectCreator.
+    """
+    global _signing_credentials
+    if _signing_credentials is None:
+        import google.auth
+
+        _signing_credentials, _ = google.auth.default()
+    # The access token IS the signing credential here, so a stale one produces a bad
+    # signature rather than a clean 401. Refresh whenever it is not currently valid.
+    if not getattr(_signing_credentials, "valid", False):
+        from google.auth.transport import requests as google_requests
+
+        _signing_credentials.refresh(google_requests.Request())
+
+    return blob.generate_signed_url(
+        version="v4",
+        expiration=timedelta(seconds=SIGNED_URL_TTL_SECONDS),
+        method="GET",
+        service_account_email=_signing_credentials.service_account_email,
+        access_token=_signing_credentials.token,
+    )
+
+
+def _publish(path: Path, run_id: str, notes: list[str]) -> tuple[str, str | None]:
+    """Upload to the transient GCS prefix and return (url_for_client, durable_gs_uri).
+
+    Returns a LOCAL /artifact path and no gs_uri in two cases: no bucket is configured, or
+    publishing failed. The second one never raises, and that is deliberate — this runs after
+    `model.inference` has returned, so the GPU time is already spent and money is already
+    gone. Turning a storage permission slip into a 500 would throw away a paid run to report
+    a problem that costs nothing to work around: the files are still on local disk and
+    /artifact still serves them.
+
+    Failing quietly is the other trap, so every failure is recorded in `notes` and surfaces
+    as diagnostics.publish_mode == "degraded" on the manifest.
+    """
+    local = f"/artifact/{run_id}/{path.name}"
+    if not OUTPUT_BUCKET:
+        return local, None
+
+    object_name = f"{OUTPUT_PREFIX}/{run_id}/{path.name}"
+    try:
+        blob = _client().bucket(OUTPUT_BUCKET).blob(object_name)
+        # if_generation_match=0 makes this fail rather than overwrite. Run ids carry a
+        # timestamp and six random hex, so a collision means something is wrong.
+        blob.upload_from_filename(str(path), if_generation_match=0)
+        return _sign(blob), f"gs://{OUTPUT_BUCKET}/{object_name}"
+    except Exception as exc:  # noqa: BLE001 — a paid run must survive any storage failure
+        notes.append(f"{path.name}: {type(exc).__name__}: {exc}")
+        return local, None
+
+
+def _publish_mode(notes: list[str]) -> str:
+    """Where this run's artifacts ended up. Separate from _publish so it can be tested
+    without a GPU: /infer is unreachable on a CPU box, so an inline expression there would
+    never be exercised by anything until a real cloud run."""
+    if not OUTPUT_BUCKET:
+        return "local"
+    return "degraded" if notes else "gcs"
 
 
 def _discard_frames(run_dir: Path) -> int:
@@ -364,6 +452,9 @@ async def infer(
     # The GPU is done with them, so they stop costing us anything to keep.
     _discard_frames(run_dir)
 
+    publish_notes: list[str] = []
+    artifacts = _collect_artifacts(export_dir, run_id, publish_notes)
+
     manifest = InferManifest(
         run_id=run_id,
         params=parsed,
@@ -388,14 +479,58 @@ async def infer(
             torch_peak_bytes=result["torch_peak_bytes"],
             baseline_bytes=result["baseline_bytes"],
         ),
-        artifacts=_collect_artifacts(export_dir, run_id),
+        artifacts=artifacts,
         diagnostics=Diagnostics(
             native_npz=result["native_npz"],
             export_dir_listing=result["export_dir_listing"],
+            publish_mode=_publish_mode(publish_notes),
+            publish_errors=publish_notes,
         ),
     )
     (run_dir / "manifest.json").write_text(manifest.model_dump_json(indent=2))
     return manifest
+
+
+@app.get("/publish-check")
+def publish_check() -> dict[str, Any]:
+    """Prove the whole durable-storage chain without touching the GPU.
+
+    Writes ~1 KB, signs it, and hands back the link. That exercises every part that can fail
+    at run time and none of the parts that cost money: bucket reachability, objectAdmin on
+    the bucket, Token Creator on the runtime account, the signing round trip through IAM, and
+    — once the browser fetches the returned URL — the bucket's CORS policy.
+
+    It exists because the alternative is discovering a missing IAM binding *after* a 40-second
+    GPU run, and this project has twice paid for code that was written but never executed.
+    Cost of being wrong here: one HTTP request.
+
+    The probe object is written UNDER the transient prefix on purpose, so the same lifecycle
+    rule that reaps run artifacts reaps these too. A checker that leaks objects forever would
+    be its own small version of the problem it is checking for.
+    """
+    if not OUTPUT_BUCKET:
+        raise HTTPException(
+            status_code=503,
+            detail="VERGE_OUTPUT_BUCKET is not set; this revision publishes to local disk only",
+        )
+
+    object_name = f"{OUTPUT_PREFIX}/_publish-check/{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}.txt"
+    payload = f"verge publish-check {time.time():.0f}\n".encode() + b"." * 1024
+
+    blob = _client().bucket(OUTPUT_BUCKET).blob(object_name)
+    blob.upload_from_string(payload, content_type="text/plain", if_generation_match=0)
+    url = _sign(blob)
+
+    return {
+        "bucket": OUTPUT_BUCKET,
+        "prefix": OUTPUT_PREFIX,
+        "object": object_name,
+        "gs_uri": f"gs://{OUTPUT_BUCKET}/{object_name}",
+        "signed_url": url,
+        "signed_ttl_seconds": SIGNED_URL_TTL_SECONDS,
+        "signer": getattr(_signing_credentials, "service_account_email", None),
+        "bytes": len(payload),
+    }
 
 
 @app.get("/artifact/{run_id}/{name}")
