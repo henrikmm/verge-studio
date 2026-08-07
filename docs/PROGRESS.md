@@ -118,13 +118,14 @@ applies to the proposal only, with outdoor evidence behind whichever was chosen.
 
 **Gate.** None.
 
-**Evidence / starting points.** DESIGN.md's pane-chrome section warns that the `nowrap` control
-row silently pushes right-hand controls out of a narrow pane. On 2026-08-07 that was measured
-rather than assumed: forced to 180 px, Depth 2D's OUTPUT row keeps its height and puts the
-`Confidence` chip **outside** the row's box, unreachable. The LAYERS row added the same day wraps
-to two lines under the same test and keeps both of its chips inside, so `.layer-row` in
-`app/src/theme.css` is the shape of the fix — the question is only whether `.output-row` should
-wrap too, or whether OUTPUT's one-of-N chips want different treatment from LAYERS' toggles.
+**Evidence / starting points.** DESIGN.md warns that the `nowrap` control row silently pushes
+right-hand controls out of a narrow pane. Measured 2026-08-07: at 180 px, Depth 2D's OUTPUT row keeps
+its height and puts the `Confidence` chip **outside** its box, unreachable. `.layer-row` wraps and
+keeps its chips — the question is whether OUTPUT's one-of-N chips want that treatment or another.
+
+Viewport 3D passed on 2026-08-07 without answering it — its hint moved into a `Keys` panel inside
+the viewport, shortening the row rather than wrapping it. That settles an overflowing *hint* and
+leaves Depth 2D's harder case, an overflowing *chip*; `OutputRow` now takes a `wrap` prop.
 
 **Done when.** Every chip in every pane control row stays inside its row at 180 px, measured, and
 the checklist item that covers it is graded against a narrow pane rather than only 1280×800.

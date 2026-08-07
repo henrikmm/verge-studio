@@ -63,6 +63,31 @@ Around that spine:
   a refusal was indistinguishable from success. A stale plane is reported but deliberately not
   drawn, because held evidence must never read as a current measurement.
   (`app/src/panes/floor-state.ts`, 7 tests covering all four states.)
+- **You can walk through the cloud with the keyboard.** W A S D move, E and Q rise and fall, the
+  arrow keys look, Shift is four times faster and Alt a fifth, and F frames everything again when
+  you are lost. The keys move the whole rig — camera and orbit pivot together — so dragging still
+  orbits exactly as before, now around whatever you walked up to. Walk keeps W level with the
+  ground; a Fly chip follows the view instead. Keys act while the pointer is over the pane, never
+  while typing in a field. Motion is per second of real elapsed time, clamped to 100 ms a frame so
+  a backgrounded tab cannot resume by teleporting.
+  - **Which way is up is measured, not assumed** — the fitted floor's normal, else the vertical
+    from the camera path, else the scene's +Y with the readout saying `UNMEASURED`. This is not a
+    nicety: DA3's scene is aligned to the *first camera*, so its +Y sits 33.2° from true up on the
+    room fixture, and walking along it would climb a third of a right angle while the horizon
+    looked level. (`app/src/panes/viewport-nav.ts`, 27 tests.)
+- **The viewport can stand where the camera stood.** A VIEW row switches between **Free** — the
+  orbit camera, as before — and **Fixed**, which places the viewer at the recording camera's
+  position, orientation and field of view for whichever frame the slider is on. You can turn to
+  look around, but not walk: translating would destroy the mode's only claim. Depth 2D and
+  Viewport 3D therefore show the same viewpoint at the same index, which turns this pane from
+  something you orbit into something you can check.
+  - **The video can be ghosted over it**, off by default, with an opacity control and a border
+    marking exactly where the recorded frame ends — the pane is never the shape of the clip, so
+    the fitted field of view contains the frame rather than cropping it. Bear in mind the cloud
+    was reconstructed from these same frames, so agreement is partly guaranteed by construction;
+    what the comparison catches is drift, scale error and collapsed geometry.
+  - **Camera path** joins the LAYERS row: the route walked, with the current frame marked and
+    aimed, drawn through the cloud so it stays visible when the camera is behind something.
 - **Measurement targets belong to a clip**, keyed by the video's content digest. A clip nobody has
   measured before starts with an empty set, never another clip's objects.
 - **Repeat measurements accumulate.** Each recorded trial freezes the exact mask it was measured
@@ -213,6 +238,43 @@ after this run was planned as a landscape test and turned out to be a portrait o
 
 When the requested rate would exceed the frame limit, the app lowers the effective rate, shows
 the arithmetic and says so. It never silently shortens the clip.
+
+### The recorded camera can be put back in the scene, exactly
+
+Measured 2026-08-07. The poses in the result file are **not** in the coordinates of the cloud on
+screen: DA3 exports its GLB into a display frame aligned to the first camera and records the
+transform between the two as `scene.extras.hf_alignment`, which the app already reads as
+`worldFromDa3`. Cross the boundary and the camera lands where it really was; skip it and the
+camera lands somewhere entirely plausible and wrong.
+
+There are two independent routes to the answer, so they can be compared. Route A computes the
+camera centre from the extrinsics (`-Rᵀt`) and applies the alignment. Route B reads the camera
+frustums DA3 draws into the GLB itself, which are already in display space — one per frame, in
+frame order.
+
+| Dataset | Frames | Position | Direction |
+|---|---|---|---|
+| `door/504px-112f` | 112 | 0.001 mm | 0.16° |
+| `room/504px-112f` | 112 | 0.001 mm | 0.16° |
+| `door/356px-256f` | 256 | 0.000 mm | 0.27° |
+| saved run `20260806-193346` | 99 | 0.004 mm | 0.10° |
+
+The alignment is **rigid** — its columns are unit length and mutually perpendicular to eight
+decimal places — so metres stay metres across the boundary and a camera height read off the fitted
+floor is a real height. The door fixture's frame-1 camera sits **1.54 m** above its floor and
+frame-185's **1.39 m**, which is a person lowering a phone.
+
+That comparison runs at load time, not only in the test suite. `worldFromDa3` falls back to the
+identity for a GLB carrying no alignment — harmless everywhere else, silently catastrophic here —
+so Fixed refuses and says why when the two routes disagree, and distinguishes a wrong transform
+from a wrong frame ORDER, which would place the viewer at a real camera pose belonging to a
+different moment and look entirely reasonable. (`app/src/panes/camera-track.ts`, 32 tests,
+including the table above run against the door fixture.)
+
+Two further numbers shape how the fixed view behaves. Intrinsics **drift frame to frame** as DA3
+re-estimates them (fy 253.5 → 257.6 across the door's 112 frames), so the field of view is read per
+frame rather than pinned once. And consecutive frames are a median 5–31 cm and 0.7–3.7° apart, up
+to 14° at worst, so scrubbing eases over 150 ms instead of cutting.
 
 ### Other measured numbers
 
@@ -393,6 +455,36 @@ It held 113.6 MiB at teardown, about 1.1 cents a month, and empties itself in th
     Signing inside Cloud Run has no private key, so it goes through the IAM `signBlob` API and the
     runtime account needs Token Creator **on itself** — the failure that would otherwise be
     discovered after a GPU run. `/publish-check` proves the whole chain for one HTTP request.
+
+15. **Navigation moves the rig; it does not replace the orbit camera.** Keyboard movement
+    translates the camera and its orbit pivot together, leaving the spherical offset between them
+    untouched, so dragging still orbits — around whatever you have just walked up to. The
+    alternative was a pointer-locked fly camera, which would have meant giving up orbit entirely,
+    and orbiting an object is the right tool for looking at one. The same reasoning makes the
+    arrow keys rotate that offset rather than the camera in place: they are the keyboard's version
+    of a left-drag, which is exactly what a trackpad makes hard.
+
+    **Movement keys read the key's POSITION, not the character it typed.** On macOS the precision
+    modifier is Option, and Option+W reports `∑`. Keyed on the character, the press would register
+    and its release would never match, leaving the operator gliding forever with nothing held
+    down. The character is consulted only when a sender omits the position entirely.
+
+16. **The fixed view rides the recorded pose and refuses rather than approximates.** Standing
+    where the camera stood is only worth anything if it is exact, so the poses are checked against
+    the scene file at load and the mode declines when the two disagree — including when the
+    positions are right but their ORDER is not, which would look entirely convincing while
+    disagreeing with the frame slider driving it. This is the same abstention rule as decision 9,
+    applied to a viewpoint instead of a measurement.
+
+    **Looking around is allowed; walking is not.** A fixed camera you can translate is not a fixed
+    camera, and the mode's whole claim is that the viewpoint is the camera's own. Turning your
+    head costs nothing and makes the mode usable, so yaw and pitch are applied on top of the pose
+    — yaw about the measured vertical so a clip recorded with the phone rolled still turns level.
+
+    **The video overlay is off by default.** It is the strongest thing this pane can show and the
+    easiest to misread: the cloud was reconstructed from the same frames, so a degree of agreement
+    is guaranteed by construction. It is a demonstration and a drift check, not evidence of
+    accuracy, and it should be reached for deliberately.
 
 ---
 

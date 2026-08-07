@@ -883,6 +883,18 @@ input[type="range"]::-moz-range-track {
   font-size: 11px;
   color: var(--text-dim);
   pointer-events: none;
+  /*
+    A backing panel, not a heavier shadow.
+
+    This readout sits over whatever the scene happens to be, and a text shadow only separates it
+    from a MID-tone background. Over the bright end of a point cloud — or over the ghosted video
+    frame, which is the mode where the readout states the camera's height and field of view — the
+    dim grey text washed out completely. Padding plus a translucent backing works against any
+    content, and at 55% the scene still reads through it.
+  */
+  padding: 3px 6px;
+  border-radius: 2px;
+  background: rgba(10, 10, 12, 0.55);
   text-shadow: 0 1px 2px #000;
 }
 
@@ -894,6 +906,76 @@ input[type="range"]::-moz-range-track {
 /* No ground could be established. The ▲ glyph carries this without the hue. */
 .viewport-overlay .overlay-failed {
   color: var(--accent-err);
+}
+
+/* Instructions sitting inside a readout: present, and visibly not one of the numbers. */
+.overlay-dim {
+  opacity: 0.65;
+}
+
+/* A slider in a control row must not take the row. `input[type="range"]` is width:100% so it
+   can fill the toolbars it was written for, which in a chip row would push every chip out. */
+.output-row input[type="range"] {
+  flex: none;
+  width: 56px;
+}
+
+/*
+  Where the recorded video frame lands inside the pane.
+
+  Centred and sized in percentages by the pane, from `recordedFrameRect` — the fixed view fits the
+  whole frame rather than cropping it, so in a pane of a different shape the frame occupies only
+  part of the viewport and the boundary has to be visible. Without it, "the camera saw this" would
+  silently include scene the camera never saw.
+*/
+.recorded-frame {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  /* Border inside the box, or the rectangle overshoots the pane by 2 px and its top and bottom
+     edges are clipped away exactly when the frame fills the height — which is the common case. */
+  box-sizing: border-box;
+  border: 1px solid rgba(232, 121, 160, 0.45); /* --port-camera, faint */
+  pointer-events: none;
+  z-index: 1;
+}
+
+.recorded-ghost {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+/*
+  The control list, in the pane rather than in a row.
+
+  It replaces a 45-character hint that used to sit at the right edge of the `nowrap` OUTPUT row,
+  which DESIGN.md warns clips in a narrow pane. There is more to say about the controls than that
+  line could hold, and a panel inside the viewport cannot be pushed out of the pane by its
+  neighbours.
+*/
+.key-help {
+  position: absolute;
+  right: 8px;
+  top: 6px;
+  z-index: 2;
+  max-width: calc(100% - 16px);
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: rgba(10, 10, 12, 0.9);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+.key-help b {
+  color: var(--text);
+  font-weight: 500;
 }
 
 canvas {

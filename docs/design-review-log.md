@@ -6,6 +6,63 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [PROGRESS.md](PROGRESS.md); findings below describe the state on their own date.
 
+## 2026-08-07 — keyboard navigation and the fixed camera view, 1280×800 (commit pending)
+
+Graded after Viewport 3D gained WASD movement, a VIEW row switching Free against Fixed, the video
+ghost and the Camera path layer. Recorded door fixture, `door-504px-112f`.
+
+1. Dark surfaces, no default focus rings — **PASS** (`body` computed `rgb(13,13,15)`). The amber
+   focus ring on the new chips is byte-identical to the one on the pre-existing `Points` chip,
+   measured by focusing both: `rgb(229,151,0) auto 1px`. Not introduced here, and not blue.
+2. No status by hue alone — **PASS**. The one new colour, `#e879a0`, is the legend's *camera* port
+   type carried by the path, its marker and the recorded-frame border — data, not state. Both new
+   failures lead with `▲` (`NO FIXED VIEW`, `NO CAMERA TRACK`), and Free-against-Fixed is carried
+   by the chip's background and border, not its hue.
+4. Tab strip ≤ 28 px — **PASS** (26 px).
+5. Renders, orbit changes the view, point count, gizmo — **PASS**. A drag of (315,184)→(365,200)
+   visibly rotated the cloud after the navigation rewrite, so moving the rig did not cost the
+   orbit. `1.000.000 pts`; gizmo present, and now derived from the camera's own direction rather
+   than from `controls.target`, which is stale while Fixed has the orbit controls switched off.
+7. Live status row with numbers — **PASS**.
+8. No horizontal scroll — **PASS** (`scrollWidth === clientWidth === 1280`).
+9. Fonts ≤ 12 px, mono readouts — **PASS**. Largest rendered text 11 px; overlay JetBrains Mono
+   11 px.
+10. Squint test — **PASS on darkness and density, with one honest mismatch.** Pane chrome went
+    from 81 px to **119 px** at 405 px wide: a VIEW row, plus LAYERS wrapping to two lines under a
+    fifth chip. That is 26% of a 450 px pane against roughly 10% in `reference/`. Deliberate, and
+    recorded here rather than buried — three rows of one-of-N and toggle chips is what this pane
+    now needs. Chrome is **the same 119 px in both modes**, so switching does not resize the view.
+3, 6, 11–18 — **N/A**; untouched by this work.
+
+**The narrow-pane test from PROGRESS task 4 now passes for this pane.** Forced to 180 px, every
+chip in all three rows stays inside its row (OUTPUT 19 px, VIEW 56 px, LAYERS 58 px,
+`scrollWidth === clientWidth` on each, zero escaped children) in both Free and Fixed. OUTPUT fits
+because its 45-character mouse hint was deleted rather than allowed to clip — the `Keys` panel
+inside the viewport carries the controls now, where no neighbour can push it out. The task itself
+stays open: it asks for *every* pane, and Depth 2D's OUTPUT row is untouched.
+
+**Fixed-view geometry, measured rather than eyeballed.** The recorded-frame rectangle came out
+240×432 in a 405×432 pane — aspect **0.5548** against the clip's true 280/504 = **0.5556**,
+centred to 0 px on both axes, `src=/door/frames/frame-0185.jpg` matching slider frame 185, opacity
+0.5 matching the 50% control.
+
+Fixed during the pass:
+
+- **The readout was unreadable over the ghost.** `text-shadow` alone only separates text from a
+  mid-tone background; over a bright photo the dim grey washed out completely — in the mode where
+  that line states the camera's height and field of view. It now sits on a 55% backing panel.
+- **WASD was undiscoverable** until you clicked `Keys`. The reference capture puts exactly this
+  information in the same place (`Native Camera: RMB look, WASD move`), so the VIEW row carries a
+  permanent `WASD move · arrows look`. It is dropped in Fixed, where the row also holds the ghost
+  controls and a hint cost a whole extra line — 136 px, measured, before the change.
+- **`.recorded-frame` overshot its pane by 2 px**, the border falling outside the box and being
+  clipped away exactly when the frame fills the height. `box-sizing: border-box`.
+
+Also fixed, found by testing rather than by grading: the pane opened on **empty space with the
+cloud off screen**. The mode-handoff effect also runs when the camera track finishes loading, and
+it was treating that as "leaving Fixed" and moving the orbit pivot to wherever the camera faced —
+before the controls had aimed it at the cloud. It now keys on the transition, not the current mode.
+
 ## 2026-08-07 — the floor overlay learns to show its own evidence, 1280×800 (commit pending)
 
 Graded after the floor layer became a metric grid, gained both up-axes and the points beneath the

@@ -5,11 +5,23 @@
  * output arrives on its input. Offline that is the fixture (the mock's manifest
  * points at it); against a deployed service it is the run's GLB. Same code path,
  * which is what makes swapping to the cloud a base-URL change.
+ *
+ * ## Two ways to be in the scene
+ *
+ * **Free** is the orbit camera, now with keyboard navigation (`viewport-nav.ts`) so a trackpad is
+ * not the only way through a cloud. The keys move the whole rig — camera and pivot together — so
+ * dragging still orbits exactly as it did, around whatever you have walked up to.
+ *
+ * **Fixed** puts the viewer where the recording camera stood, for the frame the slider is on
+ * (`camera-track.ts`). That makes this pane and Depth 2D the same viewpoint at the same index, so
+ * a reconstruction that has drifted stops being a feeling and becomes a visible disagreement —
+ * especially with the video ghosted over it.
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { cross, dot, normalize, signedHeight, type Vec3 } from "../../../geometry";
 import { resolveCurrentInput, resolveInput, useGraph } from "../graph/graph-store";
 import {
   VIEWER_3D_ID,
@@ -17,7 +29,18 @@ import {
   type PointCloudValue,
   type SelectionValue,
 } from "../graph/nodes";
-import type { DepthFieldValue } from "../measurement/depth-field";
+import { closestFrame, type DepthFieldValue } from "../measurement/depth-field";
+import { useMeasurementUi } from "../measurement/measurement-store";
+import {
+  LOOK_PITCH_LIMIT,
+  aimedOrientation,
+  cameraTrack,
+  ease,
+  fitFovDeg,
+  recordedFrameRect,
+  type CameraPose,
+  type CameraTrack,
+} from "./camera-track";
 import {
   buildGridSegments,
   chooseGridSpacing,
@@ -25,6 +48,14 @@ import {
   disposeSubtree,
 } from "./floor-overlay";
 import { readFloorState } from "./floor-state";
+import {
+  NAVIGATION_KEYS,
+  clampPitch,
+  navigationIntent,
+  navigationKeyFor,
+  resolveUpAxis,
+  rotateAbout,
+} from "./viewport-nav";
 import { LayerRow, OutputRow, PaneControls, type LayerChoice } from "./pane-chrome";
 import { ProvenanceBanner } from "./provenance";
 
@@ -35,15 +66,36 @@ const OUTPUTS = [
   { id: "cameras", label: "+ Cameras" },
 ];
 
+type ViewMode = "free" | "fixed";
+
+const VIEW_MODES = [
+  {
+    id: "free",
+    label: "Free",
+    title: "Orbit and walk anywhere. Drag to orbit, WASD to move, arrows to look.",
+  },
+  {
+    id: "fixed",
+    label: "Fixed",
+    title:
+      "Stand where the recording camera stood for the frame the slider is on, with its field of view. You can turn to look around; you cannot walk.",
+  },
+];
+
 const FLOOR_PLANE_LAYER = "floor-plane";
 const FLOOR_POINTS_LAYER = "floor-points";
 const FLOOR_UP_LAYER = "floor-up";
 const BELOW_PLANE_LAYER = "below-plane";
+const CAMERA_PATH_LAYER = "camera-path";
 
 /** Colours are the type legend from DESIGN.md, not decoration. See each layer below. */
 const PLANE_HUE = "#f3c969"; // --port-plane: everything that IS the fitted plane
 const NEUTRAL_HUE = "#f4f4f6"; // --emph-hi: the camera's own vertical, which is not a port type
 const ATTENTION_HUE = "#f59e0b"; // --accent-busy: the app's one "look at this" hue
+const CAMERA_HUE = "#e879a0"; // --port-camera: the legend's own hue for camera data
+
+/** How long the view takes to travel between two recorded poses, in milliseconds. */
+const POSE_TWEEN_MS = 150;
 
 /**
  * Off by default, deliberately.
@@ -77,7 +129,32 @@ const LAYERS: LayerChoice[] = [
     title:
       "Every cloud point more than 5 cm under the floor. The ground is the surface with almost nothing beneath it, so a large lit-up region means the fit landed part way up the scene.",
   },
+  {
+    id: CAMERA_PATH_LAYER,
+    label: "Camera path",
+    title:
+      "The route the camera walked, with the current frame marked and aimed. Shows which part of the cloud a frame could actually see — without having to stand in it.",
+  },
 ];
+
+/** Mutable state the render loop reads. Kept off React so the loop is never rebuilt. */
+interface LoopState {
+  keys: Set<string>;
+  hovering: boolean;
+  up: Vec3;
+  extent: number;
+  fly: boolean;
+  mode: ViewMode;
+  pose: CameraPose | undefined;
+  /** Pane width ÷ height, for fitting the recorded field of view into it. */
+  aspect: number;
+  /** How far the operator has turned from the recorded direction, radians. */
+  look: { yaw: number; pitch: number };
+  /** Frame the fixed camera is at or travelling to; null forces a fresh move. */
+  appliedIndex: number | null;
+  tween: { from: THREE.Vector3; quaternion: THREE.Quaternion; fov: number; startedAt: number } | null;
+  dragging: boolean;
+}
 
 export function Viewport3D() {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -86,6 +163,7 @@ export function Viewport3D() {
   const cameraRef = useRef<THREE.PerspectiveCamera>(null);
   const mountedRef = useRef<THREE.Object3D>(null);
   const evidenceRef = useRef<THREE.Group>(null);
+  const pathRef = useRef<THREE.Group>(null);
 
   const [frameMs, setFrameMs] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -99,6 +177,14 @@ export function Viewport3D() {
   pausedRef.current = paused;
   const [output, setOutput] = useState("points");
   const [layers, setLayers] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const [mode, setMode] = useState<ViewMode>("free");
+  const [fly, setFly] = useState(false);
+  const [ghost, setGhost] = useState(false);
+  const [ghostOpacity, setGhostOpacity] = useState(50);
+  const [showKeys, setShowKeys] = useState(false);
+  const [paneAspect, setPaneAspect] = useState(16 / 9);
+  const [track, setTrack] = useState<CameraTrack | null>(null);
+  const [trackError, setTrackError] = useState<string | null>(null);
 
   const graph = useGraph();
   const incoming = resolveInput(graph, VIEWER_3D_ID, "points");
@@ -113,12 +199,85 @@ export function Viewport3D() {
   const selection = resolveCurrentInput(graph, VIEWER_3D_ID, "selection")?.value as SelectionValue | undefined;
   const measurement = resolveCurrentInput(graph, VIEWER_3D_ID, "measurement")?.value as MeasurementValue | undefined;
 
+  // The frame slider lives in Depth 2D and publishes to the measurement store, so the two panes
+  // are the same viewpoint at the same index without either knowing about the other.
+  const ui = useMeasurementUi();
+  const descriptor = provenance ? closestFrame(provenance, ui.canonicalFrame) : undefined;
+  const pose = track && descriptor ? track.poses[descriptor.npzIndex] : undefined;
+  const fixedRefused = track?.check.kind === "rejected" ? track.check.reason : null;
+  const canRideCamera = Boolean(pose) && !fixedRefused;
+
+  /**
+   * Which way is up, from the best evidence available — and it matters more than it sounds.
+   * DA3's scene is aligned to the FIRST CAMERA, so its +Y sits 33.2° from true up on the room
+   * fixture. Walking along that would climb a third of a right angle while looking level.
+   */
+  const upAxis = useMemo(
+    () =>
+      resolveUpAxis({
+        floorNormal: ground?.plane.normal,
+        cameraUp: track?.gravity.up ?? ground?.gravity.up,
+        coherence: track?.gravity.coherence ?? ground?.gravity.coherence,
+      }),
+    [ground, track],
+  );
+
+  const loopRef = useRef<LoopState>({
+    keys: new Set(),
+    hovering: false,
+    up: [0, 1, 0],
+    extent: 10,
+    fly: false,
+    mode: "free",
+    pose: undefined,
+    aspect: 16 / 9,
+    look: { yaw: 0, pitch: 0 },
+    appliedIndex: null,
+    tween: null,
+    dragging: false,
+  });
+  // Straight assignment rather than an effect, matching `pausedRef` above: the loop must see the
+  // current values on its very next frame, not one render later.
+  loopRef.current.up = upAxis.up;
+  loopRef.current.extent = cloud?.extent ?? 10;
+  loopRef.current.fly = fly;
+  loopRef.current.mode = mode === "fixed" && canRideCamera ? "fixed" : "free";
+  loopRef.current.pose = pose;
+  loopRef.current.aspect = paneAspect;
+
   const toggleLayer = (id: string) =>
     setLayers((previous) => {
       const next = new Set(previous);
       if (!next.delete(id)) next.add(id);
       return next;
     });
+
+  /** Frame the whole cloud. The one action that always gets you back to a view you recognise. */
+  const frameCloud = useCallback(() => {
+    const controls = controlsRef.current;
+    const camera = cameraRef.current;
+    if (!controls || !camera || !cloud) return;
+    const center = new THREE.Vector3(
+      (cloud.bbox.min[0] + cloud.bbox.max[0]) / 2,
+      (cloud.bbox.min[1] + cloud.bbox.max[1]) / 2,
+      (cloud.bbox.min[2] + cloud.bbox.max[2]) / 2,
+    );
+    controls.target.copy(center);
+    camera.position.copy(center).add(new THREE.Vector3(0, -cloud.extent * 0.15, -cloud.extent * 0.6));
+    camera.near = cloud.extent / 1000;
+    camera.far = cloud.extent * 10;
+    camera.fov = 50;
+    camera.updateProjectionMatrix();
+  }, [cloud]);
+
+  /** In Fixed, the same key means "point me back where the camera pointed". */
+  const recentre = useCallback(() => {
+    if (loopRef.current.mode === "fixed") {
+      loopRef.current.look = { yaw: 0, pitch: 0 };
+      return;
+    }
+    frameCloud();
+  }, [frameCloud]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -135,6 +294,10 @@ export function Viewport3D() {
     evidence.name = "measurement-evidence";
     scene.add(evidence);
     evidenceRef.current = evidence;
+    const path = new THREE.Group();
+    path.name = "camera-path";
+    scene.add(path);
+    pathRef.current = path;
 
     const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 5000);
     camera.position.set(0, 0, 10);
@@ -150,6 +313,9 @@ export function Viewport3D() {
     gizmoScene.add(new THREE.AxesHelper(1));
     const gizmoCam = new THREE.PerspectiveCamera(40, 1, 0.1, 10);
 
+    const forward = new THREE.Vector3();
+    const offset = new THREE.Vector3();
+
     let raf = 0;
     let last = performance.now();
     let emaMs = 0;
@@ -164,18 +330,48 @@ export function Viewport3D() {
         last = now;
         return;
       }
-      emaMs = emaMs * 0.95 + (now - last) * 0.05;
+      const elapsed = now - last;
+      emaMs = emaMs * 0.95 + elapsed * 0.05;
       last = now;
       if (++tick % 30 === 0) setFrameMs(emaMs);
 
-      controls.update();
+      const state = loopRef.current;
+      // Clamped: a backgrounded tab resumes with a multi-second gap, and an unclamped step would
+      // teleport a held key halfway across the scene before the operator could let go.
+      const dt = Math.min(0.1, elapsed / 1000);
+      camera.getWorldDirection(forward);
+      const intent = navigationIntent(state.keys, {
+        forward: [forward.x, forward.y, forward.z],
+        up: state.up,
+        dt,
+        extent: state.extent,
+        fly: state.fly,
+      });
+
+      if (state.mode === "fixed" && state.pose) {
+        if (intent.yaw !== 0 || intent.pitch !== 0) {
+          state.look.yaw += intent.yaw;
+          state.look.pitch = Math.min(
+            LOOK_PITCH_LIMIT,
+            Math.max(-LOOK_PITCH_LIMIT, state.look.pitch + intent.pitch),
+          );
+        }
+        rideCamera(camera, state, now);
+      } else {
+        if (intent.active) walk(camera, controls, intent, state.up, offset);
+        controls.update();
+      }
+
       const w = host.clientWidth;
       const h = host.clientHeight;
       renderer.setViewport(0, 0, w, h);
       renderer.setScissorTest(false);
       renderer.render(scene, camera);
 
-      gizmoCam.position.copy(camera.position).sub(controls.target).setLength(3);
+      // Derived from the camera's own direction rather than from `controls.target`, which is
+      // stale while the orbit controls are switched off in Fixed.
+      camera.getWorldDirection(forward);
+      gizmoCam.position.copy(forward).multiplyScalar(-3);
       gizmoCam.lookAt(0, 0, 0);
       renderer.setViewport(w - GIZMO_PX, 0, GIZMO_PX, GIZMO_PX);
       renderer.setScissor(w - GIZMO_PX, 0, GIZMO_PX, GIZMO_PX);
@@ -190,6 +386,7 @@ export function Viewport3D() {
       renderer.setSize(w, h);
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
+      setPaneAspect(w / h);
     };
     const observer = new ResizeObserver(resize);
     observer.observe(host);
@@ -202,17 +399,102 @@ export function Viewport3D() {
       controls.dispose();
       renderer.dispose();
       evidenceRef.current = null;
+      pathRef.current = null;
       host.removeChild(renderer.domElement);
     };
   }, []);
+
+  /**
+   * Keyboard navigation, gated on the pointer being over this pane.
+   *
+   * Hover rather than click-to-focus: the point of these keys is to rescue a trackpad, and
+   * demanding a click first — plus the focus ring DESIGN.md forbids — would put an obstacle in
+   * front of the rescue. The typing guard is not optional: Objects has text fields, and the graph
+   * binds Backspace, so a window-level listener that swallowed keys indiscriminately would break
+   * both.
+   */
+  useEffect(() => {
+    const typing = (target: EventTarget | null) =>
+      target instanceof HTMLElement &&
+      (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const state = loopRef.current;
+      if (!state.hovering || typing(event.target) || event.metaKey || event.ctrlKey) return;
+      const key = navigationKeyFor(event.code, event.key);
+      if (!key) return;
+      if (key === "f") {
+        event.preventDefault();
+        recentre();
+        return;
+      }
+      // Arrows scroll the page and WASD can reach other handlers; both would fight the viewport.
+      if (NAVIGATION_KEYS.has(key)) event.preventDefault();
+      state.keys.add(key);
+    };
+    const onKeyUp = (event: KeyboardEvent) => {
+      const key = navigationKeyFor(event.code, event.key);
+      if (key) loopRef.current.keys.delete(key);
+    };
+    // A key held while the window loses focus never sends its release, so it would stick down.
+    const release = () => loopRef.current.keys.clear();
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", release);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", release);
+    };
+  }, [recentre]);
+
+  /**
+   * Hand the camera between the orbit controls and the recorded pose.
+   *
+   * Keyed on the TRANSITION, not on the current mode. This effect also runs when the camera track
+   * finishes loading — `canRideCamera` flips then — and an earlier version treated that as
+   * "leaving Fixed" and moved the orbit pivot to wherever the camera happened to face. On a fresh
+   * load that fired before the controls had aimed the camera at the cloud, so the pivot went
+   * behind it and the pane opened on empty space with a point cloud sitting off screen.
+   */
+  const previousModeRef = useRef<ViewMode>("free");
+  useEffect(() => {
+    const controls = controlsRef.current;
+    const camera = cameraRef.current;
+    const state = loopRef.current;
+    if (!controls || !camera) return;
+
+    const wasFixed = previousModeRef.current === "fixed";
+    previousModeRef.current = state.mode;
+
+    if (state.mode === "fixed") {
+      // Orbit moves the camera, which is the one thing Fixed promises not to do.
+      controls.enabled = false;
+      state.look = { yaw: 0, pitch: 0 };
+      state.appliedIndex = null;
+      return;
+    }
+
+    controls.enabled = true;
+    state.tween = null;
+    state.appliedIndex = null;
+    if (!wasFixed) return;
+
+    // Leaving Fixed, put the pivot where the operator was looking, at a distance that makes the
+    // first orbit feel like a continuation rather than a jump to somewhere else.
+    const ahead = new THREE.Vector3();
+    camera.getWorldDirection(ahead);
+    controls.target.copy(camera.position).addScaledVector(ahead, Math.max(0.5, state.extent * 0.25));
+    camera.fov = 50;
+    camera.updateProjectionMatrix();
+  }, [mode, canRideCamera]);
 
   // Swap in whatever the wire is carrying. The PointCloud node already did the
   // loading, decimation and coloring, so this is a scene-graph swap, not a parse.
   useEffect(() => {
     const scene = sceneRef.current;
-    const controls = controlsRef.current;
-    const camera = cameraRef.current;
-    if (!scene || !controls || !camera) return;
+    if (!scene) return;
 
     if (mountedRef.current) {
       scene.remove(mountedRef.current);
@@ -222,23 +504,65 @@ export function Viewport3D() {
 
     scene.add(cloud.object);
     mountedRef.current = cloud.object;
+    frameCloud();
+  }, [cloud, frameCloud]);
 
-    const center = new THREE.Vector3(
-      (cloud.bbox.min[0] + cloud.bbox.max[0]) / 2,
-      (cloud.bbox.min[1] + cloud.bbox.max[1]) / 2,
-      (cloud.bbox.min[2] + cloud.bbox.max[2]) / 2,
-    );
-    controls.target.copy(center);
-    camera.position.copy(center).add(new THREE.Vector3(0, -cloud.extent * 0.15, -cloud.extent * 0.6));
-    camera.near = cloud.extent / 1000;
-    camera.far = cloud.extent * 10;
-    camera.updateProjectionMatrix();
-  }, [cloud]);
+  /**
+   * Recover the camera poses, and check them against the scene file before believing them.
+   *
+   * `worldFromDa3` falls back to the identity for a GLB carrying no alignment, which is harmless
+   * everywhere else and would put the fixed camera confidently in the wrong place here. The check
+   * costs nothing — the frustums are already loaded — and the refusal it produces is reported
+   * rather than swallowed.
+   */
+  useEffect(() => {
+    let cancelled = false;
+    setTrack(null);
+    setTrackError(null);
+    if (!cloud || !provenance) return;
+
+    provenance
+      .loadArrays()
+      .then((arrays) => {
+        if (cancelled) return;
+        const { depth, extrinsics, intrinsics } = arrays;
+        if (!depth || !extrinsics || !intrinsics) {
+          throw new Error("this run's result file carries no camera poses");
+        }
+        const [, height, width] = depth.shape;
+        setTrack(
+          cameraTrack(
+            {
+              extrinsics: extrinsics.data,
+              intrinsics: intrinsics.data,
+              imageWidth: width,
+              imageHeight: height,
+              worldFromDa3: cloud.worldFromDa3,
+            },
+            cloud.object,
+            cloud.extent,
+          ),
+        );
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setTrackError(error instanceof Error ? error.message : String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [cloud, provenance]);
+
+  // Fall back to Free the moment riding the camera stops being possible, rather than leaving the
+  // pane in a mode it cannot honour.
+  useEffect(() => {
+    if (mode === "fixed" && !canRideCamera) setMode("free");
+  }, [mode, canRideCamera]);
 
   const showFloorPlane = layers.has(FLOOR_PLANE_LAYER);
   const showFloorPoints = layers.has(FLOOR_POINTS_LAYER);
   const showUpAxes = layers.has(FLOOR_UP_LAYER);
   const showBelow = layers.has(BELOW_PLANE_LAYER);
+  const showCameraPath = layers.has(CAMERA_PATH_LAYER);
 
   /** Radius the whole overlay shares, so grid, disc and arrows agree on one extent. */
   const floorRadius =
@@ -409,6 +733,71 @@ export function Viewport3D() {
     showBelow,
   ]);
 
+  /**
+   * The camera's route, and where it was for the frame on screen.
+   *
+   * Its own group rather than part of the evidence one because it changes on every step of the
+   * frame slider, and rebuilding a 350k-point below-plane layer at that rate would stutter.
+   */
+  useEffect(() => {
+    const group = pathRef.current;
+    if (!group) return;
+    for (const child of [...group.children]) {
+      group.remove(child);
+      disposeSubtree(child);
+    }
+    if (!track || !showCameraPath || !cloud) return;
+
+    const vertices = new Float32Array(track.poses.length * 3);
+    track.poses.forEach((item, index) => vertices.set(item.position, index * 3));
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+    // Drawn THROUGH the cloud, like the ruler and the selection above. A route that is occluded
+    // by the very scene it walked through is invisible exactly when it is most useful — the
+    // camera spends most of a walkthrough behind something.
+    const line = new THREE.Line(
+      geometry,
+      new THREE.LineBasicMaterial({
+        color: CAMERA_HUE,
+        transparent: true,
+        opacity: 0.6,
+        depthTest: false,
+      }),
+    );
+    line.renderOrder = 3;
+    line.name = "camera-route";
+    group.add(line);
+
+    if (!pose) return;
+    const markerRadius = Math.max(0.01, cloud.extent / 220);
+    const marker = new THREE.Mesh(
+      new THREE.SphereGeometry(markerRadius, 12, 8),
+      new THREE.MeshBasicMaterial({ color: CAMERA_HUE, depthTest: false }),
+    );
+    marker.position.set(...pose.position);
+    marker.renderOrder = 4;
+    marker.name = "camera-here";
+    group.add(marker);
+
+    // Aimed, not just marked: which way a frame looked is the half that says what it could see.
+    const arrow = new THREE.ArrowHelper(
+      new THREE.Vector3(...pose.forward).normalize(),
+      new THREE.Vector3(...pose.position),
+      Math.max(0.15, cloud.extent * 0.08),
+      CAMERA_HUE,
+    );
+    arrow.name = "camera-aim";
+    // ArrowHelper is a Line plus a Mesh with their own materials, so the flag has to reach both.
+    arrow.traverse((child) => {
+      const material = (child as Partial<THREE.Mesh>).material;
+      for (const item of Array.isArray(material) ? material : material ? [material] : []) {
+        item.depthTest = false;
+      }
+      child.renderOrder = 4;
+    });
+    group.add(arrow);
+  }, [track, pose, showCameraPath, cloud]);
+
   // DA3's GLB carries camera frustums alongside the points; the chip toggles them.
   // Only the frustum geometry itself may be hidden — toggling every non-Points object
   // would also hide the groups the points hang off, blanking the whole scene.
@@ -426,6 +815,11 @@ export function Viewport3D() {
     return `${cloud.pointCount.toLocaleString()} pts`;
   }, [cloud]);
 
+  const riding = mode === "fixed" && canRideCamera && pose;
+  const frameRect = riding && pose ? recordedFrameRect(pose, paneAspect) : null;
+  const cameraHeight =
+    riding && pose && ground ? signedHeight(ground.plane, pose.position) : null;
+
   return (
     <div className="pane">
       <PaneControls
@@ -436,21 +830,135 @@ export function Viewport3D() {
         onPause={() => setPaused((p) => !p)}
         extra={<span className="pane-note">{status}</span>}
       />
-      <OutputRow
-        choices={OUTPUTS}
-        active={output}
-        onSelect={setOutput}
-        hint="Left-drag=orbit, wheel=zoom, right-drag=pan"
-      />
       {/*
-        No hint text. Two earlier versions had one, and both wrapped this row to 36px against every
-        other row's 19px — first because the sentence was long, then because four chips plus any
-        hint at all will not fit a 405px pane. The chips carry their own state visibly and their
-        tooltips carry the meaning, so the hint was the part with the least to say.
+        The mouse hint that used to sit here is gone, and its absence is the point. It was a
+        45-character string at the right edge of a `nowrap` row that DESIGN.md already warns
+        clips — and there is now more to say about the controls than any one line can hold. The
+        `Keys` chip below says all of it, in a place that cannot be pushed out of the pane.
       */}
+      <OutputRow choices={OUTPUTS} active={output} onSelect={setOutput} />
+      <OutputRow
+        label="VIEW"
+        wrap
+        choices={VIEW_MODES}
+        active={riding ? "fixed" : "free"}
+        onSelect={(id) => setMode(id as ViewMode)}
+        /*
+          Short, and permanent. A control nobody knows about is not a control: WASD was reachable
+          only by first clicking `Keys`, which is a thing you click once you already suspect the
+          keys exist. The reference capture this pane is modelled on carries the same information
+          in the same place — "RMB look, WASD move" — and this row wraps, so unlike the OUTPUT row
+          it can hold a hint without pushing anything out of the pane.
+
+          Dropped in Fixed, where the row also carries the ghost controls and a hint costs a whole
+          extra line of chrome — 136 px of a 450 px pane, measured. What Fixed needs said goes in
+          the overlay instead, which is free.
+        */
+        hint={riding ? undefined : "WASD move · arrows look"}
+        extra={
+          <>
+            <button
+              className={`chip-toggle${fly ? " on" : ""}`}
+              aria-pressed={fly}
+              title="Walk keeps W level with the ground, so a glance downwards cannot bury you in the floor. Fly follows wherever you are looking."
+              onClick={() => setFly((value) => !value)}
+            >
+              {fly ? "Fly" : "Walk"}
+            </button>
+            <button
+              className={`chip-toggle${showKeys ? " on" : ""}`}
+              aria-pressed={showKeys}
+              title="Show every mouse and keyboard control this pane has"
+              onClick={() => setShowKeys((value) => !value)}
+            >
+              Keys
+            </button>
+            {riding && (
+              <>
+                <button
+                  className={`chip-toggle${ghost ? " on" : ""}`}
+                  aria-pressed={ghost}
+                  title="Lay the real video frame over the reconstruction from the same viewpoint. Where they disagree, the geometry is wrong — bear in mind the cloud was built from these same frames, so agreement is partly guaranteed."
+                  onClick={() => setGhost((value) => !value)}
+                >
+                  Video ghost
+                </button>
+                {ghost && (
+                  <>
+                    <input
+                      aria-label="Video ghost opacity"
+                      type="range"
+                      min="10"
+                      max="100"
+                      step="5"
+                      value={ghostOpacity}
+                      onChange={(event) => setGhostOpacity(Number(event.target.value))}
+                    />
+                    <span className="mono">{ghostOpacity}%</span>
+                  </>
+                )}
+              </>
+            )}
+          </>
+        }
+      />
       <LayerRow choices={LAYERS} active={layers} onToggle={toggleLayer} />
       <ProvenanceBanner field={provenance} />
-      <div className="pane-body" ref={hostRef}>
+      <div
+        className="pane-body"
+        ref={hostRef}
+        onPointerEnter={() => {
+          loopRef.current.hovering = true;
+        }}
+        onPointerLeave={() => {
+          loopRef.current.hovering = false;
+          // Otherwise a key held on the way out never sees its release and sticks down.
+          loopRef.current.keys.clear();
+          loopRef.current.dragging = false;
+        }}
+        onPointerDown={(event) => {
+          if (loopRef.current.mode !== "fixed") return;
+          loopRef.current.dragging = true;
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }}
+        onPointerMove={(event) => {
+          const state = loopRef.current;
+          if (!state.dragging || state.mode !== "fixed") return;
+          const height = event.currentTarget.clientHeight || 1;
+          // A full turn per screen height, matching what the orbit controls do in Free, and in
+          // the same direction: dragging right slides the scene right, so the view turns left.
+          const rate = (2 * Math.PI) / height;
+          state.look.yaw += event.movementX * rate;
+          state.look.pitch = Math.min(
+            LOOK_PITCH_LIMIT,
+            Math.max(-LOOK_PITCH_LIMIT, state.look.pitch - event.movementY * rate),
+          );
+        }}
+        onPointerUp={(event) => {
+          loopRef.current.dragging = false;
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+      >
+        {frameRect && (
+          // Exactly the rectangle the recorded frame occupies, so the ghost and the boundary
+          // marker cannot claim an alignment they do not have.
+          <div
+            className="recorded-frame"
+            style={{
+              width: `${frameRect.widthFraction * 100}%`,
+              height: `${frameRect.heightFraction * 100}%`,
+            }}
+          >
+            {ghost && descriptor && (
+              <img
+                className="recorded-ghost"
+                src={descriptor.rgbUrl}
+                alt=""
+                style={{ opacity: ghostOpacity / 100 }}
+              />
+            )}
+          </div>
+        )}
         {cloud && (
           <div className="viewport-overlay">
             {/*
@@ -493,6 +1001,55 @@ export function Viewport3D() {
                 {measurement.rulerKind === "extent" ? "EXTENT" : "HEIGHT ABOVE FLOOR"} <b>{measurement.rawM.toFixed(3)} m</b> · spread ±{measurement.internalSpreadM.toFixed(3)} m
               </>
             )}
+            {/*
+              Which vertical the keys are walking along. Never silent, because "up" here is
+              evidence rather than a convention, and a scene whose up is a guess navigates
+              differently from one whose up was measured.
+            */}
+            {floor.kind !== "absent" || measurement ? <br /> : null}
+            {riding && pose ? (
+              <>
+                FIXED · FRAME {descriptor?.canonicalIndex ?? "—"} · {pose.vfovDeg.toFixed(1)}° VFOV
+                {cameraHeight !== null && <> · {cameraHeight.toFixed(2)} m ABOVE FLOOR</>}
+                <br />
+                <span className="overlay-dim">drag or arrows to look · WASD off · F re-aims</span>
+              </>
+            ) : (
+              <>
+                FREE · {fly ? "FLY" : "WALK"} · UP FROM{" "}
+                {upAxis.source === "floor"
+                  ? "FITTED FLOOR"
+                  : upAxis.source === "camera"
+                    ? "CAMERA PATH"
+                    : "SCENE +Y (UNMEASURED)"}
+              </>
+            )}
+            {fixedRefused && (
+              <>
+                <br />
+                <span className="overlay-failed">▲ NO FIXED VIEW — {fixedRefused}</span>
+              </>
+            )}
+            {trackError && (
+              <>
+                <br />
+                <span className="overlay-failed">▲ NO CAMERA TRACK — {trackError}</span>
+              </>
+            )}
+          </div>
+        )}
+        {showKeys && (
+          <div className="key-help">
+            <b>Move</b> W A S D · <b>Up/down</b> E Q · <b>Look</b> arrows or drag
+            <br />
+            <b>Faster</b> Shift · <b>Finer</b> Alt · <b>Zoom</b> wheel
+            <br />
+            <b>F</b> {riding ? "re-aim at the recorded direction" : "frame the whole cloud"}
+            <br />
+            <span className="overlay-dim">
+              Keys act while the pointer is over this pane. Movement is off in Fixed, which is what
+              keeps the viewpoint the camera's own.
+            </span>
           </div>
         )}
         {!cloud && (
@@ -503,4 +1060,94 @@ export function Viewport3D() {
       </div>
     </div>
   );
+}
+
+/**
+ * Move the whole rig — camera and pivot together.
+ *
+ * Translating both is what lets orbit survive navigation: the spherical offset between them is
+ * untouched, so a drag after a walk orbits around the thing you walked up to rather than snapping
+ * back to where the pivot used to be. Look is applied as a rotation of that same offset, which is
+ * the keyboard's version of exactly what a left-drag does.
+ */
+function walk(
+  camera: THREE.PerspectiveCamera,
+  controls: OrbitControls,
+  intent: ReturnType<typeof navigationIntent>,
+  up: Vec3,
+  scratch: THREE.Vector3,
+): void {
+  const offset = scratch.copy(camera.position).sub(controls.target);
+  const radius = offset.length();
+  if (radius > 1e-6 && (intent.yaw !== 0 || intent.pitch !== 0)) {
+    let direction: Vec3 = [-offset.x / radius, -offset.y / radius, -offset.z / radius];
+    if (intent.yaw !== 0) direction = rotateAbout(direction, up, intent.yaw);
+    if (intent.pitch !== 0) {
+      const right = normalize(cross(direction, up));
+      if (right) {
+        const polar = Math.acos(Math.min(1, Math.max(-1, dot(direction, up))));
+        const applied = clampPitch(polar, intent.pitch);
+        if (applied !== 0) direction = rotateAbout(direction, right, applied);
+      }
+    }
+    camera.position.set(
+      controls.target.x - direction[0] * radius,
+      controls.target.y - direction[1] * radius,
+      controls.target.z - direction[2] * radius,
+    );
+  }
+
+  const [dx, dy, dz] = intent.move;
+  if (dx !== 0 || dy !== 0 || dz !== 0) {
+    camera.position.x += dx;
+    camera.position.y += dy;
+    camera.position.z += dz;
+    controls.target.x += dx;
+    controls.target.y += dy;
+    controls.target.z += dz;
+  }
+}
+
+/**
+ * Put the camera where the recording camera was, easing between frames.
+ *
+ * The measured step between consecutive frames is a median 5–31 cm and up to 14° of turn, so
+ * snapping reads as a glitch rather than as movement. The eased travel is short enough that
+ * scrubbing still feels immediate, and the look offset keeps applying throughout it — turning
+ * your head mid-step should not be interrupted by the step.
+ */
+function rideCamera(camera: THREE.PerspectiveCamera, state: LoopState, now: number): void {
+  const pose = state.pose;
+  if (!pose) return;
+
+  const target = new THREE.Vector3(...pose.position);
+  const orientation = aimedOrientation(pose, state.up, state.look.yaw, state.look.pitch);
+  const fov = fitFovDeg(pose, state.aspect);
+
+  if (state.appliedIndex !== pose.npzIndex) {
+    state.appliedIndex = pose.npzIndex;
+    state.tween = {
+      from: camera.position.clone(),
+      quaternion: camera.quaternion.clone(),
+      fov: camera.fov,
+      startedAt: now,
+    };
+  }
+
+  if (state.tween) {
+    const t = ease((now - state.tween.startedAt) / POSE_TWEEN_MS);
+    camera.position.lerpVectors(state.tween.from, target, t);
+    camera.quaternion.slerpQuaternions(state.tween.quaternion, orientation, t);
+    camera.fov = state.tween.fov + (fov - state.tween.fov) * t;
+    camera.updateProjectionMatrix();
+    if (t >= 1) state.tween = null;
+    return;
+  }
+
+  camera.position.copy(target);
+  camera.quaternion.copy(orientation);
+  if (Math.abs(camera.fov - fov) > 1e-4) {
+    camera.fov = fov;
+    camera.updateProjectionMatrix();
+  }
 }

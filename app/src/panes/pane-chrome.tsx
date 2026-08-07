@@ -13,6 +13,8 @@ import { hidePane, toggleFocus, useDock } from "../lib/dock-store";
 export interface OutputChoice {
   id: string;
   label: string;
+  /** Hover text. A mode that changes what the whole pane means needs saying what it means. */
+  title?: string;
 }
 
 export interface LayerChoice {
@@ -120,30 +122,47 @@ export function LayerRow({
   );
 }
 
+/**
+ * One-of-N chips under a label.
+ *
+ * `label` and `wrap` exist so a pane can carry a SECOND such row without a second component:
+ * Viewport 3D asks both "which view of the wire" (OUTPUT) and "where am I standing" (VIEW), and
+ * those are different questions in the sense LayerRow's note describes. Any row that gains
+ * trailing controls should set `wrap`, for the reason given there — `.output-row` clips.
+ */
 export function OutputRow({
   choices,
   active,
   onSelect,
   hint,
+  label = "OUTPUT",
+  wrap = false,
+  extra,
 }: {
   choices: OutputChoice[];
   active: string;
   onSelect: (id: string) => void;
-  hint: string;
+  hint?: string;
+  label?: string;
+  wrap?: boolean;
+  extra?: ReactNode;
 }) {
   return (
-    <div className="output-row">
-      <span className="output-label">OUTPUT</span>
+    <div className={`output-row${wrap ? " layer-row" : ""}`}>
+      <span className="output-label">{label}</span>
       {choices.map((choice) => (
         <button
           key={choice.id}
           className={`chip-toggle${choice.id === active ? " on" : ""}`}
+          aria-pressed={choice.id === active}
+          title={choice.title}
           onClick={() => onSelect(choice.id)}
         >
           {choice.label}
         </button>
       ))}
-      <span className="output-hint">({hint})</span>
+      {extra}
+      {hint !== undefined && <span className="output-hint">({hint})</span>}
     </div>
   );
 }
