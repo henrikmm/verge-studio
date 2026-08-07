@@ -10,6 +10,11 @@ export default defineConfig({
   publicDir: fileURLToPath(new URL("../fixtures", import.meta.url)),
   server: { port: 5173, strictPort: true },
   // geometry/ lives outside app/ (it is the one piece with no browser dependency), but
-  // the app imports it and it must be typechecked and tested by the same loop.
-  test: { environment: "node", include: ["src/**/*.test.ts", "../geometry/**/*.test.ts"] },
+  // the app imports it and it must be typechecked and tested by the same loop. scripts/ joins
+  // it for the same reason: the inspector projects points onto frames using the project's own
+  // camera convention, and a drift between the two would draw a plausible, wrong picture.
+  test: {
+    environment: "node",
+    include: ["src/**/*.test.ts", "../geometry/**/*.test.ts", "../scripts/**/*.test.mjs"],
+  },
 });

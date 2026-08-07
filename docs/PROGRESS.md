@@ -57,16 +57,17 @@ fit is a coin flip, and nothing currently reports it.
 
 **Gate.** User confirmation, for the final wording and behaviour of the warning.
 
-**Evidence / starting points.** `geometry/plane.ts` already scores competing hypotheses; the
-margin between them is computed and discarded. A seeded fit (`fitPlaneFromSeeds`) exists and has
-never been reachable from the interface — add that route only if task 1 shows the automatic
-evidence genuinely is not enough. Abstention must propagate: a measurement resting on an
-untrustworthy ground should refuse, not guess.
+**Evidence / starting points.** `geometry/plane.ts` returns every hypothesis it scores, and
+`scripts/inspect.mjs floor <id>` now reports the separation between the best two — four cases are
+in REGISTRY section 3, and every thin fit is a narrow win. A seeded fit
+(`fitPlaneFromSeeds`) exists and has never been reachable from the interface — add that route only
+if task 1 shows the automatic evidence is not enough. Abstention must propagate: a measurement
+resting on an untrustworthy ground should refuse, not guess.
 
-A live example is already on disk and costs nothing to look at: the door run saved on 2026-08-06
-(`~/verge-runs/20260806-173802-d354a2`) fits a floor with **3.1% support**, against the 24.6% of
-the run beside it. Whatever the threshold turns out to be, that run is the kind of case it has to
-judge, and it needs no cloud session to study.
+Two live examples are on disk and cost nothing to look at: the run saved on 2026-08-06
+(`~/verge-runs/20260806-173802-d354a2`) fits a floor with **3.1% support**, and the committed
+fixture `room-504px-112f` passes as `ok` at **2.4% support, 19.3° tilt, 7.7% below and a
+separation of 0.059** — a coin flip. Those are the cases any threshold has to judge.
 
 The **display** half of this landed on 2026-08-07. A refusal reaches the viewport as `▲ NO FLOOR`
 carrying the fit's own message, the readout leads with `% BELOW`, and the `Below plane` layer
@@ -77,8 +78,7 @@ Today it refuses only on the gates already inside `fitGroundPlaneRobust`, and th
 fit at **6.2% support, 18° tilt and 6.6% below** passes as `ok` and is drawn exactly like the
 14.6%-support fit beside it, with nothing in the interface calling it thin. That case is
 reproducible on the door fixture with `inlierDistance 0.1, maxTiltDeg 45, stride 32,
-iterations 250` and costs nothing to study. The margin between competing hypotheses is still
-computed and discarded.
+iterations 250`, costs nothing to study, and its separation is measured.
 
 **Done when.** Outdoor evidence from task 1 has been used to set the thresholds, "ground cannot be
 established" is a first-class result that downstream steps respect, and the user has agreed the

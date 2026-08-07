@@ -103,6 +103,12 @@ Around that spine:
 - **Cloud state is visible before money is spent.** The Inspector reports whether gcloud is
   signed in, whether the service exists, and whether the next deploy is the quick path or the
   twenty-minute one. Deploy and Delete service both run from the app and stream their logs.
+- **A reconstruction can be read without opening the app.** `scripts/inspect.mjs` reports a run's
+  sampling and cost, its cloud, and its ground fit, and draws that cloud — in its own colours, by
+  height above the fitted floor, by plane inlier, or with a selection picked out — from any of five
+  fixed viewpoints. It also draws the source frames as one numbered sheet, one frame's depth, and,
+  the check no number can stand in for, **a selection painted onto the photograph it came from**.
+  No browser, no WebGL, no network. (Nine commands, 19 tests, `scripts/inspect/`.)
 
 ### Verified end to end on real hardware
 
@@ -129,7 +135,7 @@ no service and exactly one image. Whole session: **25 minutes of instance lifeti
 | Dev server | `app/vite-plugins/` | Local file routes, the offline mock, the run registry, cloud control, the job runner |
 | Geometry | `geometry/` | Only what the model does not provide: gravity, ground plane, back-projection, measurement, uncertainty, calibration |
 | Service | `server/` | The FastAPI wrapper around the model, and its Docker image |
-| Scripts | `scripts/` | Deploy, teardown, frame extraction, run download, verification |
+| Scripts | `scripts/` | Deploy, teardown, frame extraction, run download, verification, run inspection |
 | Instructions | `AGENTS.md`, `.agents/skills/` | Shared, tool-neutral working rules and workflows |
 
 **The documentation is checked mechanically**, by `scripts/check-docs.mjs` inside `verify.sh`:
@@ -137,6 +143,16 @@ unfinished work may only appear in the task list, each task must answer all five
 questions with a recognised gate, relative links must resolve, the Claude instructions must import
 the shared ones, and four files have line and byte budgets. The task list reached 1,635 lines once
 because finished work was never removed; the budgets are what stop that happening again.
+
+**The inspector cannot drift from the app, by construction.** `scripts/inspect/bridge.ts` is a
+list of re-exports and nothing else; esbuild compiles it in memory on every run (~40 ms, no build
+artefact to go stale). No geometry is written inside the inspector, so a change to `geometry/`
+reaches it at once and a picture that disagrees with the pane beside it is not possible. Its
+images are drawn into a flat RGB buffer and encoded by ffmpeg, which this project already requires
+— no GPU, no headless browser, no new dependency, and identical bytes for identical input, which
+is what makes two renders of one cloud worth comparing. The projection that puts a selected point
+on a photograph is tested as a **round trip against `backprojectMask`**, because a camera
+convention that had drifted would draw a wrong picture that looked entirely plausible.
 
 **The graph is content-addressed.** Every node computes a key from its parameters and its
 inputs' keys. Changing something restamps that node and everything downstream of it, and nothing
@@ -275,6 +291,30 @@ Two further numbers shape how the fixed view behaves. Intrinsics **drift frame t
 re-estimates them (fy 253.5 → 257.6 across the door's 112 frames), so the field of view is read per
 frame rather than pinned once. And consecutive frames are a median 5–31 cm and 0.7–3.7° apart, up
 to 14° at worst, so scrubbing eases over 150 ms instead of cutting.
+
+### How nearly the ground fit chose differently
+
+`fitGroundPlaneRobust` has always returned every hypothesis it scored, and nothing has ever
+compared them. Measured 2026-08-07 with `scripts/inspect.mjs floor`, which now does the
+subtraction. **Separation** is the quality gap divided by the two scores' combined size, so 0 is a
+dead heat and 1 is no contest; it is defined that way rather than as a percentage of the winner
+because `groundPlaneQuality` is a penalty and its scores are usually negative.
+
+| Case | Support | Tilt | Below | Separation |
+|---|---|---|---|---|
+| `door-504px-112f`, the app's own defaults | 14.6% | 11.8° | 0.0% | **0.417** |
+| `door-504px-112f` at `inlier 0.1, tilt 45, stride 32, iterations 250` | 6.2% | 18.0° | 6.6% | **0.218** |
+| Saved run `20260806-173802-d354a2`, the app's own defaults | 3.1% | 4.9° | 1.1% | **0.200** |
+| `room-504px-112f`, the app's own defaults | 2.4% | 19.3° | 7.7% | **0.059** |
+
+Four cases are not a threshold and must not be quoted as one. What they show is that every thin
+fit is also a narrow win, and that 0.42 against 0.06 is not a subtle difference.
+
+The last row is the one to look at. `room-504px-112f` is a **committed fixture that passes as
+`ok` today** while being the worst fit on this disk on every measure, and its runner-up has *more*
+support than the winner — the decision turns entirely on the tilt and below-plane penalties. It is
+a coin flip the interface currently reports as a floor, it costs nothing to study, and it was
+found by running `scripts/inspect.mjs floor` across every fixture on 2026-08-07.
 
 ### Other measured numbers
 

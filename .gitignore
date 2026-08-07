@@ -31,6 +31,10 @@ fixtures/door/**
 !fixtures/door/**/manifest.json
 !fixtures/door/**/SHA256SUMS
 
+# Pictures drawn by scripts/inspect.mjs. Evidence for the session that made them, and cheap to
+# regenerate from a fixture that is already on disk — so never committed.
+.inspect/
+
 # OS / editor
 .DS_Store
 .vscode/

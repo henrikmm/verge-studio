@@ -119,7 +119,7 @@ Every change ends in the loop that matches it:
 |---|---|
 | Any code | `scripts/verify.sh` — types, unit tests, fixture smoke, documentation check |
 | The interface | The design-review workflow in `.agents/skills/design-review/SKILL.md` |
-| Viewer or geometry | Load a saved run and assert real numbers: point count, bounding box, depth range |
+| Viewer or geometry | `scripts/inspect.mjs` — assert real numbers on a real run, and look at it |
 | The deployed service | `scripts/smoke-infer.sh` — one short run, never a loop of GPU runs |
 
 Run `scripts/verify.sh` with a Python environment that has FastAPI installed, or the server check
@@ -131,6 +131,24 @@ leave it as a task. An untested seam described as working is worse than one desc
 
 Commit at the end of each coherent unit. Subject line: short, imperative, 72 characters or fewer,
 no long body. Never commit dependencies, model weights, secrets, or media over 5 MB.
+
+## Looking at a run without opening the app
+
+Most questions here are about a reconstruction, not the interface. `scripts/inspect.mjs` answers
+them from the app's own runs and geometry, over no network — so it cannot disagree, or spend money.
+
+| What you want to know | Command |
+|---|---|
+| What is on this disk, what is this run, is its cloud sane? | `inspect runs` · `run <id>` · `cloud <id>` |
+| Where did the floor land, and how close was the runner-up? | `inspect floor <id>` |
+| What does the scene look like, and is the floor under the furniture or through it? | `inspect view <id> --view iso --colour height` · `--view floor --colour inlier` |
+| What was the model actually given? | `inspect frames <id>` |
+| **Is what I selected really the thing I think it is?** | `inspect select <id> --band 0.02,0.6` |
+| All of it, when the broken stage is not yet known | `inspect explain <id>` |
+
+`node scripts/inspect.mjs` lists the rest; images land in `.inspect/`, path printed. **Open them.**
+A height statistic over ground is only a measurement of grass if that ground is grass, and only the
+selection drawn on the source frame can tell you whether it is.
 
 ## How to write here
 
