@@ -18,6 +18,12 @@ import {
   type SelectionValue,
 } from "../graph/nodes";
 import type { DepthFieldValue } from "../measurement/depth-field";
+import {
+  buildGridSegments,
+  chooseGridSpacing,
+  collectPointsBelow,
+  disposeSubtree,
+} from "./floor-overlay";
 import { readFloorState } from "./floor-state";
 import { LayerRow, OutputRow, PaneControls, type LayerChoice } from "./pane-chrome";
 import { ProvenanceBanner } from "./provenance";
@@ -31,6 +37,13 @@ const OUTPUTS = [
 
 const FLOOR_PLANE_LAYER = "floor-plane";
 const FLOOR_POINTS_LAYER = "floor-points";
+const FLOOR_UP_LAYER = "floor-up";
+const BELOW_PLANE_LAYER = "below-plane";
+
+/** Colours are the type legend from DESIGN.md, not decoration. See each layer below. */
+const PLANE_HUE = "#f3c969"; // --port-plane: everything that IS the fitted plane
+const NEUTRAL_HUE = "#f4f4f6"; // --emph-hi: the camera's own vertical, which is not a port type
+const ATTENTION_HUE = "#f59e0b"; // --accent-busy: the app's one "look at this" hue
 
 /**
  * Off by default, deliberately.
@@ -43,13 +56,26 @@ const FLOOR_POINTS_LAYER = "floor-points";
 const LAYERS: LayerChoice[] = [
   {
     id: FLOOR_PLANE_LAYER,
-    label: "Floor plane",
-    title: "The fitted ground surface, clipped to the evidence that supports it.",
+    label: "Floor grid",
+    title:
+      "The fitted ground as a metric grid, clipped to the evidence supporting it. Straight lines converge in perspective, so this is what shows whether the floor is level and sits at the base of the walls.",
   },
   {
     id: FLOOR_POINTS_LAYER,
     label: "Floor points",
     title: "The cloud points the plane rests on — where its evidence actually is.",
+  },
+  {
+    id: FLOOR_UP_LAYER,
+    label: "Up axes",
+    title:
+      "Two arrows from the plane's centre: the floor's own normal, and the vertical derived from the camera path. The angle between them is the reported tilt, drawn.",
+  },
+  {
+    id: BELOW_PLANE_LAYER,
+    label: "Below plane",
+    title:
+      "Every cloud point more than 5 cm under the floor. The ground is the surface with almost nothing beneath it, so a large lit-up region means the fit landed part way up the scene.",
   },
 ];
 
@@ -211,17 +237,20 @@ export function Viewport3D() {
 
   const showFloorPlane = layers.has(FLOOR_PLANE_LAYER);
   const showFloorPoints = layers.has(FLOOR_POINTS_LAYER);
+  const showUpAxes = layers.has(FLOOR_UP_LAYER);
+  const showBelow = layers.has(BELOW_PLANE_LAYER);
+
+  /** Radius the whole overlay shares, so grid, disc and arrows agree on one extent. */
+  const floorRadius =
+    ground && cloud ? Math.max(0.2, Math.min(cloud.extent * 0.35, ground.evidence.radius * 1.05)) : 0;
+  const gridSpacing = chooseGridSpacing(floorRadius);
 
   useEffect(() => {
     const evidence = evidenceRef.current;
     if (!evidence) return;
     for (const child of [...evidence.children]) {
       evidence.remove(child);
-      if (child instanceof THREE.Points || child instanceof THREE.Line || child instanceof THREE.Mesh) {
-        child.geometry.dispose();
-        const materials = Array.isArray(child.material) ? child.material : [child.material];
-        for (const material of materials) material.dispose();
-      }
+      disposeSubtree(child);
     }
 
     // Built only when switched on, rather than built and hidden: a layer nobody asked for should
@@ -232,7 +261,7 @@ export function Viewport3D() {
       const support = new THREE.Points(
         evidenceGeometry,
         new THREE.PointsMaterial({
-          color: "#f3c969",
+          color: PLANE_HUE,
           size: Math.max(0.004, cloud.extent / 900),
           sizeAttenuation: true,
           transparent: true,
@@ -244,16 +273,19 @@ export function Viewport3D() {
     }
 
     if (ground && cloud && showFloorPlane) {
-      const radius = Math.min(cloud.extent * 0.35, ground.evidence.radius * 1.05);
-      const geometry = new THREE.CircleGeometry(Math.max(0.2, radius), 64);
-      const material = new THREE.MeshBasicMaterial({
-        color: "#f3c969",
-        transparent: true,
-        opacity: 0.09,
-        side: THREE.DoubleSide,
-        depthWrite: false,
-      });
-      const disc = new THREE.Mesh(geometry, material);
+      // A faint fill so the floor reads as a surface, and the grid on top so it reads as a LEVEL
+      // one. The fill alone was the old overlay: at 9% opacity it was a smudge, and a flat wash
+      // carries no perspective cue at all, which is exactly the cue tilt is visible in.
+      const disc = new THREE.Mesh(
+        new THREE.CircleGeometry(floorRadius, 64),
+        new THREE.MeshBasicMaterial({
+          color: PLANE_HUE,
+          transparent: true,
+          opacity: 0.06,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      );
       disc.name = "fitted-floor";
       disc.position.set(...ground.evidence.center);
       disc.quaternion.setFromUnitVectors(
@@ -261,6 +293,65 @@ export function Viewport3D() {
         new THREE.Vector3(...ground.plane.normal),
       );
       evidence.add(disc);
+
+      const segments = buildGridSegments(
+        ground.plane,
+        ground.evidence.center,
+        floorRadius,
+        gridSpacing,
+      );
+      const gridGeometry = new THREE.BufferGeometry();
+      gridGeometry.setAttribute("position", new THREE.BufferAttribute(segments, 3));
+      const grid = new THREE.LineSegments(
+        gridGeometry,
+        new THREE.LineBasicMaterial({ color: PLANE_HUE, transparent: true, opacity: 0.45 }),
+      );
+      grid.name = "fitted-floor-grid";
+      evidence.add(grid);
+    }
+
+    if (ground && cloud && showUpAxes) {
+      // Same origin and same length for both, so the ONLY difference the eye has to read is the
+      // angle between them — which is the tilt the readout states in degrees.
+      const origin = new THREE.Vector3(...ground.evidence.center);
+      const length = Math.max(0.3, floorRadius * 0.8);
+      for (const [name, direction, color] of [
+        ["floor-normal", ground.plane.normal, PLANE_HUE],
+        ["camera-up", ground.gravity.up, NEUTRAL_HUE],
+      ] as const) {
+        const arrow = new THREE.ArrowHelper(
+          new THREE.Vector3(...direction).normalize(),
+          origin,
+          length,
+          color,
+          length * 0.16,
+          length * 0.08,
+        );
+        arrow.name = name;
+        evidence.add(arrow);
+      }
+    }
+
+    if (ground && cloud && showBelow) {
+      // The definition of ground, drawn. Same 5 cm test the reported BELOW percentage uses, so the
+      // picture and the number cannot disagree.
+      const below = collectPointsBelow(cloud.positions, ground.plane);
+      if (below.length > 0) {
+        const belowGeometry = new THREE.BufferGeometry();
+        belowGeometry.setAttribute("position", new THREE.BufferAttribute(below, 3));
+        const points = new THREE.Points(
+          belowGeometry,
+          new THREE.PointsMaterial({
+            color: ATTENTION_HUE,
+            size: Math.max(0.004, cloud.extent / 900),
+            sizeAttenuation: true,
+            transparent: true,
+            opacity: 0.85,
+          }),
+        );
+        points.name = "points-below-floor";
+        evidence.add(points);
+      }
     }
 
     if (selection && selection.points.length > 0) {
@@ -305,7 +396,18 @@ export function Viewport3D() {
         evidence.add(marker);
       }
     }
-  }, [cloud, ground, measurement, selection, showFloorPlane, showFloorPoints]);
+  }, [
+    cloud,
+    ground,
+    measurement,
+    selection,
+    floorRadius,
+    gridSpacing,
+    showFloorPlane,
+    showFloorPoints,
+    showUpAxes,
+    showBelow,
+  ]);
 
   // DA3's GLB carries camera frustums alongside the points; the chip toggles them.
   // Only the frustum geometry itself may be hidden — toggling every non-Points object
@@ -341,12 +443,12 @@ export function Viewport3D() {
         hint="Left-drag=orbit, wheel=zoom, right-drag=pan"
       />
       {/*
-        Hint kept to two words on purpose. The first version read "off by default — switch on to
-        check the fit", which wrapped this row to 36px against every other row's 19px and pushed
-        the pane's chrome to 98px of a 567px pane. The reference captures keep viewport hints
-        terse and inline; what each layer means belongs in the chips' own tooltips.
+        No hint text. Two earlier versions had one, and both wrapped this row to 36px against every
+        other row's 19px — first because the sentence was long, then because four chips plus any
+        hint at all will not fit a 405px pane. The chips carry their own state visibly and their
+        tooltips carry the meaning, so the hint was the part with the least to say.
       */}
-      <LayerRow choices={LAYERS} active={layers} onToggle={toggleLayer} hint="off by default" />
+      <LayerRow choices={LAYERS} active={layers} onToggle={toggleLayer} />
       <ProvenanceBanner field={provenance} />
       <div className="pane-body" ref={hostRef}>
         {cloud && (
@@ -356,8 +458,23 @@ export function Viewport3D() {
               one status convention in the app: the glyph carries the meaning and the hue only
               reinforces it, so this survives a greyscale screenshot.
             */}
+            {/*
+              BELOW leads with SUPPORT because it is the number that decides whether this is the
+              ground at all — 4.3% under the room fixture's real floor against 60.6% under the
+              wrong mid-scene plane. It was computed on every fit since the rule was written, and
+              until now it was recorded into the export file and shown in no pane at all.
+
+              Second line carries the two things that qualify the first: how much the frames agreed
+              about which way is up (a tilt measured against an incoherent vertical means little),
+              and the grid's square size, which is only meaningful while the grid is drawn.
+            */}
             {floor.kind === "ok" && (
-              <>FLOOR {(floor.ground.fit.inlierFraction * 100).toFixed(1)}% SUPPORT · {floor.ground.fit.tiltDeg.toFixed(1)}° TILT · {(floor.ground.fit.rmse * 100).toFixed(1)} cm RMSE</>
+              <>
+                FLOOR {(floor.ground.fit.inlierFraction * 100).toFixed(1)}% SUPPORT · {(floor.ground.fit.belowFraction * 100).toFixed(1)}% BELOW · {floor.ground.fit.tiltDeg.toFixed(1)}° TILT · {(floor.ground.fit.rmse * 100).toFixed(1)} cm RMSE
+                <br />
+                CAMERA UP {floor.ground.gravity.coherence.toFixed(2)} COHERENCE
+                {showFloorPlane && <> · GRID {gridSpacing} m</>}
+              </>
             )}
             {floor.kind === "stale" && (
               <span className="overlay-stale">◐ FLOOR STALE — re-run the graph to see it</span>

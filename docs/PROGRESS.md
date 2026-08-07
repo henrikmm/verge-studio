@@ -68,13 +68,17 @@ A live example is already on disk and costs nothing to look at: the door run sav
 the run beside it. Whatever the threshold turns out to be, that run is the kind of case it has to
 judge, and it needs no cloud session to study.
 
-The **display** half of this already landed on 2026-08-07: a refusal now reaches the viewport as
-`▲ NO FLOOR` carrying the fit's own message (`app/src/panes/floor-state.ts`). What remains is the
-harder half — deciding *when* to refuse. Today the app only refuses on the gates already inside
-`fitGroundPlaneRobust`; a fit that squeaks past them at 4.7% support is drawn exactly like one at
-14.6%, with nothing on screen marking it as thin. The margin between hypotheses is still computed
-and discarded, and `belowFraction` — the statistic the whole ground rule rests on — is written
-into exported evidence and shown in no pane at all.
+The **display** half of this landed on 2026-08-07. A refusal reaches the viewport as `▲ NO FLOOR`
+carrying the fit's own message, the readout leads with `% BELOW`, and the `Below plane` layer
+draws the evidence for it (`app/src/panes/floor-state.ts`, `floor-overlay.ts`). Judging a fit by
+eye is now possible; what remains is the harder half — making the app judge one *itself*.
+
+Today it refuses only on the gates already inside `fitGroundPlaneRobust`, and those are loose: a
+fit at **6.2% support, 18° tilt and 6.6% below** passes as `ok` and is drawn exactly like the
+14.6%-support fit beside it, with nothing in the interface calling it thin. That case is
+reproducible on the door fixture with `inlierDistance 0.1, maxTiltDeg 45, stride 32,
+iterations 250` and costs nothing to study. The margin between competing hypotheses is still
+computed and discarded.
 
 **Done when.** Outdoor evidence from task 1 has been used to set the thresholds, "ground cannot be
 established" is a first-class result that downstream steps respect, and the user has agreed the
@@ -93,22 +97,18 @@ now a fit can be reported at a tilt its own gate should have excluded.
 
 **Gate.** User confirmation — this changes fit behaviour, and therefore possibly measured numbers.
 
-**Evidence / starting points.** Measured on 2026-08-07 against `door-504px-112f`: with
-`maxTiltDeg` set to **10°**, the fit returned a plane reported at **11.3°**. The gate rejects a
-candidate at `geometry/plane.ts:385`, but the least-squares refinement that follows
-(`plane.ts:418-426`) can rotate the plane past the limit, and the tilt finally reported
-(`plane.ts:457`) is computed on the refined plane and never re-checked. `fitGroundPlaneRobust`
-then only penalises tilt softly, so such a plane can still win its hypothesis contest.
+**Evidence / starting points.** Measured on 2026-08-07 against `door-504px-112f`: `maxTiltDeg`
+set to **10°** returned a plane reported at **11.3°**. The gate rejects a candidate at
+`geometry/plane.ts:385`, the least-squares refinement after it (`plane.ts:418-426`) can rotate the
+plane past the limit, and the reported tilt (`plane.ts:457`) is never re-checked;
+`fitGroundPlaneRobust` only penalises tilt softly, so such a plane can still win.
 
-Two candidate fixes, and the choice is a real one: re-check tilt after refinement and reject,
-which makes the gate honest but may reject floors that are currently accepted; or keep the
-behaviour and relabel the control as a limit on the *proposal*, which is free but leaves a number
-that can exceed its own bound. Decide this after task 1 — an outdoor clip is exactly the case
-that would expose which behaviour is wanted, and guessing now would be guessing.
+Either re-check tilt after refinement and reject — honest, but may reject floors accepted today —
+or relabel the control as a limit on the *proposal*. Decide after task 1: an outdoor clip is what
+would show which behaviour is wanted, and guessing now would be guessing.
 
-**Done when.** The reported tilt cannot exceed the configured gate, or the control and its
-documentation say plainly that the gate applies to the proposal only, with the outdoor evidence
-behind whichever was chosen.
+**Done when.** The reported tilt cannot exceed its gate, or the control says plainly that the gate
+applies to the proposal only, with outdoor evidence behind whichever was chosen.
 
 ### 4. The OUTPUT row pushes its last chip out of a narrow pane
 

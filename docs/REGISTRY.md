@@ -32,13 +32,31 @@ Around that spine:
   the browser through signed links that expire in twelve hours, so deleting the service destroys
   nothing and the browser never touches the instance to read a result. The objects themselves are
   deleted after three days by a rule GCS enforces. Saving is still the only way to keep a run.
-- **The fitted floor can be looked at, on demand.** Viewport 3D carries a LAYERS row with two
-  independent switches — the fitted surface, and the cloud points holding it up — both **off by
-  default**, so the cloud is seen unaltered until the floor is asked for. Turning them on is how
-  you check a fit with your eyes, which catches what the numbers cannot: support, tilt and RMSE
-  all say how well the plane fits the points it chose, and none of them says whether it chose the
-  right points. A visibly wrong floor once hid behind a 2 cm fit error. Both layers are geometry
-  in the scene, not marks on the glass — confirmed by orbiting and watching them turn with it.
+- **The fitted floor can be looked at, on demand.** Viewport 3D carries a LAYERS row of four
+  independent switches, **all off by default**, so the cloud is seen unaltered until the floor is
+  asked for. Turning them on is how a fit gets checked by eye, which catches what the numbers
+  cannot: support, tilt and RMSE all say how well the plane fits the points it chose, and none of
+  them says whether it chose the right points. A visibly wrong floor once hid behind a 2 cm fit
+  error. Every layer is geometry in the scene, not marks on the glass — confirmed by orbiting and
+  watching them turn with it.
+  - **Floor grid** — the fitted ground as a metric grid on a faint fill, clipped to the evidence
+    supporting it, its square size named in the readout. A grid rather than a plain disc because
+    straight lines converge in perspective and a flat wash does not, and perspective is the cue a
+    person judges *level* by. Squares of a known size make it a ruler for the scene's scale too.
+  - **Floor points** — the cloud points the plane rests on, so its evidence has a location.
+  - **Up axes** — the floor's own normal and the camera-derived vertical, same origin and same
+    length, so the tilt the readout states in degrees is also a shape on screen.
+  - **Below plane** — every point more than 5 cm under the floor, the same test the reported
+    percentage uses. This is decision 3 drawn directly, and it is the sharpest instrument here:
+    a fit reporting a respectable 6.2% support and 5.7 cm RMSE was exposed as junk in one glance
+    by the amber mass floating mid-room. (`app/src/panes/floor-overlay.ts`, 13 tests — grid
+    vertices land on the plane for tilted floors as well as level ones, the grid is clipped to
+    its circle, an origin off the plane is dropped onto it, and below-ness is measured along the
+    normal rather than world down.)
+- **The floor readout leads with the number that decides the question.** `FLOOR 14.6% SUPPORT ·
+  0.0% BELOW · 11.8° TILT · 1.2 cm RMSE`, then the camera-up coherence that qualifies the tilt.
+  `belowFraction` had been computed on every fit since the ground rule was written and displayed
+  in no pane at all — it reached the export file and nothing else.
 - **The viewport says which of three things is true about the floor**: a current fit and its
   numbers, `◐ FLOOR STALE` for a held fit whose inputs have moved, or `▲ NO FLOOR` carrying the
   fit's own refusal message. All three used to render identically — as an unchanged viewport — so

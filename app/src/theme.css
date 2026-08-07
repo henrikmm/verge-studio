@@ -874,6 +874,11 @@ input[type="range"]::-moz-range-track {
   position: absolute;
   left: 8px;
   top: 6px;
+  /* Bounded so it WRAPS instead of running under the pane's hidden overflow. The floor readout
+     grew to 59 characters when BELOW joined it — 391px inside a 405px pane, six pixels from
+     losing its RMSE figure with no sign that anything had gone. A readout that silently drops
+     its last number is worse than one that takes a second line. */
+  max-width: calc(100% - 16px);
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-dim);

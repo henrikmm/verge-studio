@@ -6,6 +6,44 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [PROGRESS.md](PROGRESS.md); findings below describe the state on their own date.
 
+## 2026-08-07 — the floor overlay learns to show its own evidence, 1280×800 (commit pending)
+
+Graded after the floor layer became a metric grid, gained both up-axes and the points beneath the
+plane, and the readout gained the two numbers that decide whether a floor is a floor. Recorded
+door fixture, `door-504px-112f`.
+
+1. Dark surfaces — **PASS** (`body` computed `rgb(13,13,15)`).
+2. No status by hue alone — **PASS**. The three overlay colours are the type legend, not state:
+   `#f3c969` for everything that *is* the fitted plane (grid, fill, support points, its normal),
+   `#f4f4f6` for the camera-derived vertical, which is not a port type, and `#f59e0b` for the
+   points below. Grid versus fill versus dots are three different *forms*, so the two amber
+   layers stay apart without relying on hue, and each is independently switchable.
+4. Tab strip ≤ 28 px — **PASS** (18 px).
+5. Viewport 3D renders, orbits, counts, gizmo — **PASS**. Orbiting to look along the floor showed
+   the grid lines converging in perspective and lying flat at the base of the scene, which is the
+   whole reason the grid replaced a flat translucent disc.
+8. No horizontal scroll — **PASS** (`scrollWidth === clientWidth === 1280`).
+9. Fonts ≤ 12 px, mono readouts — **PASS**. Zero rendered elements measure above 12 px; the
+   readout is JetBrains Mono at 11 px.
+10. Squint test — **PASS**. The fourth chip cost no height: chrome stayed at 81 px because the
+    row's hint was dropped rather than allowed to wrap.
+3, 6, 7, 11–18 — **N/A or regression**; untouched by this work and graded on 2026-08-07's earlier
+pass, which this entry sits above.
+
+Findings fixed during this pass:
+
+- **F1.** A fourth chip would not fit beside the hint at the pane's 405 px width, and the row went
+  back to 36 px. The hint went instead of the row growing — four chips that show their own state
+  and carry tooltips need no sentence telling them they start off — and `Floor plane` became
+  `Floor grid`, which is both shorter and what it now draws. Row back to 19 px, all four chips
+  measured inside it.
+- **F2, and the one that mattered.** Adding `BELOW` grew the floor readout from 45 characters to
+  59 — **391 px inside a 405 px pane body**, six pixels from silently losing its RMSE figure,
+  in a container with hidden overflow. `.viewport-overlay` had no width bound at all. It now
+  carries `max-width: calc(100% - 16px)` and wraps: measured at 405, 260 and 180 px body widths,
+  nothing clips at any of them and the full text survives. This was self-inflicted and would not
+  have shown up at 1280×800 — the checklist's own width is what nearly hid it.
+
 ## 2026-08-07 — the fitted floor becomes a switchable layer, 1280×800 (commit pending)
 
 Graded after Viewport 3D gained a LAYERS row and the floor readout learned to distinguish a
