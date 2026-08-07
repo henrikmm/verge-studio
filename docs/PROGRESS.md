@@ -68,6 +68,14 @@ A live example is already on disk and costs nothing to look at: the door run sav
 the run beside it. Whatever the threshold turns out to be, that run is the kind of case it has to
 judge, and it needs no cloud session to study.
 
+The **display** half of this already landed on 2026-08-07: a refusal now reaches the viewport as
+`▲ NO FLOOR` carrying the fit's own message (`app/src/panes/floor-state.ts`). What remains is the
+harder half — deciding *when* to refuse. Today the app only refuses on the gates already inside
+`fitGroundPlaneRobust`; a fit that squeaks past them at 4.7% support is drawn exactly like one at
+14.6%, with nothing on screen marking it as thin. The margin between hypotheses is still computed
+and discarded, and `belowFraction` — the statistic the whole ground rule rests on — is written
+into exported evidence and shown in no pane at all.
+
 **Done when.** Outdoor evidence from task 1 has been used to set the thresholds, "ground cannot be
 established" is a first-class result that downstream steps respect, and the user has agreed the
 warning reads correctly.
@@ -76,7 +84,52 @@ warning reads correctly.
 
 ## Later
 
-### 3. Decide what measuring grass actually means, then build it
+### 3. The tilt gate does not bound the tilt that gets reported
+
+**Outcome.** The tilt limit either means what it says, or the control says what it means. Right
+now a fit can be reported at a tilt its own gate should have excluded.
+
+**Owner.** Agent.
+
+**Gate.** User confirmation — this changes fit behaviour, and therefore possibly measured numbers.
+
+**Evidence / starting points.** Measured on 2026-08-07 against `door-504px-112f`: with
+`maxTiltDeg` set to **10°**, the fit returned a plane reported at **11.3°**. The gate rejects a
+candidate at `geometry/plane.ts:385`, but the least-squares refinement that follows
+(`plane.ts:418-426`) can rotate the plane past the limit, and the tilt finally reported
+(`plane.ts:457`) is computed on the refined plane and never re-checked. `fitGroundPlaneRobust`
+then only penalises tilt softly, so such a plane can still win its hypothesis contest.
+
+Two candidate fixes, and the choice is a real one: re-check tilt after refinement and reject,
+which makes the gate honest but may reject floors that are currently accepted; or keep the
+behaviour and relabel the control as a limit on the *proposal*, which is free but leaves a number
+that can exceed its own bound. Decide this after task 1 — an outdoor clip is exactly the case
+that would expose which behaviour is wanted, and guessing now would be guessing.
+
+**Done when.** The reported tilt cannot exceed the configured gate, or the control and its
+documentation say plainly that the gate applies to the proposal only, with the outdoor evidence
+behind whichever was chosen.
+
+### 4. The OUTPUT row pushes its last chip out of a narrow pane
+
+**Outcome.** No pane control can leave the viewport, whatever the pane is resized to.
+
+**Owner.** Agent.
+
+**Gate.** None.
+
+**Evidence / starting points.** DESIGN.md's pane-chrome section warns that the `nowrap` control
+row silently pushes right-hand controls out of a narrow pane. On 2026-08-07 that was measured
+rather than assumed: forced to 180 px, Depth 2D's OUTPUT row keeps its height and puts the
+`Confidence` chip **outside** the row's box, unreachable. The LAYERS row added the same day wraps
+to two lines under the same test and keeps both of its chips inside, so `.layer-row` in
+`app/src/theme.css` is the shape of the fix — the question is only whether `.output-row` should
+wrap too, or whether OUTPUT's one-of-N chips want different treatment from LAYERS' toggles.
+
+**Done when.** Every chip in every pane control row stays inside its row at 180 px, measured, and
+the checklist item that covers it is graded against a narrow pane rather than only 1280×800.
+
+### 5. Decide what measuring grass actually means, then build it
 
 **Outcome.** The system can report vegetation height over an area, with an honest statement of
 where it has enough evidence and where it does not.
@@ -98,7 +151,7 @@ of this workflow — the raster approach does not use them.
 user, the raster is implemented, and it has been checked against a physical reference with its
 error, valid-area coverage and abstention rate all reported.
 
-### 4. Explain the 112-frame landscape excess, now that orientation is ruled out
+### 6. Explain the 112-frame landscape excess, now that orientation is ruled out
 
 **Outcome.** The 22.02 GiB reading that broke the memory ladder has a named cause, and the app's
 estimate matches what a real run does at the top of the range.

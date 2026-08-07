@@ -268,6 +268,13 @@ body {
   overflow: hidden;
 }
 
+/* Overlay switches. Wraps where `.output-row` clips, because a control that silently leaves the
+   viewport in a narrow pane is worse than one on a second line (DESIGN.md, pane chrome). */
+.layer-row {
+  flex-wrap: wrap;
+  white-space: normal;
+}
+
 .output-label {
   font-family: var(--font-mono);
   letter-spacing: 0.06em;
@@ -872,6 +879,16 @@ input[type="range"]::-moz-range-track {
   color: var(--text-dim);
   pointer-events: none;
   text-shadow: 0 1px 2px #000;
+}
+
+/* Held evidence that no longer matches its inputs — the same amber "stale" the node cards use. */
+.viewport-overlay .overlay-stale {
+  color: var(--accent-busy);
+}
+
+/* No ground could be established. The ▲ glyph carries this without the hue. */
+.viewport-overlay .overlay-failed {
+  color: var(--accent-err);
 }
 
 canvas {

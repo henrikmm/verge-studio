@@ -6,6 +6,57 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [PROGRESS.md](PROGRESS.md); findings below describe the state on their own date.
 
+## 2026-08-07 — the fitted floor becomes a switchable layer, 1280×800 (commit pending)
+
+Graded after Viewport 3D gained a LAYERS row and the floor readout learned to distinguish a
+current fit from a stale one and from a refusal. Recorded door fixture, `door-504px-112f`.
+Browser console on a clean tab: **0 errors, 0 warnings**.
+
+1. Dark surfaces — **PASS** (`body` computed `rgb(13,13,15)`). The four elements a
+   greater-than-200 background scan flags are Dockview's `.dv-scrollbar-horizontal` at
+   `rgba(255,255,255,0)`, transparent and 0×4 px. No white surfaces.
+2. No status by hue alone — **PASS**. The layer chips separate on from off by luminance, not hue:
+   text `rgb(138,138,144)` → `rgb(212,212,216)`, border `rgb(42,42,46)` → `rgb(138,138,144)`. The
+   two new floor states carry glyphs — `◐` stale, `▲` refused — with amber and red only
+   reinforcing them.
+3. Six panes with Dockview tabs — **PASS** on presence. Drag-resize not re-exercised; unchanged by
+   this work, last measured 2026-08-02.
+4. Tab strip ≤ 28 px, labels 11–12 px — **PASS** (18 px, 11 px). See F1 for row density.
+5. Viewport 3D: cloud, orbit, point count, gizmo — **PASS** (1,000,000 pts; a drag from
+   (395,250) to (455,225) visibly changed the view; gizmo visible). **The floor evidence rotated
+   with the scene**, which is what confirms the new layers are geometry anchored in the cloud
+   rather than an overlay painted on the glass.
+6. Depth 2D turbo + metric legend — **N/A** this pass; the pane is on RGB for masking and the
+   code is untouched.
+7. Live status row with numbers in every pane — **PASS** (Depth 2D `1206.1 ms`, Viewport
+   `0.0 ms · 1.000.000 pts`, Graph `8 nodes · 13 wires · 2 stale`, Inspector `47.9 ms`).
+8. No horizontal scroll; gaps ≤ 4 px — **PASS** (`scrollWidth === clientWidth === 1280`).
+9. Fonts ≤ 12 px, mono readouts — **PASS**. Every element measuring above 12 px was `<script>`,
+   `<style>` or `<title>` text rather than rendered copy; the new chips are 10 px, matching the
+   OUTPUT chips exactly.
+10. Squint test against `reference/` — **FAIL → fixed**, see F1.
+11. Inspector mixed control types — **PASS** on inspection; unchanged.
+12. Memory in inspector and status bar — **PASS** on presence (`0 B / 22.03 GiB` in both). Bar
+    movement needs a run and was not exercised; no run was paid for.
+13–15, 18 — **N/A** this pass; untouched by this work.
+16. Focus fills without remounting, Escape restores — **PASS** (focused Viewport 3D, Escape
+    returned four panes, cloud still 1,000,000 pts, so nothing remounted).
+17. Parameter refresh with no costly node — **PASS**. Ground Plane parameter edits re-ran the
+    graph unaided; DA3 stayed `blocked`, GPU `cold`, cost `none` throughout.
+
+Findings fixed during this pass:
+
+- **F1 (items 10 and 4).** The new LAYERS row measured **36 px against every other row's 19 px**,
+  because its hint — "off by default — switch on to check the fit" — wrapped to a second line at
+  the pane's 405 px width. Nothing was clipped, so the wrap was doing its job, but it pushed the
+  pane's chrome to 98 px of a 567 px pane against the reference's two tight rows. The hint is now
+  "off by default": the row measures 19 px, chrome is 81 px, and the body gained 18 px.
+
+Measured while grading, and worth keeping: forced to 180 px, the LAYERS row wraps to 38 px with
+**both chips still inside its box**, while the OUTPUT row beside it stays 19 px and pushes its
+`Confidence` chip **outside** — the exact hazard DESIGN.md's pane-chrome warning describes, now
+demonstrated rather than asserted. That clipping is pre-existing and is now a task in PROGRESS.
+
 ## 2026-08-06 — durable storage states in the Runs pane, 1280×516
 
 Graded after the Runs pane learned to distinguish where an unsaved run's bytes actually are.

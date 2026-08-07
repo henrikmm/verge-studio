@@ -13,13 +13,13 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { resolveCurrentInput, resolveInput, useGraph } from "../graph/graph-store";
 import {
   VIEWER_3D_ID,
-  type GroundPlaneValue,
   type MeasurementValue,
   type PointCloudValue,
   type SelectionValue,
 } from "../graph/nodes";
 import type { DepthFieldValue } from "../measurement/depth-field";
-import { OutputRow, PaneControls } from "./pane-chrome";
+import { readFloorState } from "./floor-state";
+import { LayerRow, OutputRow, PaneControls, type LayerChoice } from "./pane-chrome";
 import { ProvenanceBanner } from "./provenance";
 
 const GIZMO_PX = 72;
@@ -27,6 +27,30 @@ const GIZMO_PX = 72;
 const OUTPUTS = [
   { id: "points", label: "Points" },
   { id: "cameras", label: "+ Cameras" },
+];
+
+const FLOOR_PLANE_LAYER = "floor-plane";
+const FLOOR_POINTS_LAYER = "floor-points";
+
+/**
+ * Off by default, deliberately.
+ *
+ * The fitted floor is a claim about the scene, not part of it, and until 2026-08-07 it was drawn
+ * unconditionally with no way to remove it — so it sat over every screenshot of the cloud and
+ * nobody could compare "with" against "without". Showing it is now an act: you turn it on to
+ * check the fit, and what you see is an answer to a question you asked.
+ */
+const LAYERS: LayerChoice[] = [
+  {
+    id: FLOOR_PLANE_LAYER,
+    label: "Floor plane",
+    title: "The fitted ground surface, clipped to the evidence that supports it.",
+  },
+  {
+    id: FLOOR_POINTS_LAYER,
+    label: "Floor points",
+    title: "The cloud points the plane rests on — where its evidence actually is.",
+  },
 ];
 
 export function Viewport3D() {
@@ -48,6 +72,7 @@ export function Viewport3D() {
   const pausedRef = useRef(false);
   pausedRef.current = paused;
   const [output, setOutput] = useState("points");
+  const [layers, setLayers] = useState<ReadonlySet<string>>(() => new Set<string>());
 
   const graph = useGraph();
   const incoming = resolveInput(graph, VIEWER_3D_ID, "points");
@@ -57,9 +82,17 @@ export function Viewport3D() {
     | DepthFieldValue
     | undefined;
   const cloud = incoming?.value as PointCloudValue | undefined;
-  const ground = resolveCurrentInput(graph, VIEWER_3D_ID, "plane")?.value as GroundPlaneValue | undefined;
+  const floor = useMemo(() => readFloorState(graph), [graph]);
+  const ground = floor.kind === "ok" ? floor.ground : undefined;
   const selection = resolveCurrentInput(graph, VIEWER_3D_ID, "selection")?.value as SelectionValue | undefined;
   const measurement = resolveCurrentInput(graph, VIEWER_3D_ID, "measurement")?.value as MeasurementValue | undefined;
+
+  const toggleLayer = (id: string) =>
+    setLayers((previous) => {
+      const next = new Set(previous);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
 
   useEffect(() => {
     const host = hostRef.current;
@@ -176,6 +209,9 @@ export function Viewport3D() {
     camera.updateProjectionMatrix();
   }, [cloud]);
 
+  const showFloorPlane = layers.has(FLOOR_PLANE_LAYER);
+  const showFloorPoints = layers.has(FLOOR_POINTS_LAYER);
+
   useEffect(() => {
     const evidence = evidenceRef.current;
     if (!evidence) return;
@@ -188,7 +224,9 @@ export function Viewport3D() {
       }
     }
 
-    if (ground && cloud) {
+    // Built only when switched on, rather than built and hidden: a layer nobody asked for should
+    // cost no GPU memory, and the ~9k-point support set is cheap enough to rebuild on a click.
+    if (ground && cloud && showFloorPoints) {
       const evidenceGeometry = new THREE.BufferGeometry();
       evidenceGeometry.setAttribute("position", new THREE.BufferAttribute(ground.evidence.points, 3));
       const support = new THREE.Points(
@@ -203,7 +241,9 @@ export function Viewport3D() {
       );
       support.name = "floor-support-points";
       evidence.add(support);
+    }
 
+    if (ground && cloud && showFloorPlane) {
       const radius = Math.min(cloud.extent * 0.35, ground.evidence.radius * 1.05);
       const geometry = new THREE.CircleGeometry(Math.max(0.2, radius), 64);
       const material = new THREE.MeshBasicMaterial({
@@ -213,14 +253,14 @@ export function Viewport3D() {
         side: THREE.DoubleSide,
         depthWrite: false,
       });
-      const floor = new THREE.Mesh(geometry, material);
-      floor.name = "fitted-floor";
-      floor.position.set(...ground.evidence.center);
-      floor.quaternion.setFromUnitVectors(
+      const disc = new THREE.Mesh(geometry, material);
+      disc.name = "fitted-floor";
+      disc.position.set(...ground.evidence.center);
+      disc.quaternion.setFromUnitVectors(
         new THREE.Vector3(0, 0, 1),
         new THREE.Vector3(...ground.plane.normal),
       );
-      evidence.add(floor);
+      evidence.add(disc);
     }
 
     if (selection && selection.points.length > 0) {
@@ -265,7 +305,7 @@ export function Viewport3D() {
         evidence.add(marker);
       }
     }
-  }, [cloud, ground, measurement, selection]);
+  }, [cloud, ground, measurement, selection, showFloorPlane, showFloorPoints]);
 
   // DA3's GLB carries camera frustums alongside the points; the chip toggles them.
   // Only the frustum geometry itself may be hidden — toggling every non-Points object
@@ -300,12 +340,42 @@ export function Viewport3D() {
         onSelect={setOutput}
         hint="Left-drag=orbit, wheel=zoom, right-drag=pan"
       />
+      {/*
+        Hint kept to two words on purpose. The first version read "off by default — switch on to
+        check the fit", which wrapped this row to 36px against every other row's 19px and pushed
+        the pane's chrome to 98px of a 567px pane. The reference captures keep viewport hints
+        terse and inline; what each layer means belongs in the chips' own tooltips.
+      */}
+      <LayerRow choices={LAYERS} active={layers} onToggle={toggleLayer} hint="off by default" />
       <ProvenanceBanner field={provenance} />
       <div className="pane-body" ref={hostRef}>
-        {ground && (
+        {cloud && (
           <div className="viewport-overlay">
-            FLOOR {(ground.fit.inlierFraction * 100).toFixed(1)}% SUPPORT · {ground.fit.tiltDeg.toFixed(1)}° TILT · {(ground.fit.rmse * 100).toFixed(1)} cm RMSE
-            {measurement && <><br />{measurement.rulerKind === "extent" ? "EXTENT" : "HEIGHT ABOVE FLOOR"} <b>{measurement.rawM.toFixed(3)} m</b> · spread ±{measurement.internalSpreadM.toFixed(3)} m</>}
+            {/*
+              Three visibly different states, never silence. Amber-plus-◐ and red-plus-▲ follow the
+              one status convention in the app: the glyph carries the meaning and the hue only
+              reinforces it, so this survives a greyscale screenshot.
+            */}
+            {floor.kind === "ok" && (
+              <>FLOOR {(floor.ground.fit.inlierFraction * 100).toFixed(1)}% SUPPORT · {floor.ground.fit.tiltDeg.toFixed(1)}° TILT · {(floor.ground.fit.rmse * 100).toFixed(1)} cm RMSE</>
+            )}
+            {floor.kind === "stale" && (
+              <span className="overlay-stale">◐ FLOOR STALE — re-run the graph to see it</span>
+            )}
+            {floor.kind === "failed" && (
+              <span className="overlay-failed">▲ NO FLOOR — {floor.message}</span>
+            )}
+            {/*
+              Deliberately a sibling of the floor line, not a child of it. Nested inside the
+              `ground &&` test, this readout vanished whenever the floor went stale — hiding a
+              measurement the graph was still perfectly happy to report.
+            */}
+            {measurement && (
+              <>
+                {floor.kind !== "absent" && <br />}
+                {measurement.rulerKind === "extent" ? "EXTENT" : "HEIGHT ABOVE FLOOR"} <b>{measurement.rawM.toFixed(3)} m</b> · spread ±{measurement.internalSpreadM.toFixed(3)} m
+              </>
+            )}
           </div>
         )}
         {!cloud && (

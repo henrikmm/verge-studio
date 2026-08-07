@@ -32,6 +32,19 @@ Around that spine:
   the browser through signed links that expire in twelve hours, so deleting the service destroys
   nothing and the browser never touches the instance to read a result. The objects themselves are
   deleted after three days by a rule GCS enforces. Saving is still the only way to keep a run.
+- **The fitted floor can be looked at, on demand.** Viewport 3D carries a LAYERS row with two
+  independent switches — the fitted surface, and the cloud points holding it up — both **off by
+  default**, so the cloud is seen unaltered until the floor is asked for. Turning them on is how
+  you check a fit with your eyes, which catches what the numbers cannot: support, tilt and RMSE
+  all say how well the plane fits the points it chose, and none of them says whether it chose the
+  right points. A visibly wrong floor once hid behind a 2 cm fit error. Both layers are geometry
+  in the scene, not marks on the glass — confirmed by orbiting and watching them turn with it.
+- **The viewport says which of three things is true about the floor**: a current fit and its
+  numbers, `◐ FLOOR STALE` for a held fit whose inputs have moved, or `▲ NO FLOOR` carrying the
+  fit's own refusal message. All three used to render identically — as an unchanged viewport — so
+  a refusal was indistinguishable from success. A stale plane is reported but deliberately not
+  drawn, because held evidence must never read as a current measurement.
+  (`app/src/panes/floor-state.ts`, 7 tests covering all four states.)
 - **Measurement targets belong to a clip**, keyed by the video's content digest. A clip nobody has
   measured before starts with an empty set, never another clip's objects.
 - **Repeat measurements accumulate.** Each recorded trial freezes the exact mask it was measured
