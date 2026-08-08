@@ -108,7 +108,11 @@ Around that spine:
   height above the fitted floor, by plane inlier, or with a selection picked out — from any of five
   fixed viewpoints. It also draws the source frames as one numbered sheet, one frame's depth, and,
   the check no number can stand in for, **a selection painted onto the photograph it came from**.
-  No browser, no WebGL, no network. (Ten commands, 22 tests, `scripts/inspect/`.)
+  No browser, no WebGL, no network. (Eleven commands, 22 tests, `scripts/inspect/`.)
+- **The flat surfaces of a scene can be measured with no mask at all.** `inspect levels` reports
+  every horizontal surface as a height above the fitted floor, with how thick and how wide it is.
+  It is the project's only measurement that does not pass through an operator's brush, and its
+  thickness column is its only reading of whether the floor is level with the room. See section 3.
 - **What never reached the cloud can be seen on the photograph it came from.** `inspect coverage`
   reproduces DA3's export filter, paints the pixels it discarded and the pixels genuinely absent
   from the exported cloud onto the source frame, and reports per-frame survival. `--cloud npz`
@@ -362,15 +366,16 @@ because `groundPlaneQuality` is a penalty and its scores are usually negative.
 Four cases are not a threshold and must not be quoted as one. What they show is that every thin
 fit is also a narrow win, and that 0.42 against 0.06 is not a subtle difference.
 
-⚠️ **Every number in that table is one seed's answer.** The separation on the outdoor run ranges
-from 0.006 to 0.328 across eight seeds — see the seed study below, which supersedes any reading of
-this table as a property of the scene rather than of one draw.
+⚠️ **That table is superseded, and separation now means the OPPOSITE of what it meant there.**
+Every figure in it is one seed's answer, from before the selection rule was fixed — the outdoor
+run's separation ranged 0.006 to 0.328 across eight seeds. Since 2026-08-08 both proposal pools
+find the same plane, so a good fit reads separation ≈ 0.000. A dead heat used to mean "a coin flip
+between two different floors"; it now means "two searches agreed". Anything reaching for a refusal
+threshold must not use it — see TASK.md task 2.
 
-The last row is the one to look at. `room-504px-112f` is a **committed fixture that passes as
-`ok` today** while being the worst fit on this disk on every measure, and its runner-up has *more*
-support than the winner — the decision turns entirely on the tilt and below-plane penalties. It is
-a coin flip the interface currently reports as a floor, it costs nothing to study, and it was
-found by running `scripts/inspect.mjs floor` across every fixture on 2026-08-07.
+`room-504px-112f`, the worst row, is fixed: 6.1% support, 8.5° tilt, 0.00% below, on all eight
+seeds. It had been a committed fixture that passed as `ok` while being the worst fit on this disk
+on every measure.
 
 ### The cloud the app measures is 7% of the reconstruction, and not a random 7%
 
@@ -409,32 +414,127 @@ disk holds full-resolution depth and confidence for every frame, so a cloud can 
 `inspect --cloud npz` does exactly that, and reproduces the GLB's own fit to 0.3 mm on the door
 fixture when given DA3's own threshold — which is what makes the comparison trustworthy.
 
-### The ground fit is a coin flip, and the seed is what decides it
+### The ground fit was a coin flip, and the cause was the selection rule — fixed 2026-08-08
 
-Measured 2026-08-08 with `scripts/inspect.mjs floor --repeat 8`. **This is the largest known
-error in the system.**
+The seed carries no information about the scene, so changing only the seed should change nothing.
+It changed everything. Measured with `inspect floor --repeat 8`, before and after the fix, as the
+spread of the plane's height under the cloud's centroid:
 
-RANSAC draws its candidate planes at random. The seed carries no information about the scene, so
-changing only the seed should change nothing that matters. Across every reconstruction on this
-disk, it changes the answer:
-
-| Run | Elevation spread | Tilt spread | Separation range | Refusals |
+| Run | Before | After | Tilt before → after | Support after |
 |---|---|---|---|---|
-| `20260806-193346` outdoor | **31.9 cm** | **14.55°** | 0.006 – 0.328 | 0 of 8 |
-| `20260805-151526` da3Test | 27.2 cm | 12.68° | 0.018 – 0.295 | 0 of 8 |
-| `20260806-173802` door clip | 15.4 cm | 14.46° | 0.060 – 0.420 | 0 of 8 |
-| `door-504px-112f` fixture | 11.8 cm | 5.15° | 0.021 – 0.417 | 0 of 8 |
-| `room-504px-112f` fixture | 7.2 cm | 14.23° | 0.023 – 0.293 | 0 of 8 |
+| `20260806-193346` outdoor | **39.6 cm** | **0.23 cm** | 14.55° → 0.04° | 2.5–8.8% → 20.7% |
+| `20260805-151526` da3Test | 39.2 cm | 0.01 cm | 12.68° → 0.00° | 2.5–24.6% → 24.6% |
+| `20260806-173802` door clip | 15.0 cm | 0.02 cm | 14.46° → 0.01° | 1.6–14.3% → 14.3% |
+| `door-504px-112f` fixture | 10.1 cm | 0.06 cm | 5.15° → 0.07° | 2.1–14.6% → 14.6% |
+| `room-504px-112f` fixture | 10.9 cm | 0.01 cm | 14.23° → 0.01° | 2.4–6.1% → 6.1% |
 
-**Every one of those fits reports `ok`.** Not one refused. The app hard-codes `seed: 7`
-(`app/src/graph/nodes/measurement.ts`), so its answer is deterministic — and it is one arbitrary
-draw from a family spanning a third of a metre. A height measured against that floor inherits the
-whole spread, which is several times the accuracy this pipeline claims elsewhere.
+Both columns are the spread of the plane's height under the cloud's centroid, along the
+camera-derived up. The old figures of 7–32 cm were differences of `offset`, which is each plane's
+distance along **its own** normal — not a height, and an understatement: the outdoor run reads
+31.9 cm that way and 39.6 cm measured properly. `--repeat` now fixes the reference point and the
+axis for the whole study, because measuring each plane along its own normal is the same mistake
+one level up.
 
-The confidence filter above is a real defect and it is **not** the cause of this one. Rebuilding
-the outdoor cloud from the npz with no confidence floor moves the plane 12.7 cm — well inside the
-31.9 cm the seed moves it on its own. The input is biased; the fit is unstable; the instability is
-the larger term.
+**The tolerance is 1 cm and 0.5° across eight seeds**, and it is set from this project's own
+measured operator repeatability of 1–6 mm (MEASUREMENTS.md): below that, the seed has stopped
+being a term in the error budget. The worst of the five is 0.23 cm and 0.04°, a margin of about
+40×. `door-fixture.test.ts` runs this gate on real data so it cannot come back unnoticed.
+
+**The cause was not randomness, and it was not tuning.** `fitGroundPlane` kept the LOWEST
+candidate that cleared a support bar, and `groundPlaneQuality` was applied one level up, to the
+single plane each proposal pool returned. So the score never saw the candidates, and the decision
+was a minimum over a random sample — an extreme value, which has no fixed point. RANSAC converges
+because it takes the arg-max of a score over all the data; take a minimum and the guarantee is
+gone.
+
+**The prediction that follows is the proof: more iterations made it worse.** On the door fixture,
+7 of 8 seeds found the good floor at 1200 iterations and **none** did at 19200, by which point the
+mean elevation had sunk from −1.082 m to −1.156 m and support had fallen from 14.6% to 13.3%. The
+outdoor run's spread ran 24.6 → 31.9 → 49.1 → 46.0 cm at 300, 1200, 4800 and 19200 iterations. So
+raising the iteration count — the cheapest hypothesis, and the first one anybody would try — was
+not merely useless but actively harmful.
+
+**Ranking every candidate on `groundPlaneQuality` is the whole fix**, and it costs about 20% per
+fit: the below-count and the squared residual are gathered in the pass that already counted
+inliers. "Lowest, not largest" survives as the below-plane penalty, which is decision 3 expressed
+as a score rather than a tiebreak, and can therefore be weighed against the evidence instead of
+applied after it.
+
+**Half the fix is the scale that penalty is measured on**, and this is the part that would be
+missed by anyone repeating the work. Ranking by quality with the shipped settings puts the room
+fixture on the **tabletop** — 22.7% support, 72 cm too high, 14.2% of the cloud below it — because
+`maxBelowFraction` (0.2) is a *refusal* threshold being reused as a *scoring* scale. Sweeping the
+new `belowScale` alone on that fixture: 0.02–0.10 lands on the floor on all 8 seeds, 0.15 is
+bistable (6 seeds table, 2 floor), 0.20 lands on the tabletop on all 8. It is set to **0.05**,
+mid-plateau, with a factor of two either side. The door fixture and the outdoor run do not move
+anywhere in that sweep.
+
+⚠️ **At 0.20 the tabletop fit is stable across seeds to 0.03 cm.** A gate that only checked seed
+agreement would have passed it. Reproducibility is necessary and nowhere near sufficient; the
+below-fraction and the picture are what say the plane is a floor.
+
+**The door fixture at 504 px is bit-for-bit unchanged** — same normal to six decimals, same
+offset, same 9096 inliers, same 1.2311 cm RMSE. The one scene with tape truth could not move, so
+no graded measurement changed. Every reconstruction that moved was one that had been wrong.
+
+**Not everything was fixed.** `room-252px-256f` still spreads 35.7 cm across seeds, on 1.3–2.7%
+support. With the search no longer at fault, what is left there is a genuine shortage of floor
+evidence, which is TASK.md task 2's problem rather than this one's.
+
+The confidence filter above is a real defect and it was **not** the cause of this one. Rebuilding
+the outdoor cloud from the npz with no confidence floor moved the plane 12.7 cm — well inside the
+31.9 cm the seed moved it on its own.
+
+### Measuring the room with nobody painting anything
+
+Built 2026-08-08 (`geometry/levels.ts`, `inspect levels`, 10 tests). Every graded number in this
+project came from a mask, so the operator was part of the instrument — a good instrument, but one
+that cannot check itself. This is a second instrument sharing nothing with the first.
+
+The idea is one sentence: **a horizontal surface puts all of its points at the same height.**
+Count how many points land in each 5 mm band above the fitted floor and the flat surfaces appear
+as spikes; a wall contributes evenly to every band and makes no spike at all. So the height of the
+tabletop's spike *is* the floor-to-tabletop measurement, taken from thousands of points at once.
+
+**On the door fixture it reads 0.6994 m for the table. The brush-based trials read 0.6983 m.**
+Two instruments with nothing in common agree to **1.1 mm**. The 0.68–0.72 m band painted onto
+frame 93 covers the desk top exactly and nothing else, so the number is what it claims to be.
+
+That settles a live worry: the −5.1 cm error against the 0.750 m tape is **not** an artefact of
+hand-painted masks or of the segmentation model. It is in the reconstruction. A second
+reconstruction of the same clip (`20260806-173802`, 81 frames instead of 112) reads 0.7013 m,
+agreeing with the fixture to 1.9 mm.
+
+It also grades the FLOOR, which no existing number does. Support, tilt and RMSE all describe the
+plane against the points it chose; none of them notices a plane that is level with nothing. A
+surface a metre across, read against a floor whose normal is 1° out, comes back about 7 mm thick —
+measured 2.0, 4.0 and 7.1 mm at 0.25°, 0.5° and 1°, against 1.7, 3.5 and 7.0 mm predicted by
+`width × sin θ × 0.4`. Past about 2° the spike dissolves and the instrument reports nothing, which
+is the right failure: forced to answer at 4° it returns a confident 1.7 cm error.
+
+Two things it will not do. It finds surfaces, not objects, so it cannot measure a door leaf. And a
+horizontal *line* of points — a shelf lip, a step nosing, the rows of a regular sampling lattice —
+is excluded deliberately, by requiring width in both horizontal directions; the synthetic room's
+wall grid produced exactly that false surface before the rule was added.
+
+### What the maskless measurement says about the floor fix
+
+Graded against the 0.750 m table, which is the same physical table in both clips (MEASUREMENTS.md
+B2 and A1). No mask anywhere in this table:
+
+| Reconstruction | Old floor | New floor | Truth |
+|---|---|---|---|
+| `door-504px-112f` | 0.6994 m | 0.6994 m *(unchanged by design)* | 0.750 |
+| `door-356px-256f` | 0.5739 m | 0.5956 m | 0.750 |
+| `room-504px-112f` | **no surface found** | **0.7211 m** | 0.750 |
+| `20260806-173802` | **no surface found** | **0.7013 m** | 0.750 |
+| `door-252px-256f`, `room-356px`, `room-252px` | no surface found | no surface found | 0.750 |
+
+**Reconstructions in which a tape-measured surface can be found at all went from 1 of 7 to 4 of
+7.** On the room fixture the old floor was tilted 19.3°, which smeared every flat surface until
+none survived; the new one is 8.5° and recovers the table to within 2.9 cm — the best of any
+reconstruction here. This is the practical gain, and it is larger than "the number stopped
+wobbling": a floor that is level with the room is what makes anything else measurable.
 
 ### Other measured numbers
 
@@ -513,6 +613,18 @@ It held 113.6 MiB at teardown, about 1.1 cents a month, and empties itself in th
    walking is one of the *sparsest* surfaces. Ranking by how densely it fills its own footprint
    is worse and backwards. What works is the definition itself — 4.3% of the cloud below the real
    floor versus 60.6% below the wrong mid-scene plane is a clean separation from one cheap pass.
+
+   **Since 2026-08-08 this is a score, not a tiebreak.** It used to be applied as "among the
+   candidates with enough support, take the lowest", which is a minimum over a random sample and
+   therefore had no fixed point — the floor moved up to 40 cm with the seed and sank further the
+   longer the search ran. It is now the below-plane penalty inside `groundPlaneQuality`, weighed
+   against the evidence rather than applied after it. The definition is unchanged; what changed is
+   that it can now lose an argument to strong evidence instead of always winning one.
+
+   **The scale it is judged on is a separate number from the threshold that refuses a fit**, and
+   conflating them cost a session. `maxBelowFraction` (0.2) is generous so that an honest floor
+   over rough ground survives; `belowScale` (0.05) is where a floor stops looking like a floor.
+   Score on 0.2 and the room fixture picks its tabletop, stably and confidently.
 
 4. **Which way is up comes from the camera path, and it is cross-checked, not trusted.** There is
    no motion sensor in a video-only pipeline, but averaging the camera's own downward axis across
@@ -720,10 +832,14 @@ These are stated, not scheduled. Anything being actively worked on is in `TASK.m
   deliberate bad clicks has not been run, so failure and abstention rates are unknown. **This
   gates trust in automatic masks only.** It does not block outdoor ground or vegetation work,
   which do not depend on it.
-- ⚠️ **The ground fit is not reproducible, and everything measured against it inherits that.**
-  Changing only the RANSAC seed moves the plane by 7–32 cm and its tilt by 5–15° on every
-  reconstruction on this disk, and all of it reports `ok` (section 3). Any height quoted from this
-  system today carries that spread on top of its stated error. This is TASK.md task 1.
+- **The ground fit is reproducible to 0.23 cm and 0.04° across seeds** at the operating resolution
+  (section 3), and everything measured against it inherits that instead of the old 7–32 cm. One
+  reconstruction is still unstable: `room-252px-256f`, at 35.7 cm on 1.3–2.7% support. A stable fit
+  is not the same as a correct one — see the tabletop warning in section 3.
+- **The maskless measurement finds a surface in 4 of 7 reconstructions**, not all of them. Where it
+  abstains, the reconstruction has no flat surface sharp enough to measure and the reason is
+  usually resolution: nothing at 252 px yields one. It measures surfaces, never objects, so it
+  cannot check the door leaf, the tower or the monitor — the three graded objects it cannot reach.
 - **Accuracy across scenes is unverified.** One room, one operator, one camera path. A second
   capture with different orientation and motion remains the largest untested risk.
 - **The exported cloud is a biased 7% sample of the reconstruction** — DA3's global confidence
@@ -762,6 +878,20 @@ Kept because each one was paid for once.
 - **A test whose fake cannot fail the way the real thing fails proves nothing.** One stand-in
   lacked a method the real object has, so every proxied reply became an error the test read as a
   pass on everything it did not assert.
+- **A test that grants permission to be wrong will be taken up on it.** `plane.test.ts` asserted
+  that two seeds "need not agree to the millimetre" and called agreeing on the surface the property
+  that mattered. That sentence was the largest error in the system for months: on real clouds the
+  permission bought a floor that moved up to 40 cm with the seed. A test states what the code is
+  allowed to do, so a loose assertion is a design decision written in the quietest possible place.
+- **Search failures and scoring failures look identical from the outside, and the fix is
+  opposite.** The floor fit looked like a scoring problem for a long time — the score was fine, and
+  had been fine all along; it was simply never consulted where the decision was made. What told
+  them apart was raising the iteration count and watching the answer get *worse*. If more search
+  hurts, the thing being optimised is not the thing being scored.
+- **Reusing one constant for two jobs hides the second job.** `maxBelowFraction` was a refusal
+  threshold, and the moment a score needed a "how much below is too much" scale it was reached for
+  again. The two want different values by a factor of four, and the wrong one puts the floor on a
+  table — stably, reproducibly, and with every reported statistic looking healthy.
 - **Test the round trip, not the fields.** A conversion was trimmed to the two fields one script
   read — and that object turned out to be the run's permanent record, so every saved run became
   unloadable. The field-by-field test passed against the broken version; a round-trip test would

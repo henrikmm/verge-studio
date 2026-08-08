@@ -13,15 +13,23 @@
  *
  *   1. ORIENTATION GATE. Reject any candidate whose normal is more than `maxTiltDeg`
  *      from the gravity estimate before scoring it at all.
- *   2. LOWEST, NOT LARGEST. Among candidates that are well supported, take the one with
- *      the lowest elevation. Ceilings and tabletops are horizontal too; only height
- *      distinguishes the floor from them.
+ *   2. NOT THE LARGEST — THE ONE WITH LEAST BENEATH IT. Ceilings and tabletops are
+ *      horizontal too, and a tabletop can easily carry more points than the floor. What
+ *      tells them apart is what is underneath. This lives in `groundPlaneQuality` as a
+ *      penalty weighed against the evidence, not as a rule applied after it; the version
+ *      that simply took the lowest candidate is what made the fit irreproducible, and
+ *      `fitGroundPlane` records that story in full.
  *
  * DETERMINISM IS A HARD REQUIREMENT, not a nicety. This app caches node results by
  * content hash, so a fit that returned a different plane for identical inputs would
  * corrupt the cache model quietly. Open3D's `segment_plane` has shipped genuinely
  * non-deterministic results across releases; we avoid inheriting that by seeding our own
  * generator and sampling from fixed, index-ordered subsets.
+ *
+ * Determinism was never the problem, though, and it is worth being clear why. The fit has
+ * always returned the same plane for the same seed. It returned a DIFFERENT plane for a
+ * different seed, and the seed is not part of the scene — so the cache was consistent and
+ * the answer was still arbitrary. Reproducible and correct are two requirements.
  */
 
 import {
@@ -62,18 +70,6 @@ export interface GroundPlaneOptions {
   seed?: number;
   /** Per-point weight in [0,1] — DA3's confidence map. Absent means all points count 1. */
   weights?: ArrayLike<number>;
-  /**
-   * Relative support guard: a fraction of the best candidate's support, below which a
-   * candidate is ignored. Stops a sparse smear of noise below the real floor winning
-   * purely for being low.
-   *
-   * Kept LOW on purpose. A floor is not required to be the biggest surface in the room —
-   * it is seen at a grazing angle from a walkthrough and is often one of the sparsest.
-   * Measured on `fixtures/room/504px-112f`: at 0.5 the fit lands mid-scene with 46% of
-   * the cloud below it; at 0.1 it lands on the floor with 3.7% below. The primary
-   * evidence gate is `minInliers`, which is absolute; this is only a guard.
-   */
-  supportRatio?: number;
   /** Refuse to return a plane backed by fewer than this many points. */
   minInliers?: number;
   /** Score against every Nth point. Purely a speed knob; deterministic either way. */
@@ -94,6 +90,22 @@ export interface GroundPlaneOptions {
    * wrong mid-scene plane has 60.6%.
    */
   maxBelowFraction?: number;
+  /**
+   * The scale on which "almost nothing beneath it" is judged when SCORING a candidate.
+   *
+   * Deliberately not `maxBelowFraction`. That number is a refusal threshold — the point
+   * past which a plane is thrown away — and it is generous so that an honest floor over
+   * rough ground survives. Scoring needs the opposite: the scale at which a floor stops
+   * looking like a floor, which is much tighter. Reusing the refusal threshold as the
+   * scoring scale is what made the room fixture pick a tabletop.
+   *
+   * Measured 2026-08-08 on `fixtures/room/504px-112f`, sweeping this value alone:
+   * 0.02–0.10 lands on the floor on all 8 seeds; 0.15 is bistable (6 seeds table,
+   * 2 seeds floor); 0.20 lands on the tabletop on all 8. 0.05 sits mid-plateau with a
+   * factor of two either side. The door fixture and the outdoor run are unmoved across
+   * the whole sweep.
+   */
+  belowScale?: number;
 }
 
 export interface GroundPlaneFit {
@@ -104,7 +116,12 @@ export interface GroundPlaneFit {
   rmse: number;
   /** Angle between the fitted normal and the supplied up axis, in degrees. */
   tiltDeg: number;
-  /** Plane elevation along `up` — i.e. `-offset`. */
+  /**
+   * `-offset`: the plane's distance from the origin along ITS OWN normal.
+   *
+   * Safe to compare against another fit only when the two normals agree. Use
+   * `planeElevationAt` to compare planes — see the note on `Plane` in `types.ts`.
+   */
   elevation: number;
   candidatesConsidered: number;
   /** Share of the cloud below the fitted plane. Near zero for a real floor. */
@@ -151,29 +168,36 @@ const DEFAULTS = {
   inlierDistance: 0.02,
   iterations: 2000,
   seed: 1,
-  supportRatio: 0.1,
   minInliers: 100,
   stride: 1,
   candidateLowestFraction: 1,
   maxBelowFraction: 0.15,
+  belowScale: 0.05,
 } as const;
 
 /**
- * Comparable quality across proposal strategies.
+ * Comparable quality across candidates and across proposal strategies.
  *
  * RMSE alone is unsafe: an arbitrary diagonal slice can be extremely thin. Support is
  * therefore the base evidence, with soft penalties for disagreeing with camera-derived
  * up, leaving points below the plane, and using most of the allowed inlier band.
+ *
+ * This is the ONLY thing that ranks a plane against another plane. It used to decide
+ * between two finished hypotheses and nothing else; it now decides between every RANSAC
+ * candidate as well, which is what made the fit reproducible. See `fitGroundPlane`.
  */
 export function groundPlaneQuality(
   fit: GroundPlaneFit,
-  options: Pick<GroundPlaneOptions, "maxTiltDeg" | "inlierDistance" | "maxBelowFraction"> = {},
+  options: Pick<
+    GroundPlaneOptions,
+    "maxTiltDeg" | "inlierDistance" | "maxBelowFraction" | "belowScale"
+  > = {},
 ): number {
   const maxTilt = Math.max(1, options.maxTiltDeg ?? DEFAULTS.maxTiltDeg);
   const inlierDistance = Math.max(1e-6, options.inlierDistance ?? DEFAULTS.inlierDistance);
-  const maxBelow = Math.max(1e-6, options.maxBelowFraction ?? DEFAULTS.maxBelowFraction);
+  const belowScale = Math.max(1e-6, options.belowScale ?? DEFAULTS.belowScale);
   const tiltPenalty = 2 * (fit.tiltDeg / maxTilt) ** 2;
-  const belowPenalty = 2 * (fit.belowFraction / maxBelow) ** 2;
+  const belowPenalty = 2 * (fit.belowFraction / belowScale) ** 2;
   const residualPenalty = fit.rmse / inlierDistance;
   return Math.log(Math.max(1e-6, fit.inlierFraction)) - tiltPenalty - belowPenalty - residualPenalty;
 }
@@ -211,11 +235,31 @@ function planeThrough(a: Vec3, b: Vec3, c: Vec3, up: Vec3): Plane | null {
   return { normal, offset: -dot(normal, a) };
 }
 
+/**
+ * How far under a plane a point must sit before it counts as below it, in metres.
+ *
+ * Shared by the reported `belowFraction` and by the per-candidate scoring pass, so the
+ * number a candidate is ranked on and the number the operator reads are the same number.
+ */
+const BELOW_TOLERANCE = 0.05;
+
 interface Support {
   weight: number;
   count: number;
+  /** Points more than `BELOW_TOLERANCE` under the plane — what `belowFraction` reports. */
+  belowCount: number;
+  /** Sum of squared inlier distances, so a candidate's RMSE costs no second pass. */
+  squared: number;
 }
 
+/**
+ * Everything one candidate needs, from one walk over the sampled cloud.
+ *
+ * The below-count and the squared residual are gathered here rather than later because
+ * every candidate is now scored on all three, and a second pass per candidate would
+ * multiply the cost of the fit. Measured 2026-08-08: about 20% slower per fit than
+ * counting inliers alone.
+ */
 function scorePlane(
   plane: Plane,
   points: ArrayLike<number>,
@@ -225,13 +269,18 @@ function scorePlane(
 ): Support {
   let weight = 0;
   let count = 0;
+  let belowCount = 0;
+  let squared = 0;
   for (let i = 0; i < indices.length; i++) {
     const index = indices[i];
-    if (Math.abs(signedHeight(plane, pointAt(points, index))) > band) continue;
+    const height = signedHeight(plane, pointAt(points, index));
+    if (height < -BELOW_TOLERANCE) belowCount += 1;
+    if (Math.abs(height) > band) continue;
     weight += weights ? weights[index] : 1;
     count += 1;
+    squared += height * height;
   }
-  return { weight, count };
+  return { weight, count, belowCount, squared };
 }
 
 /**
@@ -322,7 +371,7 @@ function belowFraction(
   plane: Plane,
   points: ArrayLike<number>,
   indices: Int32Array,
-  tolerance = 0.05,
+  tolerance = BELOW_TOLERANCE,
 ): number {
   if (indices.length === 0) return 0;
   let count = 0;
@@ -348,6 +397,30 @@ function rmsError(plane: Plane, points: ArrayLike<number>, inliers: readonly num
  * `points` is a flat xyz array (the layout Three.js and DA3's GLB both use).
  * Throws `GroundPlaneNotFoundError` rather than returning a poorly supported plane —
  * an honest failure is worth far more than a confident wrong floor.
+ *
+ * THE WINNER IS THE BEST CANDIDATE, NOT THE LOWEST ONE. Until 2026-08-08 this kept the
+ * lowest candidate that cleared a support bar, and `groundPlaneQuality` was applied only
+ * afterwards, to the one plane each proposal pool returned. So the score never saw the
+ * candidates, and the decision was a minimum over a random sample — an extreme value,
+ * which has no fixed point. Drawing more candidates finds a lower one, forever.
+ *
+ * That is not a tuning problem, and the measurements say so. Changing only the seed moved
+ * the floor by up to 31.9 cm; raising the iteration count made it WORSE, not better. On
+ * `fixtures/door/504px-112f`, 7 of 8 seeds found the good floor at 1200 iterations and
+ * NONE of them did at 19200, by which point the plane had sunk 7.4 cm and its support had
+ * fallen from 14.6% to 13.3%. The outdoor run's spread went 24.6 → 31.9 → 49.1 cm as
+ * iterations rose. RANSAC converges because it takes the arg-max of a score over all the
+ * data; take a minimum instead and the guarantee is gone.
+ *
+ * Ranking every candidate on `groundPlaneQuality` restores it. Across the five
+ * reconstructions at the operating resolution the seed now moves the floor by at most
+ * 0.23 cm and 0.04°, against 10–40 cm and 5–15° before.
+ *
+ * "Lowest, not largest" has not been abandoned — it has been made continuous. A tabletop
+ * and a ceiling are rejected by the below-plane penalty, which is decision 3 expressed as
+ * a score instead of a tiebreak, and unlike a tiebreak it can be weighed against the
+ * evidence rather than applied after it. The scale that penalty is measured on matters as
+ * much as the ranking: see `belowScale`.
  */
 export function fitGroundPlane(
   points: ArrayLike<number>,
@@ -376,8 +449,22 @@ export function fitGroundPlane(
   const random = makeRandom(opts.seed);
   const pick = () => proposal[Math.min(proposal.length - 1, Math.floor(random() * proposal.length))];
 
-  let best: { plane: Plane; support: Support; elevation: number } | null = null;
-  const candidates: { plane: Plane; support: Support; elevation: number }[] = [];
+  // Total weight of the sampled cloud, so a candidate's support can be expressed as a
+  // fraction on the same scale the reported `inlierFraction` uses.
+  let totalWeight = 0;
+  for (let i = 0; i < sampled.length; i++) {
+    totalWeight += opts.weights ? opts.weights[sampled[i]] : 1;
+  }
+  totalWeight = Math.max(1e-9, totalWeight);
+
+  interface Candidate {
+    plane: Plane;
+    support: Support;
+    quality: number;
+  }
+
+  let chosen: Candidate | null = null;
+  let candidatesConsidered = 0;
 
   for (let iter = 0; iter < opts.iterations; iter++) {
     const ia = pick();
@@ -392,32 +479,40 @@ export function fitGroundPlane(
 
     const support = scorePlane(plane, points, sampled, opts.weights, opts.inlierDistance);
     if (support.count === 0) continue;
-    const candidate = { plane, support, elevation: -plane.offset };
-    candidates.push(candidate);
-    if (!best || support.weight > best.support.weight) best = candidate;
-  }
+    candidatesConsidered += 1;
+    if (support.count < opts.minInliers) continue;
 
-  if (!best) {
-    throw new GroundPlaneNotFoundError(
-      `no horizontal plane found within ${opts.maxTiltDeg}° of the up axis after ` +
-        `${opts.iterations} iterations — either the floor is not in the cloud, or the ` +
-        `gravity estimate is wrong (check its coherence before trusting it)`,
+    const quality = groundPlaneQuality(
+      {
+        plane,
+        inlierCount: support.count,
+        // WEIGHTED, so a confidence map can still veto a surface: zeroing the weights
+        // over the floor has to remove the floor's support, not merely discount it.
+        inlierFraction: support.weight / totalWeight,
+        rmse: Math.sqrt(support.squared / support.count),
+        tiltDeg: angleBetweenDeg(plane.normal, up),
+        elevation: -plane.offset,
+        candidatesConsidered: 0,
+        belowFraction: support.belowCount / sampled.length,
+        tiltClamped: false,
+        seed: opts.seed,
+      },
+      opts,
     );
+    if (!chosen || quality > chosen.quality) chosen = { plane, support, quality };
   }
 
-  // The lowest well-supported horizontal plane, not the largest: a tabletop or a ceiling
-  // is every bit as flat and horizontal as the floor is.
-  //
-  // "Well supported" is an ABSOLUTE amount of evidence (`minInliers`) with a relative
-  // guard, not a fraction of the biggest surface. A purely relative rule assumes the
-  // floor is among the densest surfaces in the scene, and in a walkthrough it is not —
-  // it is seen at a grazing angle and is often one of the sparsest.
-  const threshold = Math.max(best.support.weight * opts.supportRatio, opts.minInliers);
-  let chosen = best;
-  for (const candidate of candidates) {
-    if (candidate.support.count < opts.minInliers) continue;
-    if (candidate.support.weight < threshold) continue;
-    if (candidate.elevation < chosen.elevation) chosen = candidate;
+  if (!chosen) {
+    throw new GroundPlaneNotFoundError(
+      candidatesConsidered === 0
+        ? `no horizontal plane found within ${opts.maxTiltDeg}° of the up axis after ` +
+            `${opts.iterations} iterations — either the floor is not in the cloud, or the ` +
+            `gravity estimate is wrong (check its coherence before trusting it)`
+        : `${candidatesConsidered} horizontal planes were found within ${opts.maxTiltDeg}° of ` +
+            `the up axis, and none of them had ${opts.minInliers} points supporting it — the ` +
+            `cloud has flat surfaces at this orientation but none with enough evidence to ` +
+            `measure heights against`,
+    );
   }
 
   let inliers = collectInliers(chosen.plane, points, sampled, opts.inlierDistance);
@@ -486,7 +581,7 @@ export function fitGroundPlane(
     rmse: rmsError(plane, points, inliers),
     tiltDeg: angleBetweenDeg(plane.normal, up),
     elevation: -plane.offset,
-    candidatesConsidered: candidates.length,
+    candidatesConsidered,
     belowFraction: below,
     tiltClamped,
     seed: opts.seed,

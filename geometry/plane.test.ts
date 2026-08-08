@@ -57,16 +57,44 @@ describe("fitGroundPlane", () => {
     expect(a.inlierCount).toBe(b.inlierCount);
   });
 
-  it("gives a different but still-correct answer for a different seed", () => {
+  /**
+   * The seed is the one input that carries no information about the scene, so it must
+   * not change the answer. This test used to assert the opposite — that two seeds "need
+   * not agree to the millimetre" — and that permission was the defect. On real clouds it
+   * bought a floor that moved up to 31.9 cm depending on the seed, and every height in
+   * the project inherited that spread. Eight seeds rather than two, because the failure
+   * was rare on some scenes: the door fixture agreed on 7 draws in 8.
+   */
+  it("gives the SAME answer for every seed, because the seed knows nothing", () => {
     const room = syntheticRoom({ noise: 0.004 });
-    const a = fitGroundPlane(room.points, { up: room.up, seed: 1 });
-    const b = fitGroundPlane(room.points, { up: room.up, seed: 99 });
+    const fits = [1, 7, 99, 1234, 5678, 90210, 424242, 7777777].map((seed) =>
+      fitGroundPlane(room.points, { up: room.up, seed }),
+    );
 
-    expect(b.seed).toBe(99);
-    // Both land on the floor; they need not agree to the millimetre, because a different
-    // seed samples a different triple. Agreeing on the SURFACE is the property that matters.
-    expect(Math.abs(a.elevation)).toBeLessThan(0.02);
-    expect(Math.abs(b.elevation)).toBeLessThan(0.02);
+    const elevations = fits.map((fit) => fit.elevation);
+    const spread = Math.max(...elevations) - Math.min(...elevations);
+    // 1 mm, which is below this project's measured operator repeatability of 1–6 mm.
+    expect(spread).toBeLessThan(0.001);
+
+    const tilts = fits.map((fit) => angleBetweenDeg(fit.plane.normal, room.up));
+    expect(Math.max(...tilts) - Math.min(...tilts)).toBeLessThan(0.5);
+    for (const elevation of elevations) expect(Math.abs(elevation)).toBeLessThan(0.02);
+    expect(fits[2].seed).toBe(99);
+  });
+
+  /**
+   * More iterations must not make the fit worse. That sounds too obvious to test, and it
+   * is exactly what failed: the old rule kept the LOWEST qualifying candidate, so drawing
+   * more candidates found a lower one and the floor sank. Measured 2026-08-08 on
+   * `fixtures/door/504px-112f`: the mean elevation fell from -1.082 m at 1200 iterations
+   * to -1.156 m at 19200, and the seed spread on the outdoor run went 24.6 -> 49.1 cm.
+   */
+  it("does not drift when given more iterations to search with", () => {
+    const room = syntheticRoom({ noise: 0.004 });
+    const elevations = [200, 800, 3200].map(
+      (iterations) => fitGroundPlane(room.points, { up: room.up, iterations }).elevation,
+    );
+    expect(Math.max(...elevations) - Math.min(...elevations)).toBeLessThan(0.002);
   });
 
   it("survives noisy points without drifting off the floor", () => {
@@ -136,19 +164,37 @@ describe("fitGroundPlane", () => {
     ).toThrow(GroundPlaneNotFoundError);
   });
 
-  it("lets confidence weights veto a surface — even into an honest failure", () => {
-    // Zeroing DA3's confidence across the floor removes the only real ground. The fit is
-    // then pushed up to the tabletop, which has 29% of the cloud below it, and the gate
-    // refuses it. That is the behaviour we want from confidence gating: it can say "no
-    // trustworthy ground here", rather than quietly measuring from a table.
+  /**
+   * Confidence weights must be able to take a surface away — task 2 is going to feed
+   * DA3's confidence map in here, and a fit that ignored the weights would make that
+   * change a silent no-op. Scoring uses WEIGHTED support for exactly this reason.
+   *
+   * ⚠️ What it does NOT do is refuse. This test used to assert a refusal, and that
+   * refusal was luck: with the floor vetoed, the old "keep the lowest candidate" rule
+   * happened to land on the tabletop, which has 29% of the cloud below it, and the gate
+   * threw. Checked properly on 2026-08-08 with the app's own gates, neither the old rule
+   * nor the new one refuses — the old one returns a plane with 14.87% of the cloud below
+   * it and 1.12% support. Both are junk and both are reported as a floor. Recognising
+   * that is TASK.md task 3; it is recorded here so the next reader does not mistake this
+   * test for evidence that the refusal works.
+   */
+  it("lets confidence weights take the floor away", () => {
     const room = syntheticRoom();
     const zeroed = new Float32Array(room.confidence.length).fill(1);
     for (let i = 0; i < zeroed.length; i++) {
       if (Math.abs(room.points[i * 3 + 1]) < 0.05) zeroed[i] = 0;
     }
-    expect(() =>
-      fitGroundPlane(room.points, { up: room.up, weights: zeroed, minInliers: 10 }),
-    ).toThrow(/BELOW it/);
+    const options = { up: room.up, minInliers: 10 } as const;
+    const trusted = fitGroundPlane(room.points, options);
+    const vetoed = fitGroundPlane(room.points, { ...options, weights: zeroed });
+
+    // With the floor trusted, it is found exactly and carries the scene's evidence.
+    expect(trusted.elevation).toBeCloseTo(0, 2);
+    expect(trusted.inlierFraction).toBeGreaterThan(0.1);
+
+    // Vetoed, the floor is gone: whatever is returned is somewhere else and thin.
+    expect(Math.abs(vetoed.elevation)).toBeGreaterThan(0.1);
+    expect(vetoed.inlierFraction).toBeLessThan(0.05);
   });
 
   it("subsamples deterministically when strided", () => {
@@ -167,9 +213,6 @@ describe("fitGroundPlane", () => {
       // This synthetic prior is exact. Keep the orientation gate correspondingly tight
       // so a low, tilted slice through the wall grids cannot masquerade as a floor.
       maxTiltDeg: 5,
-      // The synthetic floor is deliberately sparse but still much stronger than a
-      // horizontal wall slice. Require that distinction in this proposal-prior test.
-      supportRatio: 0.5,
       iterations: 400,
     });
     expect(fit.elevation).toBeCloseTo(0, 2);

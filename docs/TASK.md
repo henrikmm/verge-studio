@@ -32,40 +32,7 @@ written. Unticked boxes are allowed in this file and nowhere else in the reposit
 
 ## Now
 
-### 1. Make the ground fit give the same answer twice
-
-**Why.** The floor is found by an algorithm that guesses at random and keeps the best guess. We
-never checked that it lands in the same place on two runs of the same data. It does not: changing
-only the random seed — which knows nothing about the scene — moves the floor by up to **31.9 cm**
-and tips it by up to **14.55°**, on every reconstruction we have. All of those fits report
-success; not one refuses. Every height this system produces is measured up from that floor, so
-every number we have ever published carries that spread on top of its stated error. Until this is
-fixed, no other measurement is worth taking, and no outdoor result means anything.
-
-**Gate.** Fit the same cloud eight times, changing only the seed, on all five reconstructions on
-this disk. Every one must either land within a tolerance we write down, or refuse. The tolerance
-is a number in the Registry with the measurement behind it — not a feeling. `inspect floor <id>
---repeat 8` is the check, and it runs in the test suite on at least one fixture so this cannot
-come back unnoticed.
-
-**Regression.** The door fixture at 504 px is the reference, because it is the only scene with
-tape truth. Its fit today is **14.6% support, 11.8° tilt, 1.2 cm RMSE, elevation −1.0667 m**. A
-more stable fit that moves the door's graded height further from 2.100 m is not an improvement.
-
-**Approval.** `none`. Everything here is on this disk and costs nothing.
-
-**Start.** `geometry/plane.ts` (`fitGroundPlaneRobust`), REGISTRY section 3 "The ground fit is a
-coin flip", and `node scripts/inspect.mjs floor <id> --repeat 8`.
-
-- [ ] Raise the iteration count until the spread closes, and record where it closes. Cheapest
-      possible cause, so rule it in or out first.
-- [ ] Check whether the winner changes between the two proposal pools. Their quality scores sit
-      within 0.006 of each other on the outdoor run, which would explain a coin flip.
-- [ ] If the spread will not close, make disagreement between seeds a refusal — and hand that
-      criterion to task 3 rather than inventing a second one.
-- [ ] Write the tolerance into the Registry, and add the repeat check to the test suite.
-
-### 2. Build our own point cloud from the depth maps
+### 1. Build our own point cloud from the depth maps
 
 **Why.** The cloud we measure is not the reconstruction the model produced. DA3's exporter throws
 away the least confident 40% of every pixel, using a single threshold pooled across all frames at
@@ -112,7 +79,7 @@ per-frame version and is the template.
 
 ## Next
 
-### 3. Let the app say "I cannot find the ground"
+### 2. Let the app say "I cannot find the ground"
 
 **Why.** When the evidence for a floor is weak, the app picks a winner anyway and draws it exactly
 like a good one. A thin fit and a solid fit are indistinguishable on screen, so the operator has
@@ -131,15 +98,21 @@ refuse the one scene we have tape truth for is too strict, whatever it does for 
 between the best two. REGISTRY section 3 has four measured cases. The display half already exists
 (`app/src/panes/floor-state.ts`).
 
-- [ ] Wait for task 1. Every separation on record is one seed's answer: across eight seeds the
-      outdoor run ranges 0.006 to 0.328 and the door fixture 0.021 to 0.417, with no refusals
-      anywhere. A threshold set on something that unstable would fire at random.
-- [ ] Set the thresholds from the measured cases, including the 6.2%-support fit that passes as
-      `ok` today (door fixture at `inlierDistance 0.1, maxTiltDeg 45, stride 32, iterations 250`).
+- [ ] **Do not use `separation` as the signal.** It measured something real when the two proposal
+      pools disagreed; now that they find the same plane it reads ~0.000 on a good fit, so a low
+      separation means agreement rather than a coin flip. Its meaning inverted on 2026-08-08.
+- [ ] Set the thresholds from the measured cases. Two known cases where the app returns junk and
+      calls it a floor: the 6.2%-support fit (door fixture at `inlierDistance 0.1, maxTiltDeg 45,
+      stride 32, iterations 250`), and the confidence-veto case in `plane.test.ts`, where the app's
+      own gates return a plane with 1.12% support. `minInlierFraction` is 0.01 and sits just below
+      it. `belowFraction` is the cleaner discriminator: good fits now read 0.00–0.89%, the junk
+      reads 7.66–14.87%.
+- [ ] `room-252px-256f` is the one reconstruction the reproducibility fix did not rescue — 35.7 cm
+      of seed spread with 1.3–2.7% support. It is the natural first case to refuse.
 - [ ] Make refusal travel: a height measured against a refused floor must refuse as well.
 - [ ] Agree the wording with the user before it ships.
 
-### 4. Take the system outdoors, with something rigid to measure
+### 3. Take the system outdoors, with something rigid to measure
 
 **Why.** Everything we know about this system's accuracy comes from one room, one operator and one
 camera path. Outdoors the ground is not a flat indoor floor, and we do not know whether the fit
@@ -153,8 +126,9 @@ stated plainly as a pass or as a named limitation.
 **Regression.** None — this adds evidence rather than changing code. If it forces a change, that
 change is a new task with its own gate.
 
-**Approval.** `cloud spend + user confirmation`. Do task 1 first: an outdoor verdict computed on a
-floor that moves 32 cm with the seed is a coin toss with a number attached.
+**Approval.** `cloud spend + user confirmation`. The floor is reproducible as of 2026-08-08, so an
+outdoor verdict is now worth computing; before that it was a coin toss with a number attached.
+Bring something rigid, because the clip already on disk has none — see the third step.
 
 **Start.** REGISTRY decision 3 (the ground rule) and section 7 (its weak spots). Targets are keyed
 by the clip's content digest, so a new clip starts with an empty set.
@@ -173,7 +147,7 @@ by the clip's content digest, so a new clip starts with an empty set.
 
 ## Later
 
-### 5. Decide what measuring grass means, then build it
+### 4. Decide what measuring grass means, then build it
 
 **Why.** Vegetation is the goal this project is aimed at, and we cannot currently measure it. A
 plant is not a door repeated many times: it has no single height to be right or wrong about, so
@@ -200,7 +174,7 @@ this task already has a subject waiting.
 - [ ] Output a heat map, not a list of objects.
 - [ ] Check it against the physical reference and report error, coverage and abstention rate.
 
-### 6. Close the 112-frame memory question
+### 5. Close the 112-frame memory question
 
 **Why.** One run used 22.02 GiB where the measured table predicted 21.28 — 99.96% of the card,
 with no headroom left. Until it is explained we cap ourselves at 81 frames instead of 112, which

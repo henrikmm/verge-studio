@@ -74,6 +74,32 @@ more complete and the evidence less honest. B5 has not been re-measured under th
 | raw average error, B2 + B3 | **0.0371 m** | |
 | corrected average error, B2 + B3 | **0.0147 m** | |
 
+### Checked a second time, by an instrument with no operator in it
+
+Added 2026-08-08. The table above rests entirely on hand-painted masks, so it could not rule out
+the possibility that the masks themselves were the error. `inspect levels` measures the same table
+with no mask, no segmentation model and no person: it takes every point's height above the fitted
+floor and finds the surfaces as spikes in the distribution. Different evidence, different code
+path, same physical quantity.
+
+| Instrument | Floor → tabletop | Points used |
+|---|---:|---:|
+| Brush, three trials, one operator | 0.6983 m | ~600 |
+| Height histogram, no mask | **0.6994 m** | 6,640 |
+| A second reconstruction of the same clip (`20260806-173802`, 81 frames) | 0.7013 m | 6,454 |
+| Tape | **0.750 m** | — |
+
+**The two instruments agree to 1.1 mm, and two independent reconstructions agree to 1.9 mm.** So
+the −5.1 cm against the tape is not the operator, not the brush and not the mask. It is in the
+reconstruction. Painting is not the weak link, and the repeatability figures above are measuring
+what they claim to.
+
+The band was checked by eye as well as by number: painting 0.68–0.72 m onto frame 93 covers the
+desk top and nothing else.
+
+⚠️ **This checks B2 only.** The instrument finds surfaces, so it cannot reach B1 (a door leaf),
+B3 (a tower) or B4 (a monitor). Those three remain graded on masks alone.
+
 ### Floor quality at this setting
 
 The ground fit is part of the result, not decoration. A small fit error with little support is not
@@ -88,6 +114,11 @@ evidence of a floor.
 All nine trials reported byte-identical floor diagnostics (support 0.145536, tilt 11.84694728°,
 fit error 0.01231087 m, camera agreement 0.94942707). Determinism was asserted by a unit test and
 is now confirmed end to end by independent user-driven recordings.
+
+**Those diagnostics survived the 2026-08-08 selection-rule fix unchanged**, to six decimal places
+and the same 9096 inliers. The rule that decides which candidate plane wins was rewritten and this
+fixture's floor did not move at all, so every graded number above still stands on the plane it was
+taken against. The 356 px and 252 px rows below did move, and their floors were wrong before.
 
 ---
 

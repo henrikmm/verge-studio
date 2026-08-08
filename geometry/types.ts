@@ -16,7 +16,15 @@ export type Vec3 = readonly [number, number, number];
  *
  * The normal always points **up** (towards the sky, away from the ground), which is
  * what makes `signedHeight` read as "height above the floor" rather than an unsigned
- * distance. A plane's own elevation along the up axis is therefore `-offset`.
+ * distance.
+ *
+ * `-offset` is the plane's distance from the origin **along its own normal**, which is
+ * its elevation along the up axis only when the two coincide. Two planes with different
+ * tilts have their offsets measured along different directions, so subtracting one from
+ * the other does not give a height difference. Measured 2026-08-08 on the outdoor run:
+ * the seed-to-seed spread read 31.9 cm as a difference of offsets and 39.6 cm measured
+ * properly, as the planes' heights under a common point. Use `planeElevationAt` when
+ * comparing planes; `-offset` is only safe for one plane against itself.
  */
 export interface Plane {
   normal: Vec3;
@@ -57,6 +65,23 @@ export function subtract(a: Vec3, b: Vec3): Vec3 {
 /** Signed distance from the plane, positive above it (because the normal points up). */
 export function signedHeight(plane: Plane, p: Vec3): number {
   return dot(plane.normal, p) + plane.offset;
+}
+
+/**
+ * Where the plane sits along `up`, directly under `reference`.
+ *
+ * The comparable version of "how high is this plane". Two fits of the same scene can have
+ * different normals, and their `-offset` values are then distances along two different
+ * directions — subtracting them measures nothing. Reading both planes' heights under one
+ * shared point compares like with like. NaN when the plane is edge-on to `up`, where the
+ * question has no answer.
+ */
+export function planeElevationAt(plane: Plane, reference: Vec3, up: Vec3): number {
+  const axis = normalize(up);
+  if (!axis) return NaN;
+  const alongNormal = dot(plane.normal, axis);
+  if (Math.abs(alongNormal) < 1e-9) return NaN;
+  return dot(reference, axis) - signedHeight(plane, reference) / alongNormal;
 }
 
 /** Angle between two unit-ish vectors, in degrees. Clamped, so acos never sees 1+ε. */

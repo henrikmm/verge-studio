@@ -24,6 +24,7 @@ export {
   fitGroundPlaneRobust,
   groundPlaneQuality,
 } from "../../geometry/plane";
+export { horizontalLevels, levelNear, type Level } from "../../geometry/levels";
 export {
   heightsAbovePlane,
   median,
@@ -37,6 +38,7 @@ export {
   cross,
   dot,
   normalize,
+  planeElevationAt,
   signedHeight,
   type Plane,
   type Vec3,

@@ -287,7 +287,6 @@ export const groundPlaneSpec: NodeSpec = {
       minInliers: 100,
       minInlierFraction: 0.01,
       proposalFractions: [1, 0.35],
-      supportRatio: 0.1,
       maxBelowFraction: 0.2,
       seed: 7,
     });

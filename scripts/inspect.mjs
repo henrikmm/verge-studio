@@ -59,6 +59,7 @@ COMMANDS
   run <id>                   what the run is: frames, sampling, pixels per frame, model, cost
   cloud <id>                 what is in the point cloud: count, extent, up axis, camera track
   floor <id>                 fit the ground plane and report it, including the runner-up margin
+  levels <id>                the flat surfaces above the floor, measured with no mask at all
   view <id>                  draw the cloud            --view / --colour / --cameras
   frames <id>                draw the source frames as one numbered contact sheet
   depth <id>                 draw one frame's depth, colour-mapped as Depth 2D maps it
@@ -99,6 +100,8 @@ GROUND-FIT OPTIONS  (defaults are the app's own, so the numbers match the interf
                              (the fit only — use --every to thin a drawing)
   --seed <n>                 RANSAC seed                     default 7
   --repeat <n>               floor: fit n times changing ONLY the seed, and report the spread
+  --expect <m>               levels: grade the surface nearest this height against a tape truth
+  --tolerance <m>            levels: how far from --expect still counts as that surface (0.25)
 
 EXAMPLES
   node scripts/inspect.mjs floor door-504px-112f
@@ -112,6 +115,7 @@ const COMMANDS = {
   run: cmdRun,
   cloud: cmdCloud,
   floor: cmdFloor,
+  levels: cmdLevels,
   view: cmdView,
   frames: cmdFrames,
   depth: cmdDepth,
@@ -245,17 +249,32 @@ async function cmdCloud(positional, flags) {
  * Reported as a SPREAD rather than a standard deviation: with a handful of seeds the
  * extremes are what a person needs to see, and "the ground moved 18 cm depending on the
  * seed" is the sentence that matters.
+ *
+ * The spread is measured as each plane's height under ONE shared point, not as the
+ * difference of their `offset` values. Two fits with different normals have their offsets
+ * measured along two different directions, so subtracting them is not a height. Measured
+ * 2026-08-08 on the outdoor run: 31.9 cm the wrong way, 39.6 cm the right way. The
+ * instrument was understating the very thing it existed to expose.
  */
 async function repeatFloor(run, flags, times) {
   const runs = [];
+  // The reference point AND the axis are fixed for the whole study. Reading each plane
+  // along its own normal is the very mistake this measure exists to avoid, so the axis is
+  // the camera-derived up, which does not depend on the seed.
+  let reference = null;
+  let axis = null;
   for (let i = 0; i < times; i++) {
     const s = await scene(run, { ...flags, seed: 7 + i * 101 }, { fitFloor: true });
+    reference ??= cloudStats(s.cloud.points).centroid;
+    axis ??= s.gravity?.up ?? s.up.up;
     runs.push({
       seed: 7 + i * 101,
       ok: Boolean(s.floor),
       elevation: s.floor?.elevation ?? null,
+      height: s.floor ? s.T.planeElevationAt(s.floor.plane, reference, axis) : null,
       tiltDeg: s.floor?.tiltDeg ?? null,
       inlierFraction: s.floor?.inlierFraction ?? null,
+      belowFraction: s.floor?.belowFraction ?? null,
       separation: marginOf([...(s.floor?.hypotheses ?? [])].sort((a, b) => b.qualityScore - a.qualityScore))
         ?.separation ?? null,
       cloud: s.cloud.origin ?? "glb",
@@ -263,12 +282,18 @@ async function repeatFloor(run, flags, times) {
   }
 
   const spread = (key) => {
-    const values = runs.map((r) => r[key]).filter((v) => v !== null);
+    const values = runs.map((r) => r[key]).filter((v) => v !== null && Number.isFinite(v));
     if (values.length === 0) return null;
     return { min: Math.min(...values), max: Math.max(...values) };
   };
 
-  return { runs, elevation: spread("elevation"), tiltDeg: spread("tiltDeg"), separation: spread("separation") };
+  return {
+    runs,
+    elevation: spread("elevation"),
+    height: spread("height"),
+    tiltDeg: spread("tiltDeg"),
+    separation: spread("separation"),
+  };
 }
 
 async function cmdFloor(positional, flags) {
@@ -285,24 +310,27 @@ async function cmdFloor(positional, flags) {
       cloud: study.runs[0].cloud,
       seeds: `${times} fits, differing ONLY in the RANSAC seed`,
       refused: refused ? `${refused} of ${times} found no floor at all` : "none",
-      elevation: study.elevation
-        ? `${round(study.elevation.min, 3)} .. ${round(study.elevation.max, 3)} m — spread ${round((study.elevation.max - study.elevation.min) * 100, 1)} cm`
+      height: study.height
+        ? `${round(study.height.min, 4)} .. ${round(study.height.max, 4)} m — SPREAD ${round((study.height.max - study.height.min) * 100, 2)} cm, measured under the cloud's centroid`
         : "no fit",
       tilt: study.tiltDeg
         ? `${round(study.tiltDeg.min, 2)} .. ${round(study.tiltDeg.max, 2)} deg — spread ${round(study.tiltDeg.max - study.tiltDeg.min, 2)} deg`
         : "no fit",
+      tolerance: "1 cm and 0.5 deg — below this project's own operator repeatability of 1-6 mm",
       separation: study.separation
         ? `${round(study.separation.min, 3)} .. ${round(study.separation.max, 3)}`
         : "no fit",
     }));
     out("");
     out(table(
-      ["SEED", "ELEVATION", "TILT", "SUPPORT", "SEPARATION"],
+      ["SEED", "HEIGHT", "OFFSET", "TILT", "SUPPORT", "BELOW", "SEPARATION"],
       study.runs.map((r) => [
         r.seed,
-        r.ok ? `${round(r.elevation, 3)} m` : "REFUSED",
+        r.ok ? `${round(r.height, 4)} m` : "REFUSED",
+        r.ok ? `${round(r.elevation, 4)}` : "—",
         r.ok ? `${round(r.tiltDeg, 2)}d` : "—",
         r.ok ? pct(r.inlierFraction) : "—",
+        r.ok ? pct(r.belowFraction) : "—",
         r.separation === null ? "—" : round(r.separation, 3),
       ]),
     ));
@@ -377,6 +405,70 @@ async function cmdFloor(positional, flags) {
     out("");
     out(`image  ${path}`);
   }
+}
+
+/**
+ * Measure the scene's flat surfaces without anybody painting anything.
+ *
+ * Every graded number in this project came from a mask, so the operator is part of the
+ * instrument. This is the second instrument, sharing nothing with the first: a horizontal
+ * surface puts all its points at one height above the floor, so counting points per 5 mm
+ * band turns the tabletop into a spike whose height IS the floor-to-tabletop measurement.
+ * No brush, no segmentation model, tens of thousands of points instead of a few hundred.
+ *
+ * The thickness column is the one that grades the FLOOR. Support, tilt and RMSE all
+ * describe the plane against the points it chose; none of them notices a plane that is
+ * level with nothing. A surface a metre across, read against a floor whose normal is one
+ * degree out, comes back about 7 mm thick. See `geometry/levels.ts`.
+ */
+async function cmdLevels(positional, flags) {
+  const run = resolveRun(positional[0]);
+  const s = await scene(run, flags, { fitFloor: true });
+  if (!s.floor) {
+    if (flags.json) return json({ id: run.id, levels: null, reason: s.floorError });
+    out(pairs({ run: `${run.id} (${run.kind})`, levels: "NONE", reason: s.floorError }));
+    process.exitCode = 3;
+    return;
+  }
+
+  const levels = s.T.horizontalLevels(s.cloud.points, s.floor.plane, {
+    stride: Number(flags.stride ?? 16),
+  });
+
+  const facts = {
+    run: `${run.id} (${run.kind})`,
+    cloud: s.cloud.origin ?? `GLB, ${s.cloud.count.toLocaleString("en-GB")} points`,
+    floor: `${pct(s.floor.inlierFraction)} support, ${round(s.floor.tiltDeg, 2)} deg tilt — every height below is measured from THIS plane`,
+    surfaces: `${levels.length} found, no mask involved`,
+  };
+
+  if (flags.expect !== undefined) {
+    const expected = Number(flags.expect);
+    const tolerance = Number(flags.tolerance ?? 0.25);
+    const found = s.T.levelNear(levels, expected, tolerance);
+    facts.graded = found
+      ? `${round(found.height, 4)} m against ${expected} m tape — error ${round((found.height - expected) * 100, 2)} cm (${round(((found.height - expected) / expected) * 100, 2)}%), from ${found.count.toLocaleString("en-GB")} points`
+      : `NO SURFACE within ${tolerance} m of ${expected} m — the instrument abstains rather than reaching`;
+  }
+
+  if (flags.json) return json({ id: run.id, floor: strip(s.floor), levels, expect: flags.expect ?? null });
+
+  out(pairs(facts));
+  out("");
+  out(table(
+    ["HEIGHT", "POINTS", "SHARE", "THICKNESS", "WIDTH", "PROMINENCE"],
+    levels
+      .slice()
+      .sort((a, b) => a.height - b.height)
+      .map((l) => [
+        `${round(l.height, 4)} m`,
+        l.count.toLocaleString("en-GB"),
+        pct(l.fraction),
+        `${round(l.thickness * 1000, 1)} mm`,
+        `${round(l.extent * 100, 1)} cm`,
+        `${round(l.prominence, 1)}x`,
+      ]),
+  ));
 }
 
 async function cmdView(positional, flags) {
@@ -883,7 +975,6 @@ async function scene(run, flags, { fitFloor }) {
           minInliers: 100,
           minInlierFraction: 0.01,
           proposalFractions: [1, 0.35],
-          supportRatio: 0.1,
           maxBelowFraction: 0.2,
           seed: Number(flags.seed ?? 7),
         });
