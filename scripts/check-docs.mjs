@@ -35,14 +35,17 @@ const IGNORED = new Set(["node_modules", ".git", "dist", "donor", ".runs", "fixt
  *
  * The task list's ceiling was doubled 180 -> 360 on 2026-08-08, when tasks became tests: a task
  * now has to state its pass condition and what it must not break BEFORE the work starts, and
- * those two fields are the point of the file rather than padding in it. The instruction files are
- * unchanged and should stay that way — they are read at the start of every session.
+ * those two fields are the point of the file rather than padding in it.
+ *
+ * AGENTS.md went 180 -> 216 the same day, by 20%, to make room for the writing guide. That file
+ * teaches the house style, and a rule about clear writing that has been squeezed until it is
+ * terse is a rule that argues against itself. CLAUDE.md is unchanged and should stay that way.
  *
  * A wider ceiling is not an invitation. Detail that belongs in an evidence file still goes to an
  * evidence file; see section 6 of the registry for where those live.
  */
 const BUDGETS = [
-  { file: "AGENTS.md", lines: 180, bytes: 16 * 1024 },
+  { file: "AGENTS.md", lines: 216, bytes: 20 * 1024 },
   { file: "CLAUDE.md", lines: 40, bytes: 4 * 1024 },
   { file: "docs/TASK.md", lines: 360, bytes: 32 * 1024 },
   // Bytes scale with the lines, or the byte cap silently becomes the real limit: the registry

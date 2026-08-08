@@ -153,21 +153,56 @@ selection drawn on the source frame can tell you whether it is.
 
 ## How to write here
 
-These documents are read by people as well as agents, and the reader has to agree with what they
-say. Write accordingly:
+Everything here is in English, and all of it is aimed at one reader. This applies to what you say
+in the conversation too, not only to the files — the same person reads both.
 
-- **Say the outcome first**, then the mechanism. What happened, before how.
-- **Explain a specialist term the first time it appears**, in a clause, not a footnote. Do not
-  drop jargon to sound precise; precision is in the numbers. `TASK.md` is the plainest of these
-  files — short sentences, no ornament, technical where it has to be and nowhere else.
-- **Keep file and function names in the evidence sections**, where someone will look them up. They
-  do not belong in a sentence explaining why a decision was made.
-- **Be specific about uncertainty.** "Measured 22.02 GiB on 2026-08-05" beats "high". If a number
-  is a guess, say so and give the range.
-- Everything in this repository is in English.
+**Picture the reader, because they are real.** They work in software and they read this code.
+They started this project and know exactly what it is for. What they are still picking up is the
+domain: depth models, plane fitting, the geometry. They are picking it up deliberately, and they
+are not slow — but they will not stop to decode your vocabulary, and they should not have to.
 
-Code follows the same spirit: TypeScript in strict mode, file names in kebab-case, React
-components in PascalCase, and comments that explain why rather than restate what.
+So: never explain programming, they know what a function is. Always explain a domain term the
+first time it appears, in a clause rather than a footnote. And never make them work to reach an
+idea they would have understood immediately.
+
+The subject here is genuinely hard, and that is the reason to keep the writing easy. Difficulty in
+the sentence adds to difficulty in the material and the reader pays for both. A paragraph that is
+hard to read does not deliver its idea, however correct the idea is.
+
+The test is mechanical: **read the sentence aloud.** If you run out of breath, or have to go back
+to find the subject, it is too long. Cut it in two.
+
+- **One idea per sentence.** Two clauses joined by "which", "so that" or a semicolon are usually
+  two sentences pretending to be one.
+- **Numbers instead of adjectives.** "Moves the floor by 31.9 cm" tells the reader what to do
+  next. "Significant drift" tells them nothing and cannot be checked. If a number is a guess, say
+  it is a guess and give the range.
+- **Outcome first, mechanism second.** What happened, then how. A reader who stops after the first
+  sentence should still have learned the thing that mattered.
+- **Say it plainly, then name it.** "An algorithm that guesses at random and keeps the best guess
+  (RANSAC)" costs four words and loses nobody. Short words and ordinary grammar everywhere else:
+  "use", not "utilise"; "because", not "due to the fact that".
+- **Write to be disagreed with.** Give the file, the run, the date. A claim nobody can check is an
+  opinion.
+- **File and function names belong in the evidence lines**, where someone will look them up — not
+  in the sentence explaining why a decision was made.
+
+**The failure to avoid is writing that performs.** It reads as careful and costs the reader a
+pass to unpack. It is the most common way work here goes unread:
+
+> ✗ The exporter's adaptive percentile floor decimates the reconstruction's less-certain strata.
+> ✓ The exporter throws away the least confident 40% of every pixel.
+
+Same fact, nothing lost, one obstacle removed — and the second version can be checked, because it
+has a number in it. If you catch yourself reaching for an unusual word, the plain one was almost
+certainly right. Ornament is not a style choice here; it is a defect.
+
+**`TASK.md` is the model — read it before writing anything else.** It is the plainest file in the
+repository because someone is about to act on it, and it stays technical throughout: the register
+to copy is *precise and ordinary*, not *simplified*. `REGISTRY.md` carries evidence and runs
+denser, under exactly the same rules. Code comments explain **why**, and never restate **what**.
+
+Code style: TypeScript in strict mode, file names in kebab-case, React components in PascalCase.
 
 ## Boundaries
 
