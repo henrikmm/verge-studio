@@ -22,9 +22,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { cross, dot, normalize, signedHeight, type Vec3 } from "../../../geometry";
-import { resolveCurrentInput, resolveInput, useGraph } from "../graph/graph-store";
 import {
+  resolveCurrentInput,
+  resolveInput,
+  setNodeParamAndRun,
+  useGraph,
+} from "../graph/graph-store";
+import {
+  CLOUD_BUDGETS,
+  CLOUD_COLOURS,
+  CLOUD_SOURCES,
+  POINT_CLOUD_ID,
   VIEWER_3D_ID,
+  type CloudColour,
+  type CloudSource,
   type MeasurementValue,
   type PointCloudValue,
   type SelectionValue,
@@ -194,6 +205,13 @@ export function Viewport3D() {
     | DepthFieldValue
     | undefined;
   const cloud = incoming?.value as PointCloudValue | undefined;
+  // Which cloud the switch is ASKING for, read from the node's own parameter rather than from
+  // the rendered cloud. During a rebuild the two disagree for a second, and a chip that jumps
+  // back to the old value while the new one loads reads as the click having failed.
+  const cloudParams = graph.nodes.find((n) => n.id === POINT_CLOUD_ID)?.params;
+  const requestedSource = (cloudParams?.source as CloudSource | undefined) ?? "glb";
+  const requestedColour = (cloudParams?.colour as CloudColour | undefined) ?? "rgb";
+  const requestedBudget = String(cloudParams?.budget ?? 1_000_000);
   const floor = useMemo(() => readFloorState(graph), [graph]);
   const ground = floor.kind === "ok" ? floor.ground : undefined;
   const selection = resolveCurrentInput(graph, VIEWER_3D_ID, "selection")?.value as SelectionValue | undefined;
@@ -837,6 +855,54 @@ export function Viewport3D() {
         `Keys` chip below says all of it, in a place that cannot be pushed out of the pane.
       */}
       <OutputRow choices={OUTPUTS} active={output} onSelect={setOutput} />
+      {/*
+        Which cloud is being measured, switchable from the pane that shows it.
+        It is a parameter of the Point Cloud node, and it is still editable there — but the
+        node lives in a graph pane the measurement layout keeps small, and a switch you have to
+        go and find is a switch nobody A/Bs. The hint carries the number that makes the two
+        clouds different: the share of its own pixels that the LEANEST frame contributed.
+      */}
+      <OutputRow
+        label="CLOUD"
+        choices={CLOUD_SOURCES}
+        active={requestedSource}
+        onSelect={(id) => setNodeParamAndRun(POINT_CLOUD_ID, "source", id)}
+        hint={
+          cloud?.leanestFrameShare == null
+            ? undefined
+            : `leanest frame ${(cloud.leanestFrameShare * 100).toFixed(0)}%`
+        }
+      />
+      {/*
+        Colour and budget belong to the rebuilt cloud only. DA3's export carries its own vertex
+        colours and its own fixed 1,000,000, so offering either against it would be a control
+        that does nothing — the failure DESIGN.md calls a lie in the interface.
+
+        The budget hint is the number that explains a holey cloud once no frame is being
+        dropped: the share of confidence-floor survivors the budget actually kept.
+      */}
+      {requestedSource === "npz" && (
+        <>
+          <OutputRow
+            label="COLOUR"
+            choices={CLOUD_COLOURS}
+            active={requestedColour}
+            onSelect={(id) => setNodeParamAndRun(POINT_CLOUD_ID, "colour", id)}
+            hint={cloud?.coloured === false ? "no frames on disk — ramped" : undefined}
+          />
+          <OutputRow
+            label="POINTS"
+            choices={CLOUD_BUDGETS}
+            active={requestedBudget}
+            onSelect={(id) => setNodeParamAndRun(POINT_CLOUD_ID, "budget", Number(id))}
+            hint={
+              cloud?.keptOfSurvivors == null
+                ? undefined
+                : `${(cloud.keptOfSurvivors * 100).toFixed(0)}% of what survived the floor`
+            }
+          />
+        </>
+      )}
       <OutputRow
         label="VIEW"
         choices={VIEW_MODES}

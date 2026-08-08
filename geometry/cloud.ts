@@ -117,6 +117,14 @@ export interface BuiltCloud {
   weights: Float32Array;
   /** Per-point raw DA3 confidence, carried rather than discarded at the door. */
   confidence: Float32Array;
+  /**
+   * Per-point RGB, three bytes each, or null when no frame carried an image.
+   *
+   * The real colour of the scene, sampled from the source photographs. A height ramp is a
+   * reading of one coordinate; this is what the camera saw, and it is what makes a cloud
+   * recognisable as a place rather than a shape.
+   */
+  colors: Uint8Array | null;
   pointCount: number;
   frames: FrameContribution[];
   /** Voxel edge actually used, in metres. 0 when downsampling was off. */
@@ -247,6 +255,9 @@ class VoxelGrid {
   private readonly sz: number[] = [];
   private readonly sw: number[] = [];
   private readonly sc: number[] = [];
+  private readonly sr: number[] = [];
+  private readonly sg: number[] = [];
+  private readonly sb: number[] = [];
   private readonly n: number[] = [];
   /** Points too far from the origin to index without two cells colliding. */
   outOfRange = 0;
@@ -254,7 +265,16 @@ class VoxelGrid {
   constructor(private readonly edge: number) {}
 
   /** False when the point fell outside the addressable grid and was not stored. */
-  add(x: number, y: number, z: number, weight: number, confidence: number): boolean {
+  add(
+    x: number,
+    y: number,
+    z: number,
+    weight: number,
+    confidence: number,
+    r: number,
+    g: number,
+    b: number,
+  ): boolean {
     const ix = Math.floor(x / this.edge);
     const iy = Math.floor(y / this.edge);
     const iz = Math.floor(z / this.edge);
@@ -283,6 +303,9 @@ class VoxelGrid {
       this.sz.push(0);
       this.sw.push(0);
       this.sc.push(0);
+      this.sr.push(0);
+      this.sg.push(0);
+      this.sb.push(0);
       this.n.push(0);
     }
     // Weighted centroid: a confident pixel pulls the representative point towards itself.
@@ -292,6 +315,9 @@ class VoxelGrid {
     this.sz[slot] += z * w;
     this.sw[slot] += w;
     this.sc[slot] += confidence;
+    this.sr[slot] += r;
+    this.sg[slot] += g;
+    this.sb[slot] += b;
     this.n[slot] += 1;
     return true;
   }
@@ -300,21 +326,26 @@ class VoxelGrid {
     return this.sx.length;
   }
 
-  /** Cell centroids, their mean weight and their mean confidence. */
-  drain(): { positions: Float32Array; weights: Float32Array; confidence: Float32Array } {
+  /** Cell centroids, their mean weight, mean confidence and mean colour. */
+  drain(): CloudBuffers {
     const count = this.sx.length;
     const positions = new Float32Array(count * 3);
     const weights = new Float32Array(count);
     const confidence = new Float32Array(count);
+    const colors = new Uint8Array(count * 3);
     for (let i = 0; i < count; i++) {
       const w = this.sw[i];
+      const n = this.n[i];
       positions[i * 3] = this.sx[i] / w;
       positions[i * 3 + 1] = this.sy[i] / w;
       positions[i * 3 + 2] = this.sz[i] / w;
-      weights[i] = w / this.n[i];
-      confidence[i] = this.sc[i] / this.n[i];
+      weights[i] = w / n;
+      confidence[i] = this.sc[i] / n;
+      colors[i * 3] = this.sr[i] / n;
+      colors[i * 3 + 1] = this.sg[i] / n;
+      colors[i * 3 + 2] = this.sb[i] / n;
     }
-    return { positions, weights, confidence };
+    return { positions, weights, confidence, colors };
   }
 }
 
@@ -336,12 +367,15 @@ function makeRandom(seed: number): () => number {
   };
 }
 
+interface CloudBuffers {
+  positions: Float32Array;
+  weights: Float32Array;
+  confidence: Float32Array;
+  colors: Uint8Array;
+}
+
 /** Uniform selection without replacement — a partial Fisher–Yates over the point indices. */
-function capPoints(
-  built: { positions: Float32Array; weights: Float32Array; confidence: Float32Array },
-  keep: number,
-  seed: number,
-): { positions: Float32Array; weights: Float32Array; confidence: Float32Array } {
+function capPoints(built: CloudBuffers, keep: number, seed: number): CloudBuffers {
   const total = built.weights.length;
   if (keep >= total) return built;
   const index = new Int32Array(total);
@@ -356,15 +390,19 @@ function capPoints(
   const positions = new Float32Array(keep * 3);
   const weights = new Float32Array(keep);
   const confidence = new Float32Array(keep);
+  const colors = new Uint8Array(keep * 3);
   for (let i = 0; i < keep; i++) {
     const source = index[i];
     positions[i * 3] = built.positions[source * 3];
     positions[i * 3 + 1] = built.positions[source * 3 + 1];
     positions[i * 3 + 2] = built.positions[source * 3 + 2];
+    colors[i * 3] = built.colors[source * 3];
+    colors[i * 3 + 1] = built.colors[source * 3 + 1];
+    colors[i * 3 + 2] = built.colors[source * 3 + 2];
     weights[i] = built.weights[source];
     confidence[i] = built.confidence[source];
   }
-  return { positions, weights, confidence };
+  return { positions, weights, confidence, colors };
 }
 
 function describe(options: Required<Pick<BuildCloudOptions, "confidence" | "weight">> & {
@@ -425,12 +463,14 @@ export function buildCloud(frames: readonly Frame[], options: BuildCloudOptions 
   const loosePositions = new Float32Array(capacity * 3);
   const looseWeights = new Float32Array(capacity);
   const looseConfidence = new Float32Array(capacity);
+  const looseColors = new Uint8Array(capacity * 3);
   let written = 0;
   let before = 0;
+  let coloured = 0;
 
   for (let f = 0; f < frames.length; f++) {
     const frame = frames[f];
-    const { width, height, confidence } = frame;
+    const { width, height, confidence, rgb } = frame;
     const pixels = width * height;
 
     // One back-projection with no confidence floor, so `usable` counts what the depth map
@@ -470,12 +510,19 @@ export function buildCloud(frames: readonly Frame[], options: BuildCloudOptions 
           cloud.points[index * 3 + 2],
         );
         before += 1;
+        const r = rgb ? rgb[index * 3] : 0;
+        const g = rgb ? rgb[index * 3 + 1] : 0;
+        const b = rgb ? rgb[index * 3 + 2] : 0;
+        if (rgb) coloured += 1;
         if (grid) {
-          grid.add(px, py, pz, weight, raw);
+          grid.add(px, py, pz, weight, raw, r, g, b);
         } else {
           loosePositions[written * 3] = px;
           loosePositions[written * 3 + 1] = py;
           loosePositions[written * 3 + 2] = pz;
+          looseColors[written * 3] = r;
+          looseColors[written * 3 + 1] = g;
+          looseColors[written * 3 + 2] = b;
           looseWeights[written] = weight;
           looseConfidence[written] = raw;
           written += 1;
@@ -493,12 +540,13 @@ export function buildCloud(frames: readonly Frame[], options: BuildCloudOptions 
     });
   }
 
-  const built = grid
+  const built: CloudBuffers = grid
     ? grid.drain()
     : {
         positions: loosePositions.subarray(0, written * 3),
         weights: looseWeights.subarray(0, written),
         confidence: looseConfidence.subarray(0, written),
+        colors: looseColors.subarray(0, written * 3),
       };
   const maxPoints = options.maxPoints ?? Infinity;
   const drained =
@@ -517,6 +565,9 @@ export function buildCloud(frames: readonly Frame[], options: BuildCloudOptions 
     positions: drained.positions,
     weights,
     confidence: drained.confidence,
+    // Null rather than a black buffer when no frame carried an image: a caller must be able to
+    // tell "the scene is dark here" from "nobody told me the colour".
+    colors: coloured > 0 ? drained.colors : null,
     pointCount: drained.positions.length / 3,
     frames: contributions,
     voxelM,

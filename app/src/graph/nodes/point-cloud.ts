@@ -58,9 +58,73 @@ export interface PointCloudValue {
    * whose per-frame accounting only `inspect coverage` can reconstruct.
    */
   leanestFrameShare: number | null;
+  /**
+   * Share of the confidence-floor survivors the point budget kept. Null for the GLB.
+   *
+   * Once no frame is being dropped, this is the number that explains a cloud still looking
+   * sparse: on the outdoor run at a 1,000,000 budget it is 12%, and the holes are the budget
+   * rather than anything to do with confidence.
+   */
+  keptOfSurvivors: number | null;
+  /** True when the points carry the photographs' own colour rather than a height ramp. */
+  coloured: boolean;
 }
 
 export type CloudSource = "glb" | "npz";
+export type CloudColour = "rgb" | "height";
+
+export const POINT_CLOUD_ID = "point-cloud";
+
+/**
+ * The two clouds, as the viewport offers them.
+ *
+ * Lives here rather than in the pane so the chips and the node's own control cannot describe
+ * the same switch differently — they read one list.
+ */
+/** How a rebuilt cloud is coloured, as the viewport offers it. */
+export const CLOUD_COLOURS: { id: CloudColour; label: string; title: string }[] = [
+  {
+    id: "rgb",
+    label: "Photo",
+    title:
+      "The colour the camera saw, sampled from the source frames on disk and resampled onto the depth map's grid. The npz carries no colour of its own, so this reads the photographs back.",
+  },
+  {
+    id: "height",
+    label: "Height",
+    title:
+      "A ramp along the vertical, blue low to red high. A reading of one coordinate rather than a picture of the scene — useful for seeing whether a surface is level, useless for recognising what it is.",
+  },
+];
+
+/**
+ * Point budgets, as the viewport offers them.
+ *
+ * The default matches DA3's own 1,000,000 so the two clouds are comparable on sight. It is also
+ * the thing that makes a fully-covered cloud still look holey: on the 99-frame outdoor run that
+ * budget keeps 12% of the points that survived the confidence floor. Raising it is how you see
+ * the scene rather than a comparison.
+ */
+export const CLOUD_BUDGETS: { id: string; label: string; title: string }[] = [
+  { id: "1000000", label: "1M", title: "DA3's own budget. The like-for-like comparison." },
+  { id: "3000000", label: "3M", title: "Three times the points. About 350 MB of positions and colour." },
+  { id: "6000000", label: "6M", title: "Most of what a 99-frame run has to give. Watch the memory." },
+];
+
+export const CLOUD_SOURCES: { id: CloudSource; label: string; title: string }[] = [
+  {
+    id: "glb",
+    label: "DA3",
+    title:
+      "The cloud the model exported. Coloured, and what every measurement on record was taken against. Its confidence floor is pooled across the whole run, so it deletes the frames the model was least sure about entirely — three of this fixture's 112, and five of the outdoor run's 99.",
+  },
+  {
+    id: "npz",
+    label: "Ours",
+    title:
+      "Rebuilt here from the full-resolution depth maps, taking that same floor per frame instead of once for the run. The leanest frame goes from 0.8% of its pixels to 57.4%. Coloured by height, because the depth maps carry no colour. Measured 2026-08-08: the geometry lands within 0.3 mm of DA3's, but the ground fit does move.",
+  },
+];
 
 const IDENTITY_4X4 = Float32Array.from([
   1, 0, 0, 0,
@@ -148,6 +212,58 @@ function loadGltf(url: string): Promise<THREE.Group> {
 const MAX_POINTS = 1_000_000;
 
 /**
+ * The source photographs, resampled onto the depth map's grid.
+ *
+ * The npz carries depth and confidence and no colour at all, so a cloud rebuilt from it is grey
+ * unless the frames are read back — and they are on disk, served by the same route Depth 2D
+ * already uses. One canvas is reused for every frame; a canvas per frame is 99 allocations of
+ * half a megapixel and the browser keeps them all alive until it feels like not to.
+ *
+ * A frame whose image fails to load contributes no colour rather than black. Returning
+ * undefined for it says so, and `buildCloud` reports a colourless cloud as null.
+ */
+async function loadFrameColors(
+  field: DepthFieldValue,
+  width: number,
+  height: number,
+  count: number,
+): Promise<(Uint8Array | undefined)[]> {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return [];
+
+  const byNpzIndex = new Map(field.frames.map((frame) => [frame.npzIndex, frame.rgbUrl]));
+  const colors: (Uint8Array | undefined)[] = new Array(count).fill(undefined);
+
+  for (let f = 0; f < count; f++) {
+    const url = byNpzIndex.get(f);
+    if (!url) continue;
+    try {
+      const response = await fetch(artifactUrl(url));
+      if (!response.ok) continue;
+      const bitmap = await createImageBitmap(await response.blob());
+      // The photograph is full resolution and the depth map is not, so this resamples as it
+      // draws — the same nearest-ish mapping the mask resampler uses, done by the browser.
+      context.drawImage(bitmap, 0, 0, width, height);
+      bitmap.close();
+      const { data } = context.getImageData(0, 0, width, height);
+      const rgb = new Uint8Array(width * height * 3);
+      for (let i = 0; i < width * height; i++) {
+        rgb[i * 3] = data[i * 4];
+        rgb[i * 3 + 1] = data[i * 4 + 1];
+        rgb[i * 3 + 2] = data[i * 4 + 2];
+      }
+      colors[f] = rgb;
+    } catch {
+      // A missing frame is a colourless frame, never a failed cloud.
+    }
+  }
+  return colors;
+}
+
+/**
  * Swap DA3's points for ours, keeping the frustums and the alignment it carries.
  *
  * The GLB's own points are disposed BEFORE ours are built, not after. On an 8 GB machine
@@ -159,9 +275,15 @@ async function rebuiltCloud(
   alignment: Float32Array,
   url: string,
   field: DepthFieldValue,
-  { pointSize, stride }: { pointSize: number; stride: number },
+  {
+    pointSize,
+    stride,
+    budget,
+    colour,
+  }: { pointSize: number; stride: number; budget: number; colour: CloudColour },
 ) {
   const arrays = await field.loadArrays();
+  const frames = framesFromArrays(arrays);
 
   for (const child of [...object.children]) {
     if (!(child instanceof THREE.Points)) continue;
@@ -171,18 +293,28 @@ async function rebuiltCloud(
     for (const item of Array.isArray(material) ? material : [material]) item.dispose();
   }
 
-  const built = buildCloud(framesFromArrays(arrays), {
+  if (colour === "rgb" && frames.length > 0) {
+    const photos = await loadFrameColors(field, frames[0].width, frames[0].height, frames.length);
+    for (let f = 0; f < frames.length; f++) frames[f].rgb = photos[f];
+  }
+
+  const built = buildCloud(frames, {
     confidence: { kind: "da3-per-frame" },
     weight: "none",
-    maxPoints: Math.max(1, Math.floor(MAX_POINTS / stride)),
+    maxPoints: Math.max(1, Math.floor(budget / stride)),
     transform: alignment,
   });
 
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.BufferAttribute(built.positions, 3));
-  // No colour of our own: the npz carries depth and confidence, never RGB. The height ramp is
-  // the same fallback a colourless GLB already gets.
-  colorByHeight(geometry);
+  if (built.colors) {
+    // Normalised, so Three reads the bytes as 0–1 without us building a second float buffer.
+    geometry.setAttribute("color", new THREE.BufferAttribute(built.colors, 3, true));
+  } else {
+    // Asked for the ramp, or the photographs could not be read. Either way, height is a
+    // reading of one coordinate and never pretends to be what the camera saw.
+    colorByHeight(geometry);
+  }
 
   const bounds = new THREE.Box3().setFromBufferAttribute(geometry.getAttribute("position") as THREE.BufferAttribute);
   const extent = bounds.getSize(new THREE.Vector3()).length();
@@ -199,6 +331,10 @@ async function rebuiltCloud(
 
   const shares = built.frames.map((f) => (f.usable > 0 ? f.kept / f.usable : 1));
   const leanestFrameShare = shares.length > 0 ? Math.min(...shares) : null;
+  // What the budget cost, as a share of the points that survived the confidence floor. This is
+  // the number that explains a sparse-looking cloud once no frame is being dropped any more.
+  const keptOfSurvivors =
+    built.pointsBeforeVoxel > 0 ? built.pointCount / built.pointsBeforeVoxel : 1;
 
   const value: PointCloudValue = {
     object,
@@ -210,6 +346,8 @@ async function rebuiltCloud(
     worldFromDa3: alignment,
     source: "npz",
     leanestFrameShare,
+    keptOfSurvivors,
+    coloured: built.colors !== null,
   };
 
   return {
@@ -218,7 +356,8 @@ async function rebuiltCloud(
       value,
       summary:
         `${built.pointCount.toLocaleString()} pts · rebuilt` +
-        (leanestFrameShare === null ? "" : ` · leanest frame ${(leanestFrameShare * 100).toFixed(0)}%`),
+        (leanestFrameShare === null ? "" : ` · leanest frame ${(leanestFrameShare * 100).toFixed(0)}%`) +
+        ` · ${(keptOfSurvivors * 100).toFixed(0)}% of what survived`,
     },
   };
 }
@@ -231,7 +370,7 @@ export const pointCloudSpec: NodeSpec = {
   execution: "auto",
   inputs: [{ id: "depth", label: "Depth Field", type: "depth_field", required: true }],
   outputs: [{ id: "points", label: "Points", type: "point_cloud" }],
-  defaults: { source: "glb", stride: 1, pointSize: 1 },
+  defaults: { source: "glb", colour: "rgb", budget: 1_000_000, stride: 1, pointSize: 1 },
   controls: [
     {
       kind: "select",
@@ -241,6 +380,23 @@ export const pointCloudSpec: NodeSpec = {
         { value: "glb", label: "DA3 export" },
         { value: "npz", label: "rebuilt from depth" },
       ],
+    },
+    {
+      kind: "select",
+      key: "colour",
+      label: "Colour",
+      options: [
+        { value: "rgb", label: "photograph" },
+        { value: "height", label: "height ramp" },
+      ],
+    },
+    {
+      kind: "slider",
+      key: "budget",
+      label: "Points",
+      min: 250_000,
+      max: 6_000_000,
+      step: 250_000,
     },
     { kind: "slider", key: "stride", label: "Stride", min: 1, max: 16, suffix: "×" },
     { kind: "slider", key: "pointSize", label: "Point size", min: 0.25, max: 4, step: 0.25 },
@@ -262,6 +418,8 @@ export const pointCloudSpec: NodeSpec = {
       return rebuiltCloud(object, alignment, glb.url, field, {
         pointSize: Number(params.pointSize ?? 1),
         stride,
+        budget: Math.max(1, Math.floor(Number(params.budget) || MAX_POINTS)),
+        colour: params.colour === "height" ? "height" : "rgb",
       });
     }
 
@@ -313,6 +471,9 @@ export const pointCloudSpec: NodeSpec = {
       worldFromDa3: alignment,
       source,
       leanestFrameShare: null,
+      keptOfSurvivors: null,
+      // DA3's export carries vertex colours; the ramp only fires on a GLB that has none.
+      coloured: true,
     };
 
     return {

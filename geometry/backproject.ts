@@ -29,6 +29,14 @@ export interface Frame {
   depth: ArrayLike<number>;
   /** Optional per-pixel confidence, same layout as `depth`. */
   confidence?: ArrayLike<number>;
+  /**
+   * Optional per-pixel colour, `width * height * 3` bytes of RGB.
+   *
+   * The source photograph, resampled to the depth map's grid. DA3's npz carries depth and
+   * confidence but never colour, so a cloud rebuilt from it is grey unless the frames it came
+   * from are read back — which they can be, because they are on this disk.
+   */
+  rgb?: ArrayLike<number>;
   width: number;
   height: number;
   /** Row-major 3×3 camera matrix. */

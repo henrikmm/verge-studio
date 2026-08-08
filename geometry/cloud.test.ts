@@ -200,6 +200,48 @@ describe("buildCloud", () => {
     expect(filtered.frames[0].usable).toBe(WIDTH * HEIGHT);
   });
 
+  it("carries the photograph's colour onto the points", () => {
+    const frame = flatFrame(2, () => 5);
+    const rgb = new Uint8Array(WIDTH * HEIGHT * 3);
+    for (let i = 0; i < WIDTH * HEIGHT; i++) {
+      rgb[i * 3] = i % 256;
+      rgb[i * 3 + 1] = 128;
+      rgb[i * 3 + 2] = 255 - (i % 256);
+    }
+    const cloud = buildCloud([{ ...frame, rgb }], { confidence: { kind: "none" } });
+    expect(cloud.colors).not.toBeNull();
+    expect(cloud.colors).toHaveLength(cloud.pointCount * 3);
+    expect(Array.from(cloud.colors!.slice(0, 6))).toEqual([0, 128, 255, 1, 128, 254]);
+  });
+
+  it("reports no colour rather than black when no frame carried an image", () => {
+    const cloud = buildCloud([flatFrame(2, () => 5)], { confidence: { kind: "none" } });
+    expect(cloud.colors).toBeNull();
+  });
+
+  it("averages colour inside a voxel, so a downsampled cloud still looks like the scene", () => {
+    const frame = flatFrame(2, () => 5);
+    const rgb = new Uint8Array(WIDTH * HEIGHT * 3);
+    // Left half red, right half blue. Every voxel is wholly inside one half except at the seam.
+    for (let y = 0; y < HEIGHT; y++) {
+      for (let x = 0; x < WIDTH; x++) {
+        const i = (y * WIDTH + x) * 3;
+        if (x < WIDTH / 2) rgb[i] = 200;
+        else rgb[i + 2] = 200;
+      }
+    }
+    const cloud = buildCloud([{ ...frame, rgb }], { confidence: { kind: "none" }, voxelM: 0.1 });
+    expect(cloud.colors).not.toBeNull();
+    let red = 0;
+    let blue = 0;
+    for (let i = 0; i < cloud.pointCount; i++) {
+      if (cloud.colors![i * 3] > cloud.colors![i * 3 + 2]) red += 1;
+      else blue += 1;
+    }
+    expect(red).toBeGreaterThan(0);
+    expect(blue).toBeGreaterThan(0);
+  });
+
   it("applies the display transform to every point", () => {
     // Translate by 5 along x. Rigid, so distances between points must not change.
     const transform = [1, 0, 0, 5, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];

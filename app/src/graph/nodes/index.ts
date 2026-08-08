@@ -140,5 +140,6 @@ export {
   viewer3dSpec,
 };
 export type { FramesValue } from "./frame-source";
-export type { PointCloudValue } from "./point-cloud";
+export type { PointCloudValue, CloudSource, CloudColour } from "./point-cloud";
+export { POINT_CLOUD_ID, CLOUD_SOURCES, CLOUD_COLOURS, CLOUD_BUDGETS } from "./point-cloud";
 export type { GroundPlaneValue, MeasurementValue, ScaleCheckValue, SelectionValue } from "./measurement";

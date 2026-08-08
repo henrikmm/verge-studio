@@ -587,7 +587,6 @@ async function cmdDepth(positional, flags) {
 async function cmdCoverage(positional, flags) {
   const run = resolveRun(positional[0]);
   const T = await typed();
-  const cloud = readCloud(run.glb);
   if (!run.npz) throw new Error(`run ${run.id} has no npz — coverage needs depth and confidence`);
 
   const arrays = await readArrays(run);
@@ -598,6 +597,15 @@ async function cmdCoverage(positional, flags) {
   const [count, height, width] = depth.shape;
   const size = width * height;
 
+  // Which cloud is being audited. Until 2026-08-08 this command read the GLB whatever
+  // `--cloud` said, so it reported DA3's losses under our cloud's name — the one failure this
+  // tool exists to prevent, in the tool itself.
+  let cloud = readCloud(run.glb);
+  const rebuilding = flags.cloud === "npz";
+  if (flags.cloud !== undefined && !rebuilding && flags.cloud !== "glb") {
+    throw new Error(`--cloud must be glb or npz, not "${flags.cloud}"`);
+  }
+
   // DA3's own rule, reproduced. Sorted here rather than through `percentile` because that
   // one boxes every value into a JS array, and there are fourteen million of them.
   const sorted = Float32Array.from(confidence.data).sort();
@@ -607,14 +615,37 @@ async function cmdCoverage(positional, flags) {
 
   let survivors = 0;
   for (let i = 0; i < confidence.data.length; i++) if (confidence.data[i] >= threshold) survivors += 1;
-  const keepRate = survivors > cloud.count ? cloud.count / survivors : 1;
 
-  const perFrame = [];
-  for (let f = 0; f < count; f++) {
-    let kept = 0;
-    for (let i = f * size; i < (f + 1) * size; i++) if (confidence.data[i] >= threshold) kept += 1;
-    perFrame.push({ frame: f, survival: kept / size });
+  let perFrame;
+  let floorLine;
+  const perFrameThreshold = new Map();
+  if (rebuilding) {
+    const rule = confidenceRule(flags);
+    const built = T.buildCloud(T.framesFromArrays(arrays), {
+      confidence: rule,
+      weight: "none",
+      maxPoints: cloud.count,
+      transform: cloud.alignment ?? undefined,
+    });
+    cloud = { ...cloud, points: built.positions, count: built.pointCount };
+    perFrame = built.frames.map((f) => ({ frame: f.frame, survival: f.kept / size }));
+    for (const f of built.frames) perFrameThreshold.set(f.frame, f.threshold);
+    survivors = built.pointsBeforeVoxel;
+    const floors = built.frames.map((f) => f.threshold);
+    floorLine =
+      rule.kind === "none"
+        ? "none — every pixel with usable depth is kept"
+        : `${round(Math.min(...floors), 3)}–${round(Math.max(...floors), 3)} — one per frame, ${built.origin}`;
+  } else {
+    perFrame = [];
+    for (let f = 0; f < count; f++) {
+      let kept = 0;
+      for (let i = f * size; i < (f + 1) * size; i++) if (confidence.data[i] >= threshold) kept += 1;
+      perFrame.push({ frame: f, survival: kept / size });
+    }
+    floorLine = `${round(threshold, 3)} — DA3's min(max(1.05, p40 ${round(p40, 3)}), p90 ${round(p90, 3)}), pooled over every frame at once`;
   }
+  const keepRate = survivors > cloud.count ? cloud.count / survivors : 1;
   const wiped = perFrame.filter((entry) => entry.survival < 0.02);
   const ranked = [...perFrame].sort((a, b) => a.survival - b.survival);
 
@@ -622,10 +653,13 @@ async function cmdCoverage(positional, flags) {
   // the survivors has no point per pixel, so "is this pixel in the cloud" can only be asked
   // of a neighbourhood — hence voxels rather than nearest points.
   const voxel = Number(flags.voxel ?? 0.08);
+  // 17 bits per axis, so the packed key stays under 2^51 and a double indexes it exactly. The
+  // previous 21-bit packing multiplied by 2^42 and overflowed 2^53, where distinct cells
+  // collide and the occupancy set silently reports a pixel as present.
   const key = (x, y, z) =>
-    (Math.floor(x / voxel) + 1_048_576) * 4_398_046_511_104 +
-    (Math.floor(y / voxel) + 1_048_576) * 2_097_152 +
-    (Math.floor(z / voxel) + 1_048_576);
+    (Math.floor(x / voxel) + 65_536) * 17_179_869_184 +
+    (Math.floor(y / voxel) + 65_536) * 131_072 +
+    (Math.floor(z / voxel) + 65_536);
   const occupied = new Set();
   for (let i = 0; i < cloud.count; i++) {
     occupied.add(key(cloud.points[i * 3], cloud.points[i * 3 + 1], cloud.points[i * 3 + 2]));
@@ -646,9 +680,11 @@ async function cmdCoverage(positional, flags) {
   let predictedCount = 0;
   let absentCount = 0;
   let both = 0;
+  // The floor this FRAME was judged against — its own when rebuilding, the pooled one otherwise.
+  const frameThreshold = rebuilding ? (perFrameThreshold.get(index) ?? 0) : threshold;
   for (let i = 0; i < size; i++) {
     if (!frameCloud.valid[i]) continue;
-    const low = confidence.data[index * size + i] < threshold;
+    const low = confidence.data[index * size + i] < frameThreshold;
     const point = cloud.alignment
       ? apply4x4(cloud.alignment, [
           frameCloud.points[i * 3],
@@ -685,7 +721,7 @@ async function cmdCoverage(positional, flags) {
         // The label font has no semicolon, and an unknown glyph prints as a blob that reads
         // like part of the number beside it.
         subtitle:
-          `CONF FLOOR ${round(threshold, 3)} DROPS ${pct(1 - survivors / confidence.data.length)} OF EVERY PIXEL / ` +
+          `CONF FLOOR ${round(frameThreshold, 3)} DROPS ${pct(1 - survivors / confidence.data.length)} OF EVERY PIXEL / ` +
           `${pct(keepRate)} OF THE REST KEPT AT RANDOM / VOXEL ${voxel} M`,
       },
     );
@@ -694,10 +730,11 @@ async function cmdCoverage(positional, flags) {
 
   const facts = {
     run: `${run.id} (${run.kind})`,
+    cloud: rebuilding ? "ours, rebuilt from the npz" : "DA3's GLB, as exported",
     pixels: `${confidence.data.length.toLocaleString("en-GB")} in ${count} frames of ${width}x${height}`,
-    "conf floor": `${round(threshold, 3)} — DA3's min(max(1.05, p40 ${round(p40, 3)}), p90 ${round(p90, 3)})`,
+    "conf floor": floorLine,
     survivors: `${survivors.toLocaleString("en-GB")} (${pct(survivors / confidence.data.length)}) — ${pct(1 - survivors / confidence.data.length)} of every pixel is discarded before the cap`,
-    cap: `${cloud.count.toLocaleString("en-GB")} in the GLB, so ${pct(keepRate)} of survivors kept at random`,
+    cap: `${cloud.count.toLocaleString("en-GB")}, so ${pct(keepRate)} of survivors kept at random`,
     "frames wiped": wiped.length
       ? `${wiped.length} below 2% survival: ${wiped.slice(0, 12).map((e) => e.frame).join(", ")}${wiped.length > 12 ? " …" : ""}`
       : "none",

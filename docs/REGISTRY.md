@@ -456,6 +456,37 @@ frame would share one exact value. They do not: the most-repeated depth covers u
 in every frame of both the door fixture and the outdoor run, with ~140,000 distinct values among
 141,120 pixels. `maxDepthM` exists as housekeeping, not as a rescue.
 
+### The outdoor run keeps every frame now, and the holes left are the budget — 2026-08-08
+
+**`inspect coverage` was reporting DA3's losses under our cloud's name.** `cmdCoverage` called
+`readCloud(run.glb)` directly and never went through `scene()`, so `--cloud npz` was accepted and
+ignored: both invocations printed identical numbers. The Gate for the point-cloud task names this
+command, so until it was repaired the Gate could not have been checked. Fixed with the same
+voxel-key overflow found in `geometry/cloud.ts`: 21-bit axis fields scaled by 2^42 exceed 2^53,
+where two distant cells collide and the occupancy set reports an absent pixel as present.
+
+With the tool repaired, on the 99-frame outdoor run `20260806-193346-26d16e`:
+
+| | DA3's export | ours, per frame |
+|---|---|---|
+| frames under 2% survival | **5** — 23, 25, 96, 97, 98 | **none** |
+| leanest frame | 0.0% | **58.8%** |
+| confidence floor | 6.882, pooled over the run | 4.526–12.224, one per frame |
+
+**A cloud that drops no frames can still look holey, and the cause is arithmetic.** 99 frames of
+504×280 are 13.97 million pixels; the per-frame floor keeps 8.3 million; a 1,000,000-point budget
+then keeps **12%** of those. On frame 49, 21.4% of pixels land in an empty 8 cm voxel. Remove the
+confidence floor entirely and that falls to **6.8%** — the residue is the budget alone, nothing to
+do with confidence. The budget is a comparison choice (it matches DA3's own 1,000,000 so the two
+clouds are like-for-like), not a limit, and the viewport now offers 1M/3M/6M. At 6M the browser
+heap goes 184 → 314 MB and the build takes 5.6 s.
+
+**The rebuilt cloud carries the photographs' colour.** The npz holds depth and confidence and no
+colour at all, so the first version was a height ramp — a reading of one coordinate, and
+unrecognisable as a place. The source frames are on this disk, so `buildCloud` takes a per-frame
+RGB buffer, the app resamples each frame onto the depth grid through one reused canvas, and a
+voxel cell averages the colours it merges. `COLOUR Photo | Height` in the viewport, Photo default.
+
 ### Where DA3's metric scale lives, and what cannot lose it — 2026-08-08
 
 Settled from upstream source and confirmed against our own numbers, because a rebuild that

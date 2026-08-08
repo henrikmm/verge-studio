@@ -6,6 +6,41 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
+## 2026-08-08 — the CLOUD switch in Viewport 3D, 1280×800 (commit pending, on d09859c)
+
+A **scoped** pass, not a full checklist run. One control row was added — `CLOUD [DA3] [Ours]` in
+Viewport 3D's chrome — so the items graded are the ones a new row can break. Everything else was
+last graded in the entry below and is untouched by this change. Recorded door fixture,
+`door-504px-112f`.
+
+1. Dark surfaces, no white — **PASS**. `body` computed `rgb(13,13,15)`, unchanged.
+2. No status by hue alone — **PASS**. The active chip is marked by border and weight, the same
+   treatment `OUTPUT` and `VIEW` already use; the hint `(leanest frame 57%)` is text.
+4. Tab strip ≤ 28 px — **PASS** (26 px, unchanged).
+5. Renders, point count, gizmo — **PASS**. Switching to `Ours` re-rendered at `1.000.000 pts`
+   with the gizmo still drawn; switching back restored DA3's coloured cloud.
+7. Live status row with numbers — **PASS**. The row carries its own number, and it is the number
+   that distinguishes the two clouds: the leanest frame's share of its own pixels, 57% on `Ours`
+   against nothing on DA3, which has no per-frame accounting to report.
+8. No horizontal window scroll — **PASS**. `documentElement.scrollWidth` 1280 against
+   `innerWidth` 1280.
+9. Fonts ≤ 12 px, numerics mono — **PASS**. The row inherits `.output-row`; no new type.
+17. A parameter change refreshes the graph on its own — **PASS**. The chip calls
+    `setNodeParamAndRun`, and the ground fit followed without any other interaction: 14.6%
+    support / 11.8° / 1.2 cm on DA3, 12.5% / 11.7° / 1.5 cm on `Ours`, matching
+    `inspect floor --cloud npz` headlessly. No costly node ran — `da3-depth` stayed blocked.
+19. Narrow pane — **PASS**, from a 180×800 capture with Viewport 3D focused: `CLOUD`, `DA3` and
+    `Ours` all sit on one line inside the pane, while `LAYERS` wraps to three. Graded from the
+    capture rather than from `getBoundingClientRect`, because the emulated resize and the dock
+    relayout raced each other and the measured widths stayed at 1280 while the render was at 180.
+    A measurement that disagrees with the pixels is not evidence; the capture is.
+
+**Not graded:** 3, 6, 10–16, 18. Unchanged by this change.
+
+**Found and left unfixed:** the rebuilt cloud is coloured by height ramp, because the npz carries
+depth and confidence but never RGB. The source frames are on disk, so real colour is available and
+is now a task.
+
 ## 2026-08-08 — every control row wraps, 1280×800 (commit pending, on 583713d)
 
 A targeted pass on pane chrome after `.output-row`, `.pane-controls`, `.brush-toolbar`,

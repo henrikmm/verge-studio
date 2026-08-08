@@ -111,6 +111,31 @@ per-frame version and is the template.
       headless numbers, and the heap plateaus at ~630 MB across four switches with no growth.
 - [x] Compare the door fixture's measurements before and after. Stop if they got worse.
       They did not. Over a fixed plane the tabletop moves 0.3 mm across every variant.
+- [x] **Make `inspect coverage` honour `--cloud`.** It read the GLB whatever the flag said, so
+      it reported DA3's losses under our cloud's name — the exact failure this tool exists to
+      prevent, inside the tool. The Gate could never have been checked before this. Fixed
+      2026-08-08 along with a voxel-key overflow there: 21-bit fields scaled by 2^42 exceed 2^53,
+      where two distant cells collide and a pixel is reported present when it is absent.
+- [x] **Colour the rebuilt cloud from the photographs.** The npz has depth and confidence and no
+      colour, so the cloud was a height ramp — unrecognisable as a place. The source frames are
+      on disk, so `buildCloud` now takes a per-frame RGB buffer and the viewport offers
+      `COLOUR  Photo | Height`, defaulting to Photo.
+- [x] **Give the budget a control.** `POINTS  1M | 3M | 6M`, with the share of survivors it kept
+      shown beside it. See the outdoor note below for why this is not cosmetic.
+
+**The outdoor run drops no frames now, and what is left is the budget.** Measured 2026-08-08 with
+the repaired `coverage`:
+
+| | DA3's export | ours, per frame |
+|---|---|---|
+| frames under 2% survival | **5** — 23, 25, 96, 97, 98 | **none** |
+| leanest frame | 0.0% | **58.8%** |
+| confidence floor | 6.882, pooled | 4.526–12.224, one per frame |
+
+The cloud still *looks* holey at a 1,000,000-point budget, and that is arithmetic rather than a
+defect: 99 frames of 504×280 are 13.97 million pixels, the per-frame floor keeps 8.3 million, and
+a 1M budget then keeps 12% of those. With no confidence floor at all, absence on frame 49 falls
+from 21.4% to 6.8% — and that residue is the budget alone. Raise it in the viewport.
 
 **What is left, and it is a real question.** The fitted floor moves when the cloud gets fuller —
 support 14.6% → 12.5%, tilt 11.85° → 11.72°, end-to-end graded tabletop −5.06 → −5.41 cm — and
