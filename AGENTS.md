@@ -1,44 +1,48 @@
 # Verge Studio — how to work in this repository
 
-Verge Studio measures real-world heights from ordinary video. You drop in a clip, a depth model
-running on a cloud GPU reconstructs the scene in three dimensions, and the app measures things in
-it against a fitted ground plane. The interface is a node graph: boxes wired together, each one
-doing a step, so every stage is visible rather than hidden inside a single button.
-
-This file is the working agreement. Read it, then read the two documents below.
+Verge Studio measures real-world heights from ordinary video. Drop in a clip, a depth model on a
+cloud GPU reconstructs the scene in three dimensions, and the app measures things in it against a
+fitted ground plane. The interface is a node graph: boxes wired together, each doing a step, so
+every stage is visible rather than hidden inside a single button. This file is the working
+agreement. Read it, then the two documents below.
 
 ## The two documents, and which one answers your question
 
 | Question | Document |
 |---|---|
 | What already works, and what was decided and why? | `docs/REGISTRY.md` |
-| What should I do next? | `docs/PROGRESS.md` |
+| What should I do next? | `docs/TASK.md` |
 
-`docs/REGISTRY.md` is the record of the project. It has no task list and no checkboxes.
-`docs/PROGRESS.md` is the task list, and only the task list. When you finish a task, delete it
-from Progress and add what it established to the Registry, in the same change. Git history is the
-archive; do not keep a second copy of finished work.
+`docs/REGISTRY.md` is the record of the project — no task list, no checkboxes. `docs/TASK.md` is
+the task list and only the task list. When you finish a task, delete it from TASK and add what it
+established to the Registry, in the same change. Git history is the archive; never keep a second
+copy of finished work.
 
-Supporting documents: `README.md` (how to run it), `MEASUREMENTS.md` (tape-measure ground truth
-and graded results), `docs/DESIGN.md` (what the interface must look like and do),
-`docs/SOURCES.md` (external references worth trusting).
+Each task there is a test: **Why** it exists, the **Gate** deciding whether it worked, the
+**Regression** it must not cause, the **Approval** needed to start, where to **Start** reading,
+and a checklist of steps. Write the Gate before the work — a pass condition invented once the
+code runs is a description, not a test.
+
+Supporting documents: `README.md` (how to run it), `MEASUREMENTS.md` (tape truth and graded
+results), `docs/DESIGN.md` (what the interface must look like and do), `docs/SOURCES.md`
+(external references worth trusting).
 
 ## How the work is done
 
-**Everything that can run on this Mac, runs on this Mac.** Extracting frames from video,
-geometry, tests and every viewer are local and free. The cloud does exactly one thing: the
-forward pass of the depth model, which needs a GPU. Never send CPU-shaped work to the cloud.
+**Everything that can run on this Mac, runs on this Mac.** Extracting frames, geometry, tests and
+every viewer are local and free. The cloud does exactly one thing: the forward pass of the depth
+model, which needs a GPU. Never send CPU-shaped work to the cloud.
 
-**Video is the input, not photographs.** The model's accuracy comes from comparing many frames of
-the same scene against each other. A single image never engages that mechanism and produces badly
-wrong geometry. Sample frames by frames-per-second across the whole clip, never "N frames spread
-across it", and never trim a clip to a window.
+**Video is the input, not photographs.** Accuracy comes from comparing many frames of one scene
+against each other; a single image never engages that mechanism and produces badly wrong geometry.
+Sample by frames-per-second across the whole clip, never "N frames spread across it", and never
+trim a clip to a window.
 
-**Nothing is kept unless the user saves it.** Inference output is temporary by default. Saving is
-an explicit action; never persist automatically.
+**Nothing is kept unless the user saves it.** Inference output is temporary; saving is an explicit
+action. Never persist automatically.
 
-**The model is for personal and research use only** (its licence is non-commercial). Never write
-a commercial claim into this project.
+**The model is for personal and research use only** (non-commercial licence). Never write a
+commercial claim into this project.
 
 ## Paid work needs permission, every time
 
@@ -48,36 +52,28 @@ idle period afterwards. Two consequences follow:
 
 - **Ask before you spend, and say what it will cost.** Deploying, running inference, or anything
   else that starts or wakes the service requires the user to agree first, in that conversation.
-- **Delete the service when you are done.** This is a correctness requirement, not tidiness: the
-  service is configured to keep one machine permanently alive, so it never stops billing on its
-  own. Save any run you care about *before* deleting, because the results live on that machine
-  and disappear with it.
+- **Delete the service when you are done.** A correctness requirement, not tidiness: it keeps one
+  machine permanently alive, so it never stops billing on its own. Save any run you care about
+  *before* deleting — results live on that machine and disappear with it.
 
 Plan the whole batch of experiments before deploying, and run them back to back against one warm
 machine. Four experiments in one session cost roughly one startup; four sessions cost four.
 
-Checking costs nothing. The app's Inspector has a **Cloud control** panel that reports whether
-you are signed in, whether the service exists, and whether the next deploy will be quick or slow.
-Those are all read-only lookups and cannot wake anything.
+Checking costs nothing: the Inspector's **Cloud control** panel reports whether you are signed in,
+whether the service exists, and whether the next deploy is quick or slow. All read-only lookups —
+they cannot wake anything.
 
 ### One image in the repository, ever
 
-The built image is kept between sessions on purpose: storing it costs about ten cents per
-gigabyte per month, rebuilding it costs twenty minutes at the start of every session. That trade
-only holds for **one** image. Copies accumulate silently, because `deploy.sh` tags each build with
-a hash of `server/` — so every change to that directory mints another ~12 GB image beside the last
-one, and nothing has ever deleted the old one.
-
-That is not hypothetical. On 2026-08-06 the repository held two images totalling 16.68 GB while
-both scripts still described the cost as "~12 GB, about a dollar a month", and a third full copy
-of essentially the same image was still sitting in the retired `motiva-verge-lab-dev` project.
-Roughly three times the standing charge anyone believed they were paying.
-
-So a new image is **promoted**, never merely added:
+The built image is kept between sessions on purpose: storing it costs about ten cents per gigabyte
+per month, rebuilding costs twenty minutes at the start of every session. That trade only holds
+for **one** image. Copies accumulate silently, because `deploy.sh` tags each build with a hash of
+`server/` — so every change there mints another ~12 GB image beside the last one, and nothing has
+ever deleted the old one. That is not hypothetical; the audit is in REGISTRY section 8. So a new
+image is **promoted**, never merely added:
 
 1. **A freshly built image is on trial until it has served a real run.** Deploy it, run inference,
-   and confirm the run completed without errors. Until that happens the previous image is the only
-   way back, so do not touch it.
+   confirm no errors. Until then the previous image is the only way back, so do not touch it.
 2. **Once the new one has worked, the previous one goes, in the same session.** Not next time —
    the person who built it is the only one who knows it was good.
 3. **Never end a session with two images in the repository.** Two means somebody stopped halfway,
@@ -94,22 +90,18 @@ session left behind before you call it finished. Listing costs nothing.
 ## When the work needs the user
 
 Some tasks cannot be finished by an agent alone: recording a video, holding a tape measure,
-dragging something too small to hit reliably, confirming that a picture looks right. **A task
-needing a person is still your task to drive.** Do not write "the user should test this" and
-consider it delivered — that is how work goes stale here.
-
-The protocol, every time:
+dragging something too small to hit reliably, confirming a picture looks right. **A task needing a
+person is still your task to drive.** Do not write "the user should test this" and consider it
+delivered — that is how work goes stale here. The protocol, every time:
 
 1. Do everything that does not need them. Prepare the setup, open the right screen, write the
    checklist, get the app into the exact state where their one action is the only thing missing.
-2. Ask for **one specific action**, described concretely, and say what you will do with the
-   result. Not "please verify the UI" — "drag from the port on the right of Point Cloud to the
-   input on the left of Viewer 3D, then tell me whether a wire appeared."
+2. Ask for **one specific action**, concretely, and say what you will do with the result. Not
+   "please verify the UI" — "drag from the port on the right of Point Cloud to the input on the
+   left of Viewer 3D, then tell me whether a wire appeared."
 3. Wait. Do not guess the outcome or move on as if it happened.
-4. Take the result, finish the task, verify it yourself, and update the Registry and Progress.
-
-Tasks in Progress state whether they need this, under **Gate**. Flag it there so neither of you
-is surprised.
+4. Take the result, finish the task, verify it yourself, update the Registry and TASK. Tasks say
+   whether they need this, under **Approval**.
 
 ## Finishing a unit of work
 
@@ -123,26 +115,35 @@ Every change ends in the loop that matches it:
 | The deployed service | `scripts/smoke-infer.sh` — one short run, never a loop of GPU runs |
 
 Run `scripts/verify.sh` with a Python environment that has FastAPI installed, or the server check
-silently skips and the green tick means less than it appears to. `README.md` gives the command.
+silently skips and the green tick means less than it looks. `README.md` gives the command.
 
-**Record only what you observed.** A box ticked for code that was written but never run has cost
-this project real money twice. If you built something and did not exercise it, say so plainly and
-leave it as a task. An untested seam described as working is worse than one described as absent.
+**Record only what you observed.** A ticked box for code that was written but never run has cost
+this project real money twice. If you built something and did not exercise it, say so and leave
+the box unticked. An untested seam described as working is worse than one described as absent.
 
-Commit at the end of each coherent unit. Subject line: short, imperative, 72 characters or fewer,
-no long body. Never commit dependencies, model weights, secrets, or media over 5 MB.
+Commit at the end of each coherent unit. Never commit dependencies, model weights, secrets, or
+media over 5 MB.
+
+**Commit messages follow [Conventional Commits](https://www.conventionalcommits.org)**, as of
+2026-08-08. `<type>(<scope>): <summary>`, then an optional body and footers, blank line between.
+
+- **type** — `feat` `fix` `docs` `refactor` `perf` `test` `build` `ci` `chore` `revert`.
+- **scope** — optional, the area touched: `geometry` `inspect` `panes` `graph` `server` `docs`.
+- **summary** — imperative, lower case, no full stop, 72 characters or fewer.
+  `fix(geometry): bound reported tilt by its own gate`, not `Make the floor honest again`.
+- **body** — why, not what; wrapped at 72. Required when the change alters a measured number or a
+  file the harness reads. `BREAKING CHANGE:` goes in a footer if callers must change with it.
 
 ## Looking at a run without opening the app
 
 Most questions here are about a reconstruction, not the interface. `scripts/inspect.mjs` answers
-them from the app's own runs and geometry, over no network — so it cannot disagree, or spend money.
+them from the app's own runs and geometry, over no network — it cannot disagree, or spend money.
 
 | What you want to know | Command |
 |---|---|
-| What is on this disk, what is this run, is its cloud sane? | `inspect runs` · `run <id>` · `cloud <id>` |
-| Where did the floor land, and how close was the runner-up? | `inspect floor <id>` |
-| What does the scene look like, and is the floor under the furniture or through it? | `inspect view <id> --view iso --colour height` · `--view floor --colour inlier` |
-| What was the model actually given? | `inspect frames <id>` |
+| Where did the floor land, and does it survive a reseed? | `inspect floor <id>` · `--repeat 8` |
+| Is the floor under the furniture or through it? | `inspect view <id> --view floor --colour inlier` |
+| What was the model given, and what never reached the cloud? | `inspect frames <id>` · `coverage <id>` |
 | **Is what I selected really the thing I think it is?** | `inspect select <id> --band 0.02,0.6` |
 | All of it, when the broken stage is not yet known | `inspect explain <id>` |
 
@@ -152,17 +153,17 @@ selection drawn on the source frame can tell you whether it is.
 
 ## How to write here
 
-These documents are read by people as well as agents, and the person reading them has to agree
-with what they say. Write accordingly:
+These documents are read by people as well as agents, and the reader has to agree with what they
+say. Write accordingly:
 
-- **Say the outcome first**, then the mechanism. A reader should learn what happened before they
-  learn how.
+- **Say the outcome first**, then the mechanism. What happened, before how.
 - **Explain a specialist term the first time it appears**, in a clause, not a footnote. Do not
-  drop jargon to sound precise; precision is in the numbers.
-- **Keep file names and function names in the evidence sections**, where someone is going to look
-  something up. They do not belong in a sentence explaining why a decision was made.
+  drop jargon to sound precise; precision is in the numbers. `TASK.md` is the plainest of these
+  files — short sentences, no ornament, technical where it has to be and nowhere else.
+- **Keep file and function names in the evidence sections**, where someone will look them up. They
+  do not belong in a sentence explaining why a decision was made.
 - **Be specific about uncertainty.** "Measured 22.02 GiB on 2026-08-05" beats "high". If a number
-  is a guess, say it is a guess and give the range.
+  is a guess, say so and give the range.
 - Everything in this repository is in English.
 
 Code follows the same spirit: TypeScript in strict mode, file names in kebab-case, React
@@ -173,7 +174,6 @@ components in PascalCase, and comments that explain why rather than restate what
 - `donor/` holds verbatim copies from an earlier project, kept for reference. Application code
   never imports from it. The original repository at `~/dev/Motiva_Challenge` is read-only.
 - `server/` is frozen unless the user has agreed to pay for a rebuild. Any edit under it — even a
-  comment — forces a rebuild of roughly twenty minutes on the next deploy. Batch small changes
-  and apply them together with a real one.
+  comment — forces a ~20 minute rebuild on the next deploy. Batch small changes with a real one.
 - When you are unsure how the depth model, React Flow, Dockview or Three.js behaves, check
   `docs/SOURCES.md` before guessing.

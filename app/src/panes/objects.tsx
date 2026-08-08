@@ -115,7 +115,7 @@ function formatDuration(ms: number): string {
  *
  * This was hardcoded to the door's 2.10 m. Longest wins because the same absolute endpoint
  * error is a smaller fraction of a longer reference — clip B's door is 2.8x less fractional
- * error than its table for the same slip (see PROGRESS.md, "The test videos").
+ * error than its table for the same slip (see MEASUREMENTS.md).
  */
 function calibrationTarget(targets: readonly MeasurementObject[]): MeasurementObject | undefined {
   return targets

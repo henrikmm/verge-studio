@@ -13,4 +13,4 @@ porting ideas across.
 - Nothing here is authoritative about how this project works. `../docs/REGISTRY.md` is.
 
 What remains genuinely useful: the cell-and-percentile approach to measuring height over an area,
-which is the template for vegetation measurement (see the grass task in `../docs/PROGRESS.md`).
+which is the template for vegetation measurement (see the grass task in `../docs/TASK.md`).

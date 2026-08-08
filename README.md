@@ -87,7 +87,7 @@ project is finished for good.
 |---|---|
 | How do I work in this repository? | [AGENTS.md](AGENTS.md) |
 | What already works, and why was it built that way? | [docs/REGISTRY.md](docs/REGISTRY.md) |
-| What should be done next? | [docs/PROGRESS.md](docs/PROGRESS.md) |
+| What should be done next? | [docs/TASK.md](docs/TASK.md) |
 | How accurate is it, measured against what? | [MEASUREMENTS.md](MEASUREMENTS.md) |
 | What must the interface look like and do? | [docs/DESIGN.md](docs/DESIGN.md) |
 | Where do the external facts come from? | [docs/SOURCES.md](docs/SOURCES.md) |

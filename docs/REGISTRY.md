@@ -3,7 +3,7 @@
 The record of this project: what works, what was decided, where the proof is, and what is still
 unknown. Everything here has been observed, not merely written.
 
-There are no tasks in this file. Work still to be done lives in `PROGRESS.md`.
+There are no tasks in this file. Work still to be done lives in `TASK.md`.
 
 ---
 
@@ -713,7 +713,7 @@ clips, so every reference used to judge a reconstruction must be visible *in tha
 
 ## 7. Known limitations and gates
 
-These are stated, not scheduled. Anything being actively worked on is in `PROGRESS.md`.
+These are stated, not scheduled. Anything being actively worked on is in `TASK.md`.
 
 - **Automatic object selection is proven on one attempt, not benchmarked.** One click produced a
   1.941 m door against a 2.020 m manual mean and a 2.100 m truth. A ten-attempt study with
@@ -723,7 +723,7 @@ These are stated, not scheduled. Anything being actively worked on is in `PROGRE
 - ⚠️ **The ground fit is not reproducible, and everything measured against it inherits that.**
   Changing only the RANSAC seed moves the plane by 7–32 cm and its tilt by 5–15° on every
   reconstruction on this disk, and all of it reports `ok` (section 3). Any height quoted from this
-  system today carries that spread on top of its stated error. This is PROGRESS task 0.
+  system today carries that spread on top of its stated error. This is TASK.md task 1.
 - **Accuracy across scenes is unverified.** One room, one operator, one camera path. A second
   capture with different orientation and motion remains the largest untested risk.
 - **The exported cloud is a biased 7% sample of the reconstruction** — DA3's global confidence

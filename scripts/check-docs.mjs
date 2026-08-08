@@ -4,9 +4,9 @@
 // The rules below exist because each one was broken once and cost something. The task list grew
 // to 1,635 lines because finished work was never removed and tasks accumulated in files nobody
 // treated as a backlog — so unchecked boxes are now allowed in exactly one place. Tasks that
-// omitted who owns them or what it would cost got quietly skipped for weeks — so the five fields
-// are required. And a document nobody can finish reading is a document nobody reads, which is why
-// there are size budgets rather than good intentions.
+// omitted what they were for, or what it would cost to start them, got quietly skipped for weeks
+// — so the fields below are required. And a document nobody can finish reading is a document
+// nobody reads, which is why there are size budgets rather than good intentions.
 //
 // Run by scripts/verify.sh. Exits non-zero with a list of what to fix.
 
@@ -31,7 +31,11 @@ const IGNORED = new Set(["node_modules", ".git", "dist", "donor", ".runs", "fixt
  * The registry's ceiling was raised 400 -> 2000 on 2026-08-06, deliberately and once. It is the
  * only document that grows with the project rather than with the current sprint: every decision
  * that holds and every measurement worth not re-deriving lands there permanently, so a cap sized
- * for the other files was forcing real evidence back out of the record. The other three are
+ * for the other files was forcing real evidence back out of the record.
+ *
+ * The task list's ceiling was doubled 180 -> 360 on 2026-08-08, when tasks became tests: a task
+ * now has to state its pass condition and what it must not break BEFORE the work starts, and
+ * those two fields are the point of the file rather than padding in it. The instruction files are
  * unchanged and should stay that way — they are read at the start of every session.
  *
  * A wider ceiling is not an invitation. Detail that belongs in an evidence file still goes to an
@@ -40,7 +44,7 @@ const IGNORED = new Set(["node_modules", ".git", "dist", "donor", ".runs", "fixt
 const BUDGETS = [
   { file: "AGENTS.md", lines: 180, bytes: 16 * 1024 },
   { file: "CLAUDE.md", lines: 40, bytes: 4 * 1024 },
-  { file: "docs/PROGRESS.md", lines: 180, bytes: 16 * 1024 },
+  { file: "docs/TASK.md", lines: 360, bytes: 32 * 1024 },
   // Bytes scale with the lines, or the byte cap silently becomes the real limit: the registry
   // measured 64 bytes/line on 2026-08-06, so 2000 lines is ~125 KiB. 160 KiB leaves headroom
   // for tables, which run wider than prose.
@@ -48,12 +52,22 @@ const BUDGETS = [
 ];
 
 /** The one file allowed to contain unfinished work. */
-const TASK_FILE = "docs/PROGRESS.md";
+const TASK_FILE = "docs/TASK.md";
 
-/** Every task must answer all five, or it is not actionable by a fresh session. */
-const TASK_FIELDS = ["Outcome", "Owner", "Gate", "Evidence / starting points", "Done when"];
+/**
+ * Every task must answer all five, or it is not actionable by a fresh session.
+ *
+ * `Owner` used to be here and was dropped on 2026-08-08: it read "Agent" on every task ever
+ * written, so it enforced nothing and cost a line each time. The task file states it once.
+ *
+ * `Gate` changed meaning in the same pass and the old sense did not survive. It now names the
+ * condition that decides whether the work SUCCEEDED; the approval checkpoint it used to mean is
+ * `Approval`. Two fields, because "may I start" and "did it work" are different questions and
+ * answering them in one field is how tasks got started without a definition of done.
+ */
+const TASK_FIELDS = ["Why", "Gate", "Regression", "Approval", "Start"];
 
-const GATES = ["none", "user confirmation", "cloud spend + user confirmation"];
+const APPROVALS = ["none", "user confirmation", "cloud spend + user confirmation"];
 
 async function markdownFiles(dir = REPO) {
   const found = [];
@@ -140,19 +154,26 @@ async function checkTaskShape() {
 
   for (const [n, start] of starts.entries()) {
     const end = starts[n + 1] ?? lines.length;
-    const body = lines.slice(start, end).join("\n");
+    const section = lines.slice(start, end);
+    const body = section.join("\n");
     const title = lines[start].replace(/^###\s*/, "");
     for (const field of TASK_FIELDS) {
       if (!body.includes(`**${field}.**`) && !body.includes(`**${field}**`)) {
         fail(TASK_FILE, `task "${title}" is missing its ${field} field.`);
       }
     }
-    const gate = body.match(/\*\*Gate\.\*\*\s*([^\n.]*)/);
-    if (gate && !GATES.some((g) => gate[1].toLowerCase().includes(g))) {
+    const approval = body.match(/\*\*Approval\.\*\*\s*`?([^\n.`]*)/);
+    if (approval && !APPROVALS.some((a) => approval[1].toLowerCase().includes(a))) {
       fail(
         TASK_FILE,
-        `task "${title}" has an unrecognised gate "${gate[1].trim()}". Use one of: ${GATES.join(" | ")}.`,
+        `task "${title}" has an unrecognised approval "${approval[1].trim()}". ` +
+          `Use one of: ${APPROVALS.join(" | ")}.`,
       );
+    }
+    // A task with no steps is a wish. The checklist is what a fresh session picks up and works
+    // through, and it is the only part of the format that records how far the work actually got.
+    if (!section.some((line) => /^\s*[-*]\s*\[[ xX]\]/.test(line))) {
+      fail(TASK_FILE, `task "${title}" has no steps. Add a checklist of "- [ ]" items.`);
     }
   }
 }

@@ -93,7 +93,7 @@ export interface MeasurementObject {
 /**
  * Targets belong to a CLIP, not to the app.
  *
- * Metric scale does not transfer between clips (see PROGRESS.md, M3 decision 6), so a truth
+ * Metric scale does not transfer between clips (REGISTRY decision 6), so a truth
  * measured in one video is meaningless in another. Sets are keyed by the source clip's content
  * digest; `BUILTIN_DOOR_CLIP` is the key the built-in run records carry.
  */

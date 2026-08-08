@@ -50,7 +50,7 @@ export const CATEGORY_COLORS: Record<NodeCategory, string> = {
  *
  * `manual` exists for one reason: `DA3Depth` costs money. An auto node re-runs as
  * soon as its inputs change; a manual node goes stale and waits for an explicit Run,
- * so dragging a slider can never trigger cloud inference. See docs/PROGRESS.md.
+ * so dragging a slider can never trigger cloud inference. See the paid-work rule in AGENTS.md.
  */
 export type ExecutionKind = "auto" | "manual";
 

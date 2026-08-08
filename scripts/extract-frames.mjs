@@ -79,7 +79,7 @@ export function readRotation(stream) {
  * `test-demo-door.mp4` stores 1920x1080 with rotation=-90, decodes to 1080x1920, and a
  * scale filter computed from the stored size would have stretched every portrait frame
  * into landscape -- reaching the GPU with a wrong aspect ratio and silently wrong
- * geometry. Found before the M3 cloud session; see docs/PROGRESS.md.
+ * geometry. Found before the M3 cloud session; see REGISTRY section 8.
  */
 export function displayDimensions(width, height, rotation) {
   return rotation % 180 === 90 ? { width: height, height: width } : { width, height };

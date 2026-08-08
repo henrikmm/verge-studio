@@ -2,7 +2,7 @@
  * Per-clip targets.
  *
  * The failure this guards against is subtle and expensive: a truth measured in one clip being
- * applied to another. Metric scale does not transfer between clips (PROGRESS.md, M3 decision 6),
+ * applied to another. Metric scale does not transfer between clips (REGISTRY decision 6),
  * so an inherited 2.100 m door would produce a confident, wrong calibration factor on a scene
  * that has never been tape-measured.
  */

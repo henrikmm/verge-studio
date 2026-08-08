@@ -42,4 +42,4 @@ the item as passed, and do not leave the write-up to the user.
 
 Add a dated entry at the **top** of `docs/design-review-log.md` with the commit it refers to, the
 viewport size, the grade for every item, and what was fixed during the pass. Anything found and
-left unfixed becomes a task in `docs/PROGRESS.md` — the log records evidence, never a backlog.
+left unfixed becomes a task in `docs/TASK.md` — the log records evidence, never a backlog.

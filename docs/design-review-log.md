@@ -4,7 +4,7 @@ Dated evidence from interface reviews, newest first. Each entry records what was
 the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed at the time.
 
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
-[PROGRESS.md](PROGRESS.md); findings below describe the state on their own date.
+[TASK.md](TASK.md); findings below describe the state on their own date.
 
 ## 2026-08-08 — every control row wraps, 1280×800 (commit pending, on 583713d)
 
@@ -73,7 +73,7 @@ ghost and the Camera path layer. Recorded door fixture, `door-504px-112f`.
     now needs. Chrome is **the same 119 px in both modes**, so switching does not resize the view.
 3, 6, 11–18 — **N/A**; untouched by this work.
 
-**The narrow-pane test from PROGRESS task 4 now passes for this pane.** Forced to 180 px, every
+**The narrow-pane test from TASK task 4 now passes for this pane.** Forced to 180 px, every
 chip in all three rows stays inside its row (OUTPUT 19 px, VIEW 56 px, LAYERS 58 px,
 `scrollWidth === clientWidth` on each, zero escaped children) in both Free and Fixed. OUTPUT fits
 because its 45-character mouse hint was deleted rather than allowed to clip — the `Keys` panel
@@ -189,7 +189,7 @@ Findings fixed during this pass:
 Measured while grading, and worth keeping: forced to 180 px, the LAYERS row wraps to 38 px with
 **both chips still inside its box**, while the OUTPUT row beside it stays 19 px and pushes its
 `Confidence` chip **outside** — the exact hazard DESIGN.md's pane-chrome warning describes, now
-demonstrated rather than asserted. That clipping is pre-existing and is now a task in PROGRESS.
+demonstrated rather than asserted. That clipping is pre-existing and is now a task in TASK.md.
 
 ## 2026-08-06 — durable storage states in the Runs pane, 1280×516
 
@@ -529,7 +529,7 @@ Measured this pass:
 - Explicit Run → DA3 Depth 6066 ms (mock) → Point Cloud 122 ms → both viewers, all reading
   `all current` afterwards.
 - `Last run · Frames 30` proves the browser sent 30 real JPEGs as **multipart** and the
-  middleware parsed them — the seam PROGRESS listed as never exercised.
+  middleware parsed them — the seam TASK.md listed as never exercised.
 - Viewport renders the cloud through the graph rather than a hardcoded fixture path.
 
 Not measured this pass:
