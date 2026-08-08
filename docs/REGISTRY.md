@@ -414,6 +414,75 @@ disk holds full-resolution depth and confidence for every frame, so a cloud can 
 `inspect --cloud npz` does exactly that, and reproduces the GLB's own fit to 0.3 mm on the door
 fixture when given DA3's own threshold — which is what makes the comparison trustworthy.
 
+### We build our own cloud now, and it changed less than expected — 2026-08-08
+
+`geometry/cloud.ts` back-projects every frame from the npz and takes the confidence floor **per
+frame**, using DA3's own formula `min(max(1.05, p40), p90)` where the numbers are comparable.
+`inspect --cloud npz` and the app's Point Cloud node both use it. On the door fixture the leanest
+frame's contribution goes from **0.8% to 57.4%** of its usable pixels, and the three wiped frames
+come back. That is the Gate met.
+
+**The cloud's geometry did not move.** Graded against ONE fixed floor, the maskless tabletop reads
+699.4 mm on DA3's export, 699.2 on our reproduction of it, 699.5 with the per-frame floor, and
+699.4 keeping every pixel — a 0.3 mm spread over clouds differing by 8.5 million points. Building
+our own cloud is not a measurement change.
+
+**What does move is the floor fit**, and that is a different question. Refitting on the fuller
+cloud takes support from 14.6% to 12.5%, tilt from 11.85° to 11.72°, RMSE from 1.23 to 1.51 cm,
+and the end-to-end graded tabletop from −5.06 to −5.41 cm. There is no ground truth for a floor,
+so "different" is the strongest honest word. RMSE rising is expected when harder pixels are kept
+and is not evidence the plane is wrong.
+
+**This is why the gate grades over a fixed plane.** Grading each cloud against its own refit
+conflates the two and answers the wrong one: it reported a 2–4 mm regression that was entirely
+the plane moving. The gate's own noise is 0.1–1.7 mm, measured by varying only the RANSAC seed
+(8 seeds) and only the cap seed (5 seeds), so it can resolve the difference it is asked to judge.
+(`geometry/cloud-gate.test.ts`.)
+
+**Three things measured and deliberately not adopted.** Confidence as a plane-fit weight — the
+`weights` parameter that had never been fed — moves the fitted tilt by 0.05° and the graded
+tabletop by 0.9 mm, in the wrong direction and inside the noise. It is implemented (`WeightRule`,
+by within-frame percentile rank, because raw confidence is unbounded and means nothing across
+frames) and defaults to off. Voxel downsampling at 1–2 cm makes the fit's sampling uniform in
+space rather than in pixels, but destroys what `horizontalLevels` measures: the tabletop reads
+−6.31 cm and the tower peak disappears. Off. And the discontinuity filter does **not** explain the
+floor's movement — the hypothesis that DA3's pooled floor was incidentally removing flying pixels
+was tested across `maxRelativeDepthStep` 0.02–0.08 and moved the tabletop non-monotonically by
+under 2 mm. It stays on at 0.08 to match the measurement path, not because it rescued anything.
+
+**A prediction from upstream that our data contradicts.** DA3 fills sky pixels with a constant
+depth inside the model, before any export. If it had run on our clips, thousands of pixels per
+frame would share one exact value. They do not: the most-repeated depth covers under 1% of pixels
+in every frame of both the door fixture and the outdoor run, with ~140,000 distinct values among
+141,120 pixels. `maxDepthM` exists as housekeeping, not as a rescue.
+
+### Where DA3's metric scale lives, and what cannot lose it — 2026-08-08
+
+Settled from upstream source and confirmed against our own numbers, because a rebuild that
+silently loses metres would be the worst possible outcome of the previous section.
+
+DA3 fixes the scale **once per clip**, inside the model. A single least-squares scalar is applied
+to `depth` and to the extrinsics' translation column **together**, so the two cannot drift apart.
+Everything downstream is scale-free: the npz export writes the arrays through unchanged, and the
+GLB's `hf_alignment` is a rotation composed with a rigid transform — already measured rigid to
+eight decimal places in "The recorded camera can be put back in the scene, exactly".
+
+The independent check: the outdoor clip's camera walk, computed from the extrinsics alone, comes
+to **29.26 m**, against a walk recorded on the day as 29 m. Nothing told the extrinsics the scale.
+
+**One call path would divide it back out.** `api.py` rescales depth when the caller supplies known
+camera poses. `server/main.py:169` calls `model.inference()` with seven arguments and `extrinsics`
+is not among them, so that branch never runs here. Anyone adding a parameter to that call should
+check it again.
+
+**Confidence carries no metric information.** Its activation is `exp(x)+1`, unbounded and floored
+at 1 — measured on our own files at exactly 1.0000 minimum, reaching 15.27 indoors and 25.09
+outdoors. It selects and weights; it must never multiply into a coordinate.
+
+So the rebuild cannot lose metric scale unless we introduce the loss. The guard is a rule, not a
+check: **no per-frame depth normalisation, no unit-sphere fit, no re-centring, and confidence
+never touches a position.**
+
 ### The ground fit was a coin flip, and the cause was the selection rule — fixed 2026-08-08
 
 The seed carries no information about the scene, so changing only the seed should change nothing.

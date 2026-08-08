@@ -43,3 +43,4 @@ export {
   type Plane,
   type Vec3,
 } from "../../geometry/types";
+export { buildCloud, framesFromArrays } from "../../geometry/cloud";

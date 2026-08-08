@@ -55,10 +55,29 @@ borrowed from a different frame. Today five frames contribute under 2%, and 18.3
 absent with nobody having asked for it.
 
 **Regression.** This changes the input to every measurement we make, so it can improve the
-picture and ruin the numbers. **The door fixture at 504 px decides it.** Its floor fit (14.6%
-support, 11.8° tilt, 1.2 cm RMSE) and its graded door height against the 2.100 m tape truth must
-be as good or better afterwards. If they get worse, the change is not worth having and comes out,
-however much better the cloud looks — a fuller cloud that measures worse is a step backwards.
+picture and ruin the numbers. **The door fixture at 504 px decides it, on the surfaces nobody
+painted.** `inspect levels` finds the flat surfaces from the cloud alone — no mask, no operator,
+no segmentation — so it runs before and after with no person in the loop. Two numbers, both
+against tape, both measured on the GLB cloud on 2026-08-08:
+
+| Surface | Tape truth | GLB today | Must not exceed |
+|---|---|---|---|
+| Tabletop above the floor | 0.750 m | 0.6994 m (−5.06 cm) | 5.06 cm of error |
+| Tower top minus tabletop | 0.450 m | 0.4295 m (−2.05 cm) | 2.05 cm of error |
+
+The floor fit (14.6% support, 11.8° tilt, 1.2 cm RMSE) is recorded alongside, but RMSE is not a
+gate on its own: keeping harder pixels raises it without the plane being wrong.
+
+**The painted door height is a did-not-break check, not the decider.** Measured 2026-08-08, it
+moves **0.3 mm** across four clouds differing by 400,000 points. A vertical extent is p98 − p2 of
+`dot(normal, p) + offset`, so the offset cancels and the number reads the fitted NORMAL and
+nothing else. The same four clouds moved the maskless tabletop by 3.6 mm and its supporting point
+count from 6,640 to 4,203. A gate that cannot see the failure is not a gate.
+
+`table-top`'s saved mask in `docs/measurement-trials-2026-08-04.json` does not replay: every point
+it selects lands 0.7–1.1 cm *below* the floor, giving 0.003 m where the app recorded 0.697 m.
+Dropped from the gate on 2026-08-08 by decision, not fixed. `door-leaf` and `pc-tower` replay to
+within 3.5–8.7 mm and stay.
 
 **Approval.** `none`. The depth maps are already on this disk; nothing here wakes the service.
 Changing DA3's own export instead would mean editing `server/`, which forces a twenty-minute
@@ -69,11 +88,35 @@ rebuild — do not do that for this.
 "The cloud the app measures is 7% of the reconstruction". `donor/runner.py:143` already does the
 per-frame version and is the template.
 
-- [ ] Take the confidence threshold per frame instead of once for the whole run.
-- [ ] Carry each point's confidence into the cloud, rather than dropping it at the door.
-- [ ] Feed that confidence to the plane fit as weights, and measure whether it helps.
-- [ ] Decide what the app loads: keep DA3's file for the picture, measure on ours.
-- [ ] Compare the door fixture's measurements before and after. Stop if they got worse.
+- [x] Pin the maskless gate numbers in a test that runs before anything else changes.
+      `geometry/cloud-gate.test.ts`, and it grades over a FIXED plane — see the Regression.
+- [x] Take the confidence threshold per frame instead of once for the whole run.
+      `geometry/cloud.ts`. Leanest frame on the door fixture: 0.8% → 57.4%.
+- [x] Carry each point's confidence into the cloud, rather than dropping it at the door.
+      `BuiltCloud.confidence`, one value per point.
+- [x] Feed that confidence to the plane fit as weights, and measure whether it helps.
+      **It does not.** Rank weighting moves the fitted tilt by 0.05° and the graded tabletop by
+      0.9 mm, the wrong way and inside the gate's 1.5 mm noise. Implemented, tested, default off.
+- [x] Voxel-downsample before the fit, so a surface the camera dwelt on stops out-voting the rest.
+      **Rejected on measurement.** At 1–2 cm the tabletop reads −6.31 cm and the tower peak stops
+      being found at all — the centroid smears exactly the spike `horizontalLevels` measures.
+- [x] Change one variable at a time. The confidence rule and the sampling scheme must be
+      separated, or the comparison says nothing about either.
+      Every arm capped at DA3's own 1,000,000 points, with a control arm reproducing its pooled
+      floor to 0.0 mm.
+- [x] Decide what the app loads: keep DA3's file for the picture, measure on ours.
+      One node, one switch, `source: "glb" | "npz"`, defaulting to DA3's export. Never two clouds
+      resident: the GLB's points are disposed before ours are built. Verified in the browser —
+      the app's own floor reads 12.5% support and 1.5 cm RMSE on the rebuilt cloud, matching the
+      headless numbers, and the heap plateaus at ~630 MB across four switches with no growth.
+- [x] Compare the door fixture's measurements before and after. Stop if they got worse.
+      They did not. Over a fixed plane the tabletop moves 0.3 mm across every variant.
+
+**What is left, and it is a real question.** The fitted floor moves when the cloud gets fuller —
+support 14.6% → 12.5%, tilt 11.85° → 11.72°, end-to-end graded tabletop −5.06 → −5.41 cm — and
+this project has no ground truth for a floor to say which is right. That is task 2's territory,
+not this one's: the numbers are recorded in REGISTRY section 3, and the app still defaults to
+DA3's export, so nothing on record has silently changed underneath it.
 
 ---
 

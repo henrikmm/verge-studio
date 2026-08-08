@@ -85,9 +85,12 @@ OPTIONS
   --columns <n> --max <n>    contact sheet shape (default 8 columns, 48 frames)
   --confidence               shade the depth image by DA3's confidence
   --voxel <m>                coverage: how close a cloud point must be to count (default 0.08)
-  --cloud <glb|npz>          which cloud to work on. npz rebuilds it from the depth maps with
-                             no confidence floor, at the GLB's own point count (default glb)
-  --conf <value>             confidence floor for --cloud npz (default 0, keep everything)
+  --cloud <glb|npz>          which cloud to work on. npz rebuilds it from the depth maps,
+                             taking the confidence floor PER FRAME the way DA3 takes it once
+                             for the whole run, at the GLB's own point count (default glb)
+  --conf <value>             one fixed floor for every frame instead — how DA3's own export
+                             behaves, and the only honest way to reproduce it
+  --keep-all                 no confidence floor at all
   --height-range <lo,hi>     colour ramp limits for --colour height (default 0,2)
   --floor-band <lo,hi>       the slice --view floor shows, metres about the plane (default -0.3,0.9)
   --render                   have "floor" also draw the fit it just reported
@@ -864,56 +867,50 @@ async function cmdExplain(positional, flags) {
  * on, because being unable to look at a broken run is the opposite of what this is for.
  */
 /**
- * The cloud DA3 would have exported if it kept everything: every frame, back-projected
- * from the npz, with no confidence floor.
+ * The cloud this project builds for itself: every frame back-projected from the npz, with the
+ * confidence floor taken per frame rather than pooled across the run.
  *
- * Thinned to roughly the GLB's own point count on purpose. Comparing a four-million-point
- * cloud against a one-million-point one would confound the two things being separated —
- * a floor fit gets better with density regardless of bias. Matched counts leave exactly
- * one difference: WHICH points, not how many.
+ * The geometry lives in `geometry/cloud.ts` with its own tests, so the inspector and the app
+ * cannot drift apart on what "our cloud" means. Capped at the GLB's own point count on
+ * purpose: comparing a nine-million-point cloud against a one-million-point one confounds the
+ * thing being separated, because a floor fit gets better with density regardless of bias.
+ * Matched counts leave exactly one difference — WHICH points, not how many.
  *
- * Colour is dropped. It lives in the GLB's vertex colours, and re-reading 99 JPEGs to
- * recover it would buy nothing the height and inlier ramps do not already show.
+ * Colour is dropped. It lives in the GLB's vertex colours, and re-reading 112 JPEGs to recover
+ * it would buy nothing the height and inlier ramps do not already show.
  */
-async function npzCloud(T, arrays, glb, { minConfidence = 0, target = glb.count } = {}) {
-  const { depth, confidence, intrinsics, extrinsics } = arrays;
+async function npzCloud(T, arrays, glb, { rule, target = glb.count } = {}) {
+  const { depth, intrinsics, extrinsics } = arrays;
   if (!depth || !intrinsics || !extrinsics) throw new Error("npz has no depth or cameras");
 
-  const [count, height, width] = depth.shape;
-  const size = width * height;
-  // One step in both directions, so the sample stays a grid rather than a set of stripes.
-  const step = Math.max(1, Math.round(Math.sqrt((count * size) / Math.max(1, target))));
+  const built = T.buildCloud(T.framesFromArrays(arrays), {
+    confidence: rule,
+    weight: "none",
+    maxPoints: target,
+    transform: glb.alignment ?? undefined,
+  });
 
-  const points = [];
-  for (let f = 0; f < count; f++) {
-    const frame = T.backprojectFrame({
-      depth: depth.data.subarray(f * size, (f + 1) * size),
-      confidence: confidence?.data.subarray(f * size, (f + 1) * size),
-      width,
-      height,
-      intrinsics: intrinsics.data.subarray(f * 9, f * 9 + 9),
-      extrinsics: extrinsics.data.subarray(f * 12, f * 12 + 12),
-    }, { minConfidence });
-
-    for (let y = 0; y < height; y += step) {
-      for (let x = 0; x < width; x += step) {
-        const i = y * width + x;
-        if (!frame.valid[i]) continue;
-        const raw = [frame.points[i * 3], frame.points[i * 3 + 1], frame.points[i * 3 + 2]];
-        const display = glb.alignment ? apply4x4(glb.alignment, raw) : raw;
-        points.push(display[0], display[1], display[2]);
-      }
-    }
-  }
+  const shares = built.frames.map((f) => (f.usable > 0 ? f.kept / f.usable : 1));
+  const worst = shares.length > 0 ? Math.min(...shares) : 1;
 
   return {
-    points: Float32Array.from(points),
+    points: built.positions,
     colors: null,
     frusta: glb.frusta,
-    count: points.length / 3,
+    count: built.pointCount,
     alignment: glb.alignment,
-    origin: `npz, every ${step}${ordinal(step)} pixel, confidence floor ${minConfidence}`,
+    weights: built.weights,
+    confidence: built.confidence,
+    frames: built.frames,
+    origin: `${built.origin} — leanest frame keeps ${(worst * 100).toFixed(1)}%`,
   };
+}
+
+/** Turn the `--conf` / `--keep-all` flags into one confidence rule. */
+function confidenceRule(flags) {
+  if (flags["keep-all"]) return { kind: "none" };
+  if (flags.conf !== undefined) return { kind: "absolute", minConfidence: Number(flags.conf) };
+  return { kind: "da3-per-frame" };
 }
 
 async function scene(run, flags, { fitFloor }) {
@@ -934,7 +931,7 @@ async function scene(run, flags, { fitFloor }) {
   if (run.npz) {
     arrays = await readArrays(run);
     if (flags.cloud === "npz") {
-      cloud = await npzCloud(T, arrays, cloud, { minConfidence: Number(flags.conf ?? 0) });
+      cloud = await npzCloud(T, arrays, cloud, { rule: confidenceRule(flags) });
     } else if (flags.cloud !== undefined && flags.cloud !== "glb") {
       throw new Error(`--cloud must be glb or npz, not "${flags.cloud}"`);
     }

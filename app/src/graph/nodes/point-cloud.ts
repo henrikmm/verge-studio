@@ -1,15 +1,26 @@
 /**
- * PointCloud — local CPU work on the GLB the GPU produced.
+ * PointCloud — local CPU work on what the GPU produced.
  *
- * DA3's own GLB exporter already emits a confidence-filtered, colored point cloud
- * with camera frustums, so this node loads that rather than back-projecting depth
- * itself (docs/SOURCES.md: prefer DA3-native geometry over new backprojection code).
- * What it adds is decimation, height-ramp fallback coloring, and the stats the card
- * and the viewport report.
+ * Two clouds are available and the node shows one of them at a time.
+ *
+ *   DA3 EXPORT — the GLB the model wrote. Coloured, and the reference everything measured
+ *     so far was measured against. Its confidence floor is pooled across the whole run, so
+ *     it deletes whichever frames the model was least sure about entirely: on this fixture
+ *     three frames contribute under 2% of their pixels, and on the outdoor run five do.
+ *   REBUILT — our own, from the full-resolution depth maps, taking that floor per frame.
+ *     Measured 2026-08-08: the leanest frame goes from 0.8% to 57.4%, and the tabletop lands
+ *     within 0.3 mm of where DA3's cloud puts it over the same floor. Fuller, same geometry.
+ *
+ * ONE AT A TIME, on purpose. The rebuilt cloud is 1,000,000 points beside the GLB's
+ * 1,000,000, and this machine has 8 GB of memory shared with the GPU. Two nodes wired to two
+ * panes would keep both resident and cached; one node with a switch cannot. The GLB is still
+ * loaded either way — it carries `hf_alignment` and the camera frustums, and neither exists
+ * anywhere else — but its points are released before ours are built.
  */
 
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { buildCloud, framesFromArrays } from "../../../../geometry/cloud";
 import { artifactUrl } from "../../lib/infer-client";
 import type { DepthFieldValue } from "../../measurement/depth-field";
 import type { NodeSpec } from "../types";
@@ -40,7 +51,16 @@ export interface PointCloudValue {
    * be compared with the displayed cloud.
    */
   worldFromDa3: Float32Array;
+  /** Which cloud these points are. Carried so a measurement can say what it measured. */
+  source: CloudSource;
+  /**
+   * Smallest share of one frame's usable pixels that reached the cloud. Null for the GLB,
+   * whose per-frame accounting only `inspect coverage` can reconstruct.
+   */
+  leanestFrameShare: number | null;
 }
+
+export type CloudSource = "glb" | "npz";
 
 const IDENTITY_4X4 = Float32Array.from([
   1, 0, 0, 0,
@@ -124,6 +144,85 @@ function loadGltf(url: string): Promise<THREE.Group> {
   });
 }
 
+/** DA3's own point budget. Matching it keeps every recorded comparison like-for-like. */
+const MAX_POINTS = 1_000_000;
+
+/**
+ * Swap DA3's points for ours, keeping the frustums and the alignment it carries.
+ *
+ * The GLB's own points are disposed BEFORE ours are built, not after. On an 8 GB machine
+ * sharing memory with the GPU, holding two million-point clouds plus their colour buffers
+ * while the second is assembled is the difference between a slow tab and a killed one.
+ */
+async function rebuiltCloud(
+  object: THREE.Group,
+  alignment: Float32Array,
+  url: string,
+  field: DepthFieldValue,
+  { pointSize, stride }: { pointSize: number; stride: number },
+) {
+  const arrays = await field.loadArrays();
+
+  for (const child of [...object.children]) {
+    if (!(child instanceof THREE.Points)) continue;
+    object.remove(child);
+    child.geometry.dispose();
+    const material = child.material;
+    for (const item of Array.isArray(material) ? material : [material]) item.dispose();
+  }
+
+  const built = buildCloud(framesFromArrays(arrays), {
+    confidence: { kind: "da3-per-frame" },
+    weight: "none",
+    maxPoints: Math.max(1, Math.floor(MAX_POINTS / stride)),
+    transform: alignment,
+  });
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.BufferAttribute(built.positions, 3));
+  // No colour of our own: the npz carries depth and confidence, never RGB. The height ramp is
+  // the same fallback a colourless GLB already gets.
+  colorByHeight(geometry);
+
+  const bounds = new THREE.Box3().setFromBufferAttribute(geometry.getAttribute("position") as THREE.BufferAttribute);
+  const extent = bounds.getSize(new THREE.Vector3()).length();
+  object.add(
+    new THREE.Points(
+      geometry,
+      new THREE.PointsMaterial({
+        size: (extent / 800) * pointSize,
+        vertexColors: true,
+        sizeAttenuation: true,
+      }),
+    ),
+  );
+
+  const shares = built.frames.map((f) => (f.usable > 0 ? f.kept / f.usable : 1));
+  const leanestFrameShare = shares.length > 0 ? Math.min(...shares) : null;
+
+  const value: PointCloudValue = {
+    object,
+    pointCount: built.pointCount,
+    bbox: { min: bounds.min.toArray(), max: bounds.max.toArray() },
+    extent,
+    url,
+    positions: built.positions,
+    worldFromDa3: alignment,
+    source: "npz",
+    leanestFrameShare,
+  };
+
+  return {
+    points: {
+      type: "point_cloud" as const,
+      value,
+      summary:
+        `${built.pointCount.toLocaleString()} pts · rebuilt` +
+        (leanestFrameShare === null ? "" : ` · leanest frame ${(leanestFrameShare * 100).toFixed(0)}%`),
+    },
+  };
+}
+
 export const pointCloudSpec: NodeSpec = {
   type: "point-cloud",
   label: "Point Cloud",
@@ -132,8 +231,17 @@ export const pointCloudSpec: NodeSpec = {
   execution: "auto",
   inputs: [{ id: "depth", label: "Depth Field", type: "depth_field", required: true }],
   outputs: [{ id: "points", label: "Points", type: "point_cloud" }],
-  defaults: { stride: 1, pointSize: 1 },
+  defaults: { source: "glb", stride: 1, pointSize: 1 },
   controls: [
+    {
+      kind: "select",
+      key: "source",
+      label: "Cloud",
+      options: [
+        { value: "glb", label: "DA3 export" },
+        { value: "npz", label: "rebuilt from depth" },
+      ],
+    },
     { kind: "slider", key: "stride", label: "Stride", min: 1, max: 16, suffix: "×" },
     { kind: "slider", key: "pointSize", label: "Point size", min: 0.25, max: 4, step: 0.25 },
   ],
@@ -144,8 +252,18 @@ export const pointCloudSpec: NodeSpec = {
     if (!glb) throw new Error("manifest has no GLB artifact");
 
     const stride = Math.max(1, Math.floor(Number(params.stride) || 1));
+    const source: CloudSource = params.source === "npz" ? "npz" : "glb";
     // Manifest URLs are service-relative; rebase them or a real cloud run 404s here.
     const object = await loadGltf(artifactUrl(glb.url));
+    const alignment = worldFromDa3(object);
+
+    if (source === "npz") {
+      if (!field) throw new Error("rebuilding the cloud needs the depth field");
+      return rebuiltCloud(object, alignment, glb.url, field, {
+        pointSize: Number(params.pointSize ?? 1),
+        stride,
+      });
+    }
 
     const bounds = new THREE.Box3().setFromObject(object);
     const extent = bounds.getSize(new THREE.Vector3()).length();
@@ -192,7 +310,9 @@ export const pointCloudSpec: NodeSpec = {
       extent,
       url: glb.url,
       positions,
-      worldFromDa3: worldFromDa3(object),
+      worldFromDa3: alignment,
+      source,
+      leanestFrameShare: null,
     };
 
     return {

@@ -243,6 +243,16 @@ export interface FrameCloudOptions {
   /** Ignore depths outside this range, in metres. Guards against 0/inf sentinels. */
   minDepth?: number;
   maxDepth?: number;
+  /**
+   * Drop a pixel whose depth differs from a 4-neighbour by more than this FRACTION of its
+   * own depth. 0 disables, which is the default and what coverage accounting needs.
+   *
+   * Off by default because the two callers want opposite things. `coverage` asks "could this
+   * pixel have reached the cloud", and a filter here would remove pixels and then blame their
+   * absence on something else. A cloud being BUILT wants the opposite: silhouette pixels
+   * blend foreground and background depth, and those flying pixels land strung out in space.
+   */
+  maxRelativeDepthStep?: number;
 }
 
 export interface FrameCloud {
@@ -251,6 +261,12 @@ export interface FrameCloud {
   /** 1 where the pixel produced a point. Same layout as the depth map. */
   valid: Uint8Array;
   validCount: number;
+  /**
+   * Pixels that had usable depth but sat on a depth edge, so `maxRelativeDepthStep` dropped
+   * them. Always 0 when that filter is off. Reported separately so a caller can still say how
+   * many pixels the depth map could have given it.
+   */
+  edgeRejected: number;
 }
 
 /**
@@ -260,19 +276,26 @@ export interface FrameCloud {
  * for asking "is this part of the picture in the cloud at all" — that question needs the
  * answer to stay addressable by pixel so it can be drawn back onto the photograph.
  *
- * Deliberately carries none of `backprojectMask`'s quality filters. Erosion and the
- * discontinuity test exist to keep a *measurement* honest; here they would remove pixels
- * and then blame their absence on something else. The only rejections are pixels with no
- * usable depth, and the confidence floor the caller asks for.
+ * Erosion is never applied here, and the discontinuity test is off unless asked for. Those
+ * filters exist to keep a *measurement* honest; in coverage accounting they would remove
+ * pixels and then blame their absence on something else. A caller BUILDING a cloud does want
+ * the discontinuity test, so it is available — see `maxRelativeDepthStep`.
  */
 export function backprojectFrame(frame: Frame, options: FrameCloudOptions = {}): FrameCloud {
-  const opts = { minConfidence: 0, minDepth: DEFAULTS.minDepth, maxDepth: Infinity, ...options };
+  const opts = {
+    minConfidence: 0,
+    minDepth: DEFAULTS.minDepth,
+    maxDepth: Infinity,
+    maxRelativeDepthStep: 0,
+    ...options,
+  };
   const { width, height, depth, confidence } = frame;
   const { fx, fy, cx, cy, t, e } = cameraOf(frame);
 
   const points = new Float32Array(width * height * 3);
   const valid = new Uint8Array(width * height);
   let validCount = 0;
+  let edgeRejected = 0;
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -280,6 +303,13 @@ export function backprojectFrame(frame: Frame, options: FrameCloudOptions = {}):
       const d = depth[index];
       if (!Number.isFinite(d) || d < opts.minDepth || d > opts.maxDepth) continue;
       if (confidence && confidence[index] < opts.minConfidence) continue;
+      if (
+        opts.maxRelativeDepthStep > 0 &&
+        onDepthDiscontinuity(depth, width, height, x, y, d, opts.maxRelativeDepthStep)
+      ) {
+        edgeRejected += 1;
+        continue;
+      }
 
       const cxm = ((x - cx) * d) / fx;
       const cym = ((y - cy) * d) / fy;
@@ -292,5 +322,5 @@ export function backprojectFrame(frame: Frame, options: FrameCloudOptions = {}):
     }
   }
 
-  return { points, valid, validCount };
+  return { points, valid, validCount, edgeRejected };
 }
