@@ -839,7 +839,6 @@ export function Viewport3D() {
       <OutputRow choices={OUTPUTS} active={output} onSelect={setOutput} />
       <OutputRow
         label="VIEW"
-        wrap
         choices={VIEW_MODES}
         active={riding ? "fixed" : "free"}
         onSelect={(id) => setMode(id as ViewMode)}
@@ -978,7 +977,14 @@ export function Viewport3D() {
             */}
             {floor.kind === "ok" && (
               <>
-                FLOOR {(floor.ground.fit.inlierFraction * 100).toFixed(1)}% SUPPORT · {(floor.ground.fit.belowFraction * 100).toFixed(1)}% BELOW · {floor.ground.fit.tiltDeg.toFixed(1)}° TILT · {(floor.ground.fit.rmse * 100).toFixed(1)} cm RMSE
+                FLOOR {(floor.ground.fit.inlierFraction * 100).toFixed(1)}% SUPPORT · {(floor.ground.fit.belowFraction * 100).toFixed(1)}% BELOW · {floor.ground.fit.tiltDeg.toFixed(1)}° TILT
+                {/*
+                  A clamped tilt is the plane the GATE allowed, not the plane the points wanted.
+                  Saying so here is the whole point of bounding it: an operator who tightens the
+                  limit and sees the number obey has learned nothing unless they can also see when
+                  obedience cost them the better-fitting plane.
+                */}
+                {floor.ground.fit.tiltClamped && <> (GATED)</>} · {(floor.ground.fit.rmse * 100).toFixed(1)} cm RMSE
                 <br />
                 CAMERA UP {floor.ground.gravity.coherence.toFixed(2)} COHERENCE
                 {showFloorPlane && <> · GRID {gridSpacing} m</>}

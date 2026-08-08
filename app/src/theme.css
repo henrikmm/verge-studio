@@ -209,7 +209,6 @@ body {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text-dim);
-  white-space: nowrap;
   overflow: hidden;
 }
 
@@ -255,6 +254,23 @@ body {
 }
 
 /* OUTPUT row: label, toggle chips, dim hint in parentheses */
+/*
+  Control rows WRAP. Measured 2026-08-08 at 180 px before this changed: Depth 2D's OUTPUT row
+  put its `Confidence` chip and the whole mask hint outside the pane, and `.pane-controls` put
+  `Focus`, `Hide` and `Pause` outside it — five controls that could not be clicked at all,
+  because `nowrap` plus `overflow: hidden` clips silently rather than scrolling.
+
+  A second line is the price and it is the right one: these rows carry the pane's only controls,
+  and a taller row costs canvas while a clipped row costs the function. Wrapping is the DEFAULT
+  rather than something each row opts into — the opt-in existed, and the two rows that most
+  needed it had not taken it.
+*/
+.output-row,
+.pane-controls {
+  flex-wrap: wrap;
+  white-space: normal;
+}
+
 .output-row {
   flex: none;
   display: flex;
@@ -264,15 +280,7 @@ body {
   border-bottom: 1px solid var(--border);
   font-size: 10px;
   color: var(--text-dim);
-  white-space: nowrap;
   overflow: hidden;
-}
-
-/* Overlay switches. Wraps where `.output-row` clips, because a control that silently leaves the
-   viewport in a narrow pane is worse than one on a second line (DESIGN.md, pane chrome). */
-.layer-row {
-  flex-wrap: wrap;
-  white-space: normal;
 }
 
 .output-label {
@@ -1030,8 +1038,12 @@ canvas {
   border-bottom: 1px solid var(--border);
   color: var(--text-dim);
   font-size: 10px;
-  white-space: nowrap;
-  overflow-x: auto;
+  /* Same rule as `.output-row` and `.pane-controls`, for the same reason. Two of these three
+     already opted into wrapping individually; the frame toolbar had not, and fell back to a
+     horizontal scrollbar nobody looks for in a 19 px row. */
+  flex-wrap: wrap;
+  white-space: normal;
+  overflow-x: hidden;
 }
 
 .brush-toolbar label,
@@ -1039,21 +1051,17 @@ canvas {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  /* A labelled slider is one flex item whose min-content width is its caption plus a fixed
+     68 px track. Wrapping the ROW cannot help that — the item still overflows its own line.
+     Measured at a 100 px pane on 2026-08-08: Size, Mask and Zoom all left the toolbar. */
+  min-width: 0;
+  max-width: 100%;
 }
 
 .segment-toolbar {
   justify-content: flex-start;
-  flex-wrap: wrap;
-  white-space: normal;
-  overflow-x: hidden;
   background: #0d1514;
   color: var(--text-dim);
-}
-
-.brush-toolbar {
-  flex-wrap: wrap;
-  white-space: normal;
-  overflow-x: hidden;
 }
 
 .segment-actions {
@@ -1085,6 +1093,7 @@ canvas {
 
 .brush-toolbar input[type="range"] {
   width: 68px;
+  min-width: 0;
 }
 
 .frame-toolbar > input[type="range"] {

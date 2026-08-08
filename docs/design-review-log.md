@@ -6,6 +6,45 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [PROGRESS.md](PROGRESS.md); findings below describe the state on their own date.
 
+## 2026-08-08 — every control row wraps, 1280×800 (commit pending, on 583713d)
+
+A targeted pass on pane chrome after `.output-row`, `.pane-controls`, `.brush-toolbar`,
+`.frame-toolbar` and `.segment-toolbar` were all made to wrap. Recorded door fixture,
+`door-504px-112f`. Items not listed were not re-graded; nothing in this change touches them.
+
+**The headline is not that rows gained a second line — it is what the second line contains.**
+Measured at the DEFAULT 1280×800 layout, before wrapping, three of Depth 2D's rows needed more
+width than they had, so their right-hand contents were outside the pane at the very viewport this
+checklist grades at: `.pane-controls` needed **593 px in 500**, the OUTPUT row **570 in 500**, the
+brush toolbar **599 in 500**. `Hide`, `Pause` and `Confidence` were among the casualties. Item 8
+passed throughout, because a clipped pane produces no window scrollbar.
+
+1. Dark surfaces, no white — **PASS**. `body` computed `rgb(13,13,15)`. One element matched a
+   light-background scan: `.dv-scrollbar-horizontal`, measured **0 px wide**, so it paints nothing.
+2. No status by hue alone — **PASS**. The one addition is the clamped-tilt marker, which is the
+   word `(GATED)` in the floor readout. Text, not colour, and readable in greyscale.
+3. Six panes with tabs, drag-resize works — **PASS**. All six tabs present; the splitter drags in
+   this pass are what produced the 183 px pane below.
+4. Tab strip ≤ 28 px — **PASS** (26 px).
+5. Renders, orbit changes the view, point count, gizmo — **PASS**. A drag of (450,200)→(520,170)
+   visibly rotated the cloud and moved the gizmo; `1.000.000 pts`.
+7. Live status row with numbers — **PASS**, both panes (`Running 49.2 ms Door · 504 px · 112f ·
+   frame 1/256 · NPZ 1/112`, and `Running 0.0 ms 1.000.000 pts`).
+8. No horizontal scroll at 1280×800 — **PASS** (`scrollWidth === clientWidth === 1280`).
+9. Fonts ≤ 12 px, mono readouts — **PASS**. Largest RENDERED text 12 px; the only 16 px matches
+   are `<script>`, `<style>` and `<title>`, all zero-sized.
+19. **Graded at a narrow pane — PASS, and this is the item the change exists for.** Depth 2D
+    dragged to **183 px**: every child of all four of its rows stays inside the pane on both axes,
+    zero escapes, with the pane 445 px tall. Rows measure 72 / 79 / 93 / 53 px, so 297 px of the
+    pane is chrome and the canvas keeps the rest — the stated trade, taken deliberately.
+    Viewport 3D's four rows stay at 19 px each, unchanged, because they already fitted.
+
+**One limit found, and it is on the other axis.** A pane squeezed to **74 px tall** cuts the
+stacked rows off at its bottom edge — the rows are contained horizontally and then run out of
+pane. Wrapping cannot fix that; it needs the pane's control stack to scroll. Not reachable by
+dragging in the default layout (the smallest this pass produced by hand was 445 px tall), so it is
+recorded as a limitation rather than raised as a task.
+
 ## 2026-08-07 — keyboard navigation and the fixed camera view, 1280×800 (commit pending)
 
 Graded after Viewport 3D gained WASD movement, a VIEW row switching Free against Fixed, the video

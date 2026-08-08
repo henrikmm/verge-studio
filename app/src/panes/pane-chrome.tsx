@@ -86,9 +86,9 @@ export function PaneControls({
  * on top of it". Collapsing them would make an overlay mutually exclusive with the thing it
  * overlays.
  *
- * Wraps rather than clipping. `.output-row` is `nowrap` with hidden overflow, which DESIGN.md
- * flags as silently pushing right-hand controls out of a narrow pane — unacceptable for a row
- * whose whole purpose is a control the operator has to be able to find.
+ * Shares `.output-row`'s styling. It used to add a `layer-row` class whose only job was to turn
+ * wrapping back on; since 2026-08-08 every control row wraps, so the class styled nothing and
+ * went with the prop that used it.
  */
 export function LayerRow({
   choices,
@@ -102,7 +102,7 @@ export function LayerRow({
   hint?: string;
 }) {
   return (
-    <div className="output-row layer-row">
+    <div className="output-row">
       <span className="output-label">LAYERS</span>
       {choices.map((choice) => (
         <button
@@ -125,10 +125,13 @@ export function LayerRow({
 /**
  * One-of-N chips under a label.
  *
- * `label` and `wrap` exist so a pane can carry a SECOND such row without a second component:
- * Viewport 3D asks both "which view of the wire" (OUTPUT) and "where am I standing" (VIEW), and
- * those are different questions in the sense LayerRow's note describes. Any row that gains
- * trailing controls should set `wrap`, for the reason given there — `.output-row` clips.
+ * `label` exists so a pane can carry a SECOND such row without a second component: Viewport 3D
+ * asks both "which view of the wire" (OUTPUT) and "where am I standing" (VIEW), and those are
+ * different questions in the sense LayerRow's note describes.
+ *
+ * There was also a `wrap` prop, removed on 2026-08-08. Wrapping is now what every control row
+ * does, so opting in was a way to forget — and the two rows that lost controls at 180 px were
+ * exactly the ones that had not opted in.
  */
 export function OutputRow({
   choices,
@@ -136,7 +139,6 @@ export function OutputRow({
   onSelect,
   hint,
   label = "OUTPUT",
-  wrap = false,
   extra,
 }: {
   choices: OutputChoice[];
@@ -144,11 +146,10 @@ export function OutputRow({
   onSelect: (id: string) => void;
   hint?: string;
   label?: string;
-  wrap?: boolean;
   extra?: ReactNode;
 }) {
   return (
-    <div className={`output-row${wrap ? " layer-row" : ""}`}>
+    <div className="output-row">
       <span className="output-label">{label}</span>
       {choices.map((choice) => (
         <button

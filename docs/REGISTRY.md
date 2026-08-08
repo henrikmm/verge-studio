@@ -108,7 +108,14 @@ Around that spine:
   height above the fitted floor, by plane inlier, or with a selection picked out — from any of five
   fixed viewpoints. It also draws the source frames as one numbered sheet, one frame's depth, and,
   the check no number can stand in for, **a selection painted onto the photograph it came from**.
-  No browser, no WebGL, no network. (Nine commands, 19 tests, `scripts/inspect/`.)
+  No browser, no WebGL, no network. (Ten commands, 22 tests, `scripts/inspect/`.)
+- **What never reached the cloud can be seen on the photograph it came from.** `inspect coverage`
+  reproduces DA3's export filter, paints the pixels it discarded and the pixels genuinely absent
+  from the exported cloud onto the source frame, and reports per-frame survival. `--cloud npz`
+  rebuilds the cloud from the depth maps with no confidence floor, at the exported cloud's own
+  point count, so any command can be run on both and compared. `floor --repeat n` refits with
+  nothing changed but the RANSAC seed and reports the spread. All three answer questions this
+  project had been guessing at; see section 3.
 
 ### Verified end to end on real hardware
 
@@ -227,12 +234,20 @@ more" is not a mechanism. (`~/verge-runs/20260805-151526-a99a78` and `.../202608
 That 81-frame run is also the ladder's cleanest confirmation: the fit predicts
 0.0700 × 81 + 9.39 = **15.06 GiB** allocator and both runs measured **15.055 GiB**.
 
-⚠️ **The 112-frame landscape excess is still unexplained — but shape is no longer the suspect.**
+⚠️ **The 112-frame landscape excess is still unexplained, and only one suspect is left.**
 A 1920×1080 clip measured **22.02 GiB at 112 frames and 504 px on 2026-08-05, 0.74 GiB above the
-table and 99.96% of the device.** With orientation ruled out, the live candidates are a different
-**pixel count per frame** (`upper_bound_resize` fixes only the long edge, so aspect ratio moves the
-short one) or **driver saturation**, which this table already shows near the ceiling. The ladder
-does not record pixels per frame, which is what leaves the question open. Until it is settled,
+table and 99.96% of the device.**
+
+Pixel count was the leading candidate — `upper_bound_resize` fixes only the long edge, so aspect
+ratio moves the short one. **It is dead, established 2026-08-08 at no cost.** That run was
+`da3Test.mp4`, 1920×1080 with no rotation, which at 504 px is 504×280 = **141,120 pixels per
+frame** — identical to the portrait door clip's 280×504. Better still, the 81-frame run of *that
+very clip* (`~/verge-runs/20260805-151526-a99a78`) returned peaks byte-identical to the door
+clip's. Same clip, same pixels, same memory at 81 frames; the 0.74 GiB appears only at 112.
+
+What remains is the **driver figure's own behaviour near the ceiling**, which this table already
+shows (144 frames reads lower than 128). The allocator peak is the one that models cleanly, and it
+was never recorded for that run — which is the measurement task 6 still needs. Until then,
 **81 frames at 504 px** remains the verified conservative setting near the top of the range.
 
 ⚠️ **Coded dimensions are not the shape the model sees.** `test-demo-door.mp4` is coded 1920×1080
@@ -240,6 +255,43 @@ with `rotation=-90` in its side data, so it displays — and extracts — as 108
 `stream=width,height` reports the coded pair and reads as landscape. Anything characterising frame
 shape must read the rotation metadata, or it will label its own clips wrongly. Found 2026-08-06,
 after this run was planned as a landscape test and turned out to be a portrait one.
+
+### The tilt gate bounds the tilt it reports
+
+Fixed 2026-08-08. `maxTiltDeg` used to gate the RANSAC *candidate* and then let least-squares
+refinement rotate the winner freely, with nothing re-checking the result: set to **10°**, the door
+fixture returned a plane reported at **11.3°**.
+
+Refinement is now declined when it would carry the plane out of the gate, and the last plane that
+satisfied it is kept. Refusing the refinement rather than the whole fit is the point — refinement
+is an improvement step, not the evidence, so no floor accepted before this change is rejected by
+it. The result carries `tiltClamped`, and both the viewport (`(GATED)` beside the tilt) and
+`inspect floor` say when it fired, because a silently unrefined plane is its own kind of lie.
+The same gate at 10° now returns 9.93°. A sweep over 8/10/12/15/20/30° is in
+`geometry/door-fixture.test.ts`; one value passing is how the original defect survived.
+
+The seeded fit (`fitPlaneFromSeeds`) reports `tiltClamped: false` and is not gated — the operator
+picked those three points, and a limit meant for random candidates would defeat that path.
+
+### Every pane control row wraps
+
+Fixed 2026-08-08. `.output-row`, `.pane-controls`, `.brush-toolbar`, `.frame-toolbar` and
+`.segment-toolbar` were `nowrap` with hidden overflow, which clips silently rather than scrolling.
+Measured at a 180 px pane before the change: Depth 2D put its `Confidence` chip and the whole mask
+hint outside the pane, and both `.pane-controls` rows put `Focus`, `Hide` and `Pause` outside it —
+five controls that could not be clicked.
+
+It was not only a narrow-pane problem. **At the default 1280×800 layout** three of Depth 2D's rows
+needed more width than they had — 593, 570 and 599 px in a 500 px pane — so those controls were
+already outside the pane at the width the acceptance checklist grades at. Nothing caught it,
+because a clipped pane produces no window scrollbar and checklist item 8 kept passing.
+
+Wrapping is now the default rather than something each row opts into: the `wrap` prop and the
+`layer-row` class that carried it are gone, because the two rows that most needed them had not
+taken them. A labelled slider may also shrink below its caption width, or it overflows its own
+line whatever the row does. Verified at 183 px by dragging: zero escaped children across all eight
+rows, on both axes. One limit remains, on the other axis — a pane squeezed to ~74 px TALL cuts the
+stacked rows off at its bottom edge, which needs a scrolling control stack rather than wrapping.
 
 ### Inference settings, and why each one
 
@@ -310,11 +362,79 @@ because `groundPlaneQuality` is a penalty and its scores are usually negative.
 Four cases are not a threshold and must not be quoted as one. What they show is that every thin
 fit is also a narrow win, and that 0.42 against 0.06 is not a subtle difference.
 
+⚠️ **Every number in that table is one seed's answer.** The separation on the outdoor run ranges
+from 0.006 to 0.328 across eight seeds — see the seed study below, which supersedes any reading of
+this table as a property of the scene rather than of one draw.
+
 The last row is the one to look at. `room-504px-112f` is a **committed fixture that passes as
 `ok` today** while being the worst fit on this disk on every measure, and its runner-up has *more*
 support than the winner — the decision turns entirely on the tilt and below-plane penalties. It is
 a coin flip the interface currently reports as a floor, it costs nothing to study, and it was
 found by running `scripts/inspect.mjs floor` across every fixture on 2026-08-07.
+
+### The cloud the app measures is 7% of the reconstruction, and not a random 7%
+
+Measured 2026-08-08 with `scripts/inspect.mjs coverage`, on this disk, for nothing.
+
+Every run's point cloud holds **exactly 1,000,000 points**. That number is DA3's, not ours:
+`export_to_glb` takes `num_max_points: int = 1_000_000` and, when the survivors exceed it, keeps
+that many by `np.random.choice` without replacement. A uniform random thinning cannot remove a
+region, and nothing in this project caps anything.
+
+**The line before it is the one that matters.** The exporter first applies a confidence floor of
+`min(max(1.05, p40), p90)` — percentiles taken over the WHOLE prediction at once, every frame
+together. The base 1.05 never binds in practice, so the rule reduces to *discard the least
+confident 40% of every pixel in the run*, and a single global threshold meets frames whose
+confidence distributions are nothing like each other:
+
+| Run | Threshold | Pixels kept | Frames below 2% survival |
+|---|---|---|---|
+| `20260806-193346` outdoor, 99 frames | 6.882 | 60.0%, then 11.9% of those | **5** — frames 23, 25, 96, 97, 98 |
+| `door-504px-112f` indoor, 112 frames | 3.687 | 60.0%, then 10.5% of those | **3** — frames 70, 71, 72 |
+
+So it does not thin each frame a little. It deletes whichever frames the model was least sure
+about, entirely, and the outdoor run's losses are concentrated at the END of the walk — the plan
+view shows the camera track continuing for metres past where the cloud stops.
+
+**The mechanism is confirmed, not inferred.** Back-projecting a frame's own pixels and testing
+each against an 8 cm voxel of the exported cloud: on frame 85 of the outdoor run, 18.3% of the
+frame lands in an empty voxel, and **100.0% of that is explained by the confidence floor**. Same
+figure on the door fixture, a completely different scene. The cap is exonerated; the floor is the
+whole story.
+
+Two consequences worth keeping. Roughly 40% of a frame can be missing while the picture still
+looks fully reconstructed, because neighbouring frames fill most of it in — 46.0% of frame 85 is
+below the floor but only 18.3% is actually absent. And the fix costs no cloud money: the npz on
+disk holds full-resolution depth and confidence for every frame, so a cloud can be rebuilt here.
+`inspect --cloud npz` does exactly that, and reproduces the GLB's own fit to 0.3 mm on the door
+fixture when given DA3's own threshold — which is what makes the comparison trustworthy.
+
+### The ground fit is a coin flip, and the seed is what decides it
+
+Measured 2026-08-08 with `scripts/inspect.mjs floor --repeat 8`. **This is the largest known
+error in the system.**
+
+RANSAC draws its candidate planes at random. The seed carries no information about the scene, so
+changing only the seed should change nothing that matters. Across every reconstruction on this
+disk, it changes the answer:
+
+| Run | Elevation spread | Tilt spread | Separation range | Refusals |
+|---|---|---|---|---|
+| `20260806-193346` outdoor | **31.9 cm** | **14.55°** | 0.006 – 0.328 | 0 of 8 |
+| `20260805-151526` da3Test | 27.2 cm | 12.68° | 0.018 – 0.295 | 0 of 8 |
+| `20260806-173802` door clip | 15.4 cm | 14.46° | 0.060 – 0.420 | 0 of 8 |
+| `door-504px-112f` fixture | 11.8 cm | 5.15° | 0.021 – 0.417 | 0 of 8 |
+| `room-504px-112f` fixture | 7.2 cm | 14.23° | 0.023 – 0.293 | 0 of 8 |
+
+**Every one of those fits reports `ok`.** Not one refused. The app hard-codes `seed: 7`
+(`app/src/graph/nodes/measurement.ts`), so its answer is deterministic — and it is one arbitrary
+draw from a family spanning a third of a metre. A height measured against that floor inherits the
+whole spread, which is several times the accuracy this pipeline claims elsewhere.
+
+The confidence filter above is a real defect and it is **not** the cause of this one. Rebuilding
+the outdoor cloud from the npz with no confidence floor moves the plane 12.7 cm — well inside the
+31.9 cm the seed moves it on its own. The input is biased; the fit is unstable; the instability is
+the larger term.
 
 ### Other measured numbers
 
@@ -600,8 +720,19 @@ These are stated, not scheduled. Anything being actively worked on is in `PROGRE
   deliberate bad clicks has not been run, so failure and abstention rates are unknown. **This
   gates trust in automatic masks only.** It does not block outdoor ground or vegetation work,
   which do not depend on it.
+- ⚠️ **The ground fit is not reproducible, and everything measured against it inherits that.**
+  Changing only the RANSAC seed moves the plane by 7–32 cm and its tilt by 5–15° on every
+  reconstruction on this disk, and all of it reports `ok` (section 3). Any height quoted from this
+  system today carries that spread on top of its stated error. This is PROGRESS task 0.
 - **Accuracy across scenes is unverified.** One room, one operator, one camera path. A second
   capture with different orientation and motion remains the largest untested risk.
+- **The exported cloud is a biased 7% sample of the reconstruction** — DA3's global confidence
+  floor discards the least-confident 40% of every pixel and can remove whole frames (section 3).
+  The full-resolution depth is on disk, so this is fixable locally; nothing in the app uses it yet.
+- **A pane squeezed below about 100 px tall cuts its own control stack off at the bottom.** Rows
+  wrap horizontally and then run out of pane vertically. Found 2026-08-08 while verifying the
+  wrapping fix; it needs a scrolling control stack, and is not reachable by dragging in the
+  default layout.
 - **The top of the memory range is not modelled.** 81 frames at 504 px is the verified
   conservative setting; the 22.02 GiB reading at 112 frames is still unexplained, though
   orientation has been ruled out as its cause. See the warning in section 3.

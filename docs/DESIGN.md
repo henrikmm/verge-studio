@@ -50,8 +50,16 @@ Layout otherwise persists across reloads, with a Reset control.
 **Pane chrome.** Tab strip 28 px or shorter, labels 11–12 px. Directly beneath it a status row
 carrying live numbers, not just words — point counts, elapsed time, stale counts, selected pixels.
 
-⚠️ That status row is `nowrap` with hidden overflow, so **a control placed at its right edge
-silently leaves the viewport** in a narrow pane. Put controls in a wrapping row instead.
+**Every control row wraps.** Since 2026-08-08 `.output-row`, `.pane-controls`, `.brush-toolbar`,
+`.frame-toolbar` and `.segment-toolbar` all wrap onto a second line rather than clipping, and a
+labelled slider may shrink below its own caption width. A taller row costs canvas; a clipped row
+costs the control, and that is not a trade worth making.
+
+⚠️ This was the opposite until then, and it cost five controls. Measured at a 180 px pane on
+2026-08-08 before the change: Depth 2D put its `Confidence` chip and the whole mask hint outside
+the pane, and both `.pane-controls` rows put `Focus`, `Hide` and `Pause` outside it — unreachable,
+because `nowrap` with hidden overflow clips silently instead of scrolling. **Do not reintroduce
+`white-space: nowrap` on a row that holds a control.**
 
 ## Colour
 
@@ -201,3 +209,7 @@ Design constraints, not copy guidelines.
 17. Changing a parameter in the inspector refreshes the graph without any other interaction, and
     never starts a costly node.
 18. A wire can be selected by clicking it and deleted with Backspace; only that wire is removed.
+19. **Graded at a narrow pane, not only at 1280×800.** With a pane dragged to 180 px, every
+    control in every row of that pane is still inside it — measure, do not eyeball, by comparing
+    each row child's bounding box against the pane's. Items 8 and 10 stay at 1280×800; this one
+    exists because the defect it catches is invisible at that width.

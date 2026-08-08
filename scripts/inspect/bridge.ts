@@ -16,6 +16,7 @@ export { parseNpz, type NpyArray } from "../../app/src/lib/npz";
 export { turbo } from "../../app/src/lib/turbo";
 export { resolveUpAxis } from "../../app/src/panes/viewport-nav";
 
+export { backprojectFrame } from "../../geometry/backproject";
 export { estimateGravity, cameraCentres, trajectorySpan } from "../../geometry/gravity";
 export {
   GroundPlaneNotFoundError,

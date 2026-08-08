@@ -195,6 +195,7 @@ describe("fitGroundPlaneRobust", () => {
       inlierCount: 100,
       elevation: 0,
       candidatesConsidered: 20,
+      tiltClamped: false,
       seed: 7,
     };
     const thin = {

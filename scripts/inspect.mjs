@@ -41,6 +41,7 @@ import {
   contactSheet,
   depthImage,
   frameOverlay,
+  maskOverlay,
   invert4x4,
   projectToPixel,
   renderCloud,
@@ -61,6 +62,7 @@ COMMANDS
   view <id>                  draw the cloud            --view / --colour / --cameras
   frames <id>                draw the source frames as one numbered contact sheet
   depth <id>                 draw one frame's depth, colour-mapped as Depth 2D maps it
+  coverage <id>              what of the picture never reached the cloud, and why
   select <id>                choose points and SEE them: in the cloud and on the photograph
   explain <id>               the whole chain, numbers and pictures, in one go
 
@@ -81,6 +83,10 @@ OPTIONS
   --near <x,y,z> --radius <m>  select points within a sphere, display-space metres
   --columns <n> --max <n>    contact sheet shape (default 8 columns, 48 frames)
   --confidence               shade the depth image by DA3's confidence
+  --voxel <m>                coverage: how close a cloud point must be to count (default 0.08)
+  --cloud <glb|npz>          which cloud to work on. npz rebuilds it from the depth maps with
+                             no confidence floor, at the GLB's own point count (default glb)
+  --conf <value>             confidence floor for --cloud npz (default 0, keep everything)
   --height-range <lo,hi>     colour ramp limits for --colour height (default 0,2)
   --floor-band <lo,hi>       the slice --view floor shows, metres about the plane (default -0.3,0.9)
   --render                   have "floor" also draw the fit it just reported
@@ -91,6 +97,8 @@ GROUND-FIT OPTIONS  (defaults are the app's own, so the numbers match the interf
   --iterations <n>           RANSAC iterations               default 1200
   --stride <n>               fit stride                      default 16
                              (the fit only — use --every to thin a drawing)
+  --seed <n>                 RANSAC seed                     default 7
+  --repeat <n>               floor: fit n times changing ONLY the seed, and report the spread
 
 EXAMPLES
   node scripts/inspect.mjs floor door-504px-112f
@@ -107,6 +115,7 @@ const COMMANDS = {
   view: cmdView,
   frames: cmdFrames,
   depth: cmdDepth,
+  coverage: cmdCoverage,
   select: cmdSelect,
   explain: cmdExplain,
 };
@@ -204,6 +213,7 @@ async function cmdCloud(positional, flags) {
 
   const facts = {
     run: `${run.id} (${run.kind})`,
+    source: cloud.origin ?? "GLB, as DA3 exported it",
     points: `${cloud.count.toLocaleString("en-GB")}${stats.nonFinite ? `, ${stats.nonFinite} NOT FINITE` : ""}`,
     colour: cloud.colors ? "per-point RGB present" : "none in the GLB",
     "bounding box": `x [${round(stats.min[0], 2)}, ${round(stats.max[0], 2)}]  y [${round(stats.min[1], 2)}, ${round(stats.max[1], 2)}]  z [${round(stats.min[2], 2)}, ${round(stats.max[2], 2)}] m`,
@@ -224,8 +234,81 @@ async function cmdCloud(positional, flags) {
   out(pairs(facts));
 }
 
+/**
+ * Is this fit an answer, or a coin flip?
+ *
+ * RANSAC draws its candidate planes at random, so the seed is the one input that carries
+ * no information about the scene. A fit that moves when only the seed moves is not
+ * measuring the floor; it is picking one of several floors the evidence permits equally.
+ * Nothing in this project has ever asked, and the outdoor run turns out to answer badly.
+ *
+ * Reported as a SPREAD rather than a standard deviation: with a handful of seeds the
+ * extremes are what a person needs to see, and "the ground moved 18 cm depending on the
+ * seed" is the sentence that matters.
+ */
+async function repeatFloor(run, flags, times) {
+  const runs = [];
+  for (let i = 0; i < times; i++) {
+    const s = await scene(run, { ...flags, seed: 7 + i * 101 }, { fitFloor: true });
+    runs.push({
+      seed: 7 + i * 101,
+      ok: Boolean(s.floor),
+      elevation: s.floor?.elevation ?? null,
+      tiltDeg: s.floor?.tiltDeg ?? null,
+      inlierFraction: s.floor?.inlierFraction ?? null,
+      separation: marginOf([...(s.floor?.hypotheses ?? [])].sort((a, b) => b.qualityScore - a.qualityScore))
+        ?.separation ?? null,
+      cloud: s.cloud.origin ?? "glb",
+    });
+  }
+
+  const spread = (key) => {
+    const values = runs.map((r) => r[key]).filter((v) => v !== null);
+    if (values.length === 0) return null;
+    return { min: Math.min(...values), max: Math.max(...values) };
+  };
+
+  return { runs, elevation: spread("elevation"), tiltDeg: spread("tiltDeg"), separation: spread("separation") };
+}
+
 async function cmdFloor(positional, flags) {
   const run = resolveRun(positional[0]);
+
+  if (flags.repeat) {
+    const times = Math.max(2, Math.floor(Number(flags.repeat)));
+    const study = await repeatFloor(run, flags, times);
+    if (flags.json) return json({ id: run.id, ...study });
+
+    const refused = study.runs.filter((r) => !r.ok).length;
+    out(pairs({
+      run: `${run.id} (${run.kind})`,
+      cloud: study.runs[0].cloud,
+      seeds: `${times} fits, differing ONLY in the RANSAC seed`,
+      refused: refused ? `${refused} of ${times} found no floor at all` : "none",
+      elevation: study.elevation
+        ? `${round(study.elevation.min, 3)} .. ${round(study.elevation.max, 3)} m — spread ${round((study.elevation.max - study.elevation.min) * 100, 1)} cm`
+        : "no fit",
+      tilt: study.tiltDeg
+        ? `${round(study.tiltDeg.min, 2)} .. ${round(study.tiltDeg.max, 2)} deg — spread ${round(study.tiltDeg.max - study.tiltDeg.min, 2)} deg`
+        : "no fit",
+      separation: study.separation
+        ? `${round(study.separation.min, 3)} .. ${round(study.separation.max, 3)}`
+        : "no fit",
+    }));
+    out("");
+    out(table(
+      ["SEED", "ELEVATION", "TILT", "SUPPORT", "SEPARATION"],
+      study.runs.map((r) => [
+        r.seed,
+        r.ok ? `${round(r.elevation, 3)} m` : "REFUSED",
+        r.ok ? `${round(r.tiltDeg, 2)}d` : "—",
+        r.ok ? pct(r.inlierFraction) : "—",
+        r.separation === null ? "—" : round(r.separation, 3),
+      ]),
+    ));
+    return;
+  }
+
   const s = await scene(run, flags, { fitFloor: true });
 
   if (!s.floor) {
@@ -247,8 +330,9 @@ async function cmdFloor(positional, flags) {
   const facts = {
     run: `${run.id} (${run.kind})`,
     fit: "OK",
+    cloud: s.cloud.origin ?? `GLB, ${s.cloud.count.toLocaleString("en-GB")} points as DA3 exported them`,
     support: `${pct(fit.inlierFraction)} — ${fit.inlierCount.toLocaleString("en-GB")} of ${Math.ceil(s.cloud.count / Number(flags.stride ?? 16)).toLocaleString("en-GB")} points sampled at stride ${flags.stride ?? 16}`,
-    tilt: `${round(fit.tiltDeg, 2)} deg off the camera-derived up`,
+    tilt: `${round(fit.tiltDeg, 2)} deg off the camera-derived up${fit.tiltClamped ? ` — GATED at ${flags.tilt ?? 30}, refinement wanted more` : ""}`,
     rmse: `${round(fit.rmse * 100, 2)} cm`,
     "below plane": `${pct(fit.belowFraction)} of the cloud`,
     elevation: `${round(fit.elevation, 3)} m along up`,
@@ -379,6 +463,180 @@ async function cmdDepth(positional, flags) {
     holes: `${values.length - finite.length} non-finite of ${values.length}`,
   };
   if (flags.json) return json({ id: run.id, ...facts, low, high });
+  out(pairs(facts));
+}
+
+/**
+ * What of the picture never reached the cloud, and why.
+ *
+ * DA3's GLB exporter is not a dump of the reconstruction. It applies a confidence floor —
+ * `min(max(1.05, p40), p90)` over the WHOLE prediction at once — and then keeps
+ * 1,000,000 of the survivors at random. The cap is uniform and harmless; the floor is a
+ * single global number applied to frames whose confidence distributions differ wildly, so
+ * it does not thin each frame a little, it deletes whichever frames the model was least
+ * sure about, entirely. Everything downstream — the ground fit, every height — is measured
+ * on what is left.
+ *
+ * Two masks are drawn, and the difference between them is the point:
+ *
+ *   PREDICTED — the pixel's confidence is below the reproduced threshold, so DA3's
+ *     exporter should have discarded it.
+ *   ABSENT — the pixel's own 3D position lands in a voxel holding no cloud point, so it
+ *     really is missing, whatever the reason. This one is measured from the GLB and owes
+ *     nothing to our model of DA3's arithmetic.
+ *
+ * Where they agree, the loss is explained. ABSENT without PREDICTED is something else
+ * (thin sampling, or a surface no frame saw well). PREDICTED without ABSENT is a pixel
+ * another frame rescued, which is why the loss is survivable at all.
+ */
+async function cmdCoverage(positional, flags) {
+  const run = resolveRun(positional[0]);
+  const T = await typed();
+  const cloud = readCloud(run.glb);
+  if (!run.npz) throw new Error(`run ${run.id} has no npz — coverage needs depth and confidence`);
+
+  const arrays = await readArrays(run);
+  const { depth, confidence, intrinsics, extrinsics } = arrays;
+  if (!depth || !confidence) throw new Error(`run ${run.id} has no confidence array`);
+  if (!intrinsics || !extrinsics) throw new Error(`run ${run.id} has no cameras`);
+
+  const [count, height, width] = depth.shape;
+  const size = width * height;
+
+  // DA3's own rule, reproduced. Sorted here rather than through `percentile` because that
+  // one boxes every value into a JS array, and there are fourteen million of them.
+  const sorted = Float32Array.from(confidence.data).sort();
+  const p40 = T.percentileOfSorted(sorted, 40);
+  const p90 = T.percentileOfSorted(sorted, 90);
+  const threshold = Math.min(Math.max(1.05, p40), p90);
+
+  let survivors = 0;
+  for (let i = 0; i < confidence.data.length; i++) if (confidence.data[i] >= threshold) survivors += 1;
+  const keepRate = survivors > cloud.count ? cloud.count / survivors : 1;
+
+  const perFrame = [];
+  for (let f = 0; f < count; f++) {
+    let kept = 0;
+    for (let i = f * size; i < (f + 1) * size; i++) if (confidence.data[i] >= threshold) kept += 1;
+    perFrame.push({ frame: f, survival: kept / size });
+  }
+  const wiped = perFrame.filter((entry) => entry.survival < 0.02);
+  const ranked = [...perFrame].sort((a, b) => a.survival - b.survival);
+
+  // Occupancy, at the resolution a surface is actually resolved to. A cloud holding 12% of
+  // the survivors has no point per pixel, so "is this pixel in the cloud" can only be asked
+  // of a neighbourhood — hence voxels rather than nearest points.
+  const voxel = Number(flags.voxel ?? 0.08);
+  const key = (x, y, z) =>
+    (Math.floor(x / voxel) + 1_048_576) * 4_398_046_511_104 +
+    (Math.floor(y / voxel) + 1_048_576) * 2_097_152 +
+    (Math.floor(z / voxel) + 1_048_576);
+  const occupied = new Set();
+  for (let i = 0; i < cloud.count; i++) {
+    occupied.add(key(cloud.points[i * 3], cloud.points[i * 3 + 1], cloud.points[i * 3 + 2]));
+  }
+
+  const index = clampFrame(flags.frame, count);
+  const frameCloud = T.backprojectFrame({
+    depth: depth.data.subarray(index * size, (index + 1) * size),
+    confidence: confidence.data.subarray(index * size, (index + 1) * size),
+    width,
+    height,
+    intrinsics: intrinsics.data.subarray(index * 9, index * 9 + 9),
+    extrinsics: extrinsics.data.subarray(index * 12, index * 12 + 12),
+  });
+
+  const predicted = new Uint8Array(size);
+  const absent = new Uint8Array(size);
+  let predictedCount = 0;
+  let absentCount = 0;
+  let both = 0;
+  for (let i = 0; i < size; i++) {
+    if (!frameCloud.valid[i]) continue;
+    const low = confidence.data[index * size + i] < threshold;
+    const point = cloud.alignment
+      ? apply4x4(cloud.alignment, [
+          frameCloud.points[i * 3],
+          frameCloud.points[i * 3 + 1],
+          frameCloud.points[i * 3 + 2],
+        ])
+      : [frameCloud.points[i * 3], frameCloud.points[i * 3 + 1], frameCloud.points[i * 3 + 2]];
+    const missing = !occupied.has(key(point[0], point[1], point[2]));
+    if (low) {
+      predicted[i] = 1;
+      predictedCount += 1;
+    }
+    if (missing) {
+      absent[i] = 1;
+      absentCount += 1;
+    }
+    if (low && missing) both += 1;
+  }
+
+  const files = frameFiles(run.frames);
+  let imagePath = null;
+  if (files[index]) {
+    const photo = await readImage(files[index], Math.max(560, width));
+    const image = maskOverlay(
+      photo,
+      [
+        { mask: predicted, rgb: [255, 176, 32], label: "BELOW DA3 CONF FLOOR" },
+        { mask: absent, rgb: [255, 64, 200], label: "ABSENT FROM CLOUD" },
+      ],
+      {
+        width,
+        height,
+        title: `${run.id}  FRAME ${index} OF ${count}  WHAT NEVER REACHED THE CLOUD`,
+        // The label font has no semicolon, and an unknown glyph prints as a blob that reads
+        // like part of the number beside it.
+        subtitle:
+          `CONF FLOOR ${round(threshold, 3)} DROPS ${pct(1 - survivors / confidence.data.length)} OF EVERY PIXEL / ` +
+          `${pct(keepRate)} OF THE REST KEPT AT RANDOM / VOXEL ${voxel} M`,
+      },
+    );
+    imagePath = await writePng(image, outPath(flags, run, `coverage-${String(index).padStart(4, "0")}`));
+  }
+
+  const facts = {
+    run: `${run.id} (${run.kind})`,
+    pixels: `${confidence.data.length.toLocaleString("en-GB")} in ${count} frames of ${width}x${height}`,
+    "conf floor": `${round(threshold, 3)} — DA3's min(max(1.05, p40 ${round(p40, 3)}), p90 ${round(p90, 3)})`,
+    survivors: `${survivors.toLocaleString("en-GB")} (${pct(survivors / confidence.data.length)}) — ${pct(1 - survivors / confidence.data.length)} of every pixel is discarded before the cap`,
+    cap: `${cloud.count.toLocaleString("en-GB")} in the GLB, so ${pct(keepRate)} of survivors kept at random`,
+    "frames wiped": wiped.length
+      ? `${wiped.length} below 2% survival: ${wiped.slice(0, 12).map((e) => e.frame).join(", ")}${wiped.length > 12 ? " …" : ""}`
+      : "none",
+    "worst frames": ranked.slice(0, 5).map((e) => `${e.frame}:${pct(e.survival)}`).join("  "),
+    "best frames": ranked.slice(-5).map((e) => `${e.frame}:${pct(e.survival)}`).join("  "),
+    frame: `${index}, ${frameCloud.validCount.toLocaleString("en-GB")} pixels with usable depth`,
+    predicted: `${pct(predictedCount / frameCloud.validCount)} below the floor`,
+    absent: `${pct(absentCount / frameCloud.validCount)} land in an empty ${voxel} m voxel`,
+    agreement: absentCount
+      ? `${pct(both / absentCount)} of what is absent is explained by the floor; ${pct(both / (predictedCount || 1))} of what the floor drops stays absent`
+      : "nothing absent",
+    image: imagePath ?? "no source frames on this disk",
+  };
+
+  if (flags.json) {
+    return json({
+      id: run.id,
+      threshold,
+      p40,
+      p90,
+      survivors,
+      pixels: confidence.data.length,
+      cloudCount: cloud.count,
+      keepRate,
+      voxel,
+      frame: index,
+      validPixels: frameCloud.validCount,
+      predictedCount,
+      absentCount,
+      both,
+      perFrame,
+      image: imagePath,
+    });
+  }
   out(pairs(facts));
 }
 
@@ -513,17 +771,81 @@ async function cmdExplain(positional, flags) {
  * can see. Where the app REFUSES — incoherent camera up — this reports the refusal and carries
  * on, because being unable to look at a broken run is the opposite of what this is for.
  */
+/**
+ * The cloud DA3 would have exported if it kept everything: every frame, back-projected
+ * from the npz, with no confidence floor.
+ *
+ * Thinned to roughly the GLB's own point count on purpose. Comparing a four-million-point
+ * cloud against a one-million-point one would confound the two things being separated —
+ * a floor fit gets better with density regardless of bias. Matched counts leave exactly
+ * one difference: WHICH points, not how many.
+ *
+ * Colour is dropped. It lives in the GLB's vertex colours, and re-reading 99 JPEGs to
+ * recover it would buy nothing the height and inlier ramps do not already show.
+ */
+async function npzCloud(T, arrays, glb, { minConfidence = 0, target = glb.count } = {}) {
+  const { depth, confidence, intrinsics, extrinsics } = arrays;
+  if (!depth || !intrinsics || !extrinsics) throw new Error("npz has no depth or cameras");
+
+  const [count, height, width] = depth.shape;
+  const size = width * height;
+  // One step in both directions, so the sample stays a grid rather than a set of stripes.
+  const step = Math.max(1, Math.round(Math.sqrt((count * size) / Math.max(1, target))));
+
+  const points = [];
+  for (let f = 0; f < count; f++) {
+    const frame = T.backprojectFrame({
+      depth: depth.data.subarray(f * size, (f + 1) * size),
+      confidence: confidence?.data.subarray(f * size, (f + 1) * size),
+      width,
+      height,
+      intrinsics: intrinsics.data.subarray(f * 9, f * 9 + 9),
+      extrinsics: extrinsics.data.subarray(f * 12, f * 12 + 12),
+    }, { minConfidence });
+
+    for (let y = 0; y < height; y += step) {
+      for (let x = 0; x < width; x += step) {
+        const i = y * width + x;
+        if (!frame.valid[i]) continue;
+        const raw = [frame.points[i * 3], frame.points[i * 3 + 1], frame.points[i * 3 + 2]];
+        const display = glb.alignment ? apply4x4(glb.alignment, raw) : raw;
+        points.push(display[0], display[1], display[2]);
+      }
+    }
+  }
+
+  return {
+    points: Float32Array.from(points),
+    colors: null,
+    frusta: glb.frusta,
+    count: points.length / 3,
+    alignment: glb.alignment,
+    origin: `npz, every ${step}${ordinal(step)} pixel, confidence floor ${minConfidence}`,
+  };
+}
+
 async function scene(run, flags, { fitFloor }) {
   const T = await typed();
-  const cloud = readCloud(run.glb);
+  let cloud = readCloud(run.glb);
 
   let arrays = null;
   let gravity = null;
   let track = null;
   let trackLength = 0;
 
+  // A silent fallback to the GLB here would be the worst possible failure: the command
+  // would report the biased cloud under the label of the unbiased one.
+  if (!run.npz && flags.cloud === "npz") {
+    throw new Error(`run ${run.id} has no npz, so --cloud npz has nothing to build from`);
+  }
+
   if (run.npz) {
     arrays = await readArrays(run);
+    if (flags.cloud === "npz") {
+      cloud = await npzCloud(T, arrays, cloud, { minConfidence: Number(flags.conf ?? 0) });
+    } else if (flags.cloud !== undefined && flags.cloud !== "glb") {
+      throw new Error(`--cloud must be glb or npz, not "${flags.cloud}"`);
+    }
     if (arrays.extrinsics) {
       const raw = T.estimateGravity(arrays.extrinsics.data);
       gravity = { ...raw, up: transformDirection(raw.up, cloud.alignment, T) };
@@ -563,7 +885,7 @@ async function scene(run, flags, { fitFloor }) {
           proposalFractions: [1, 0.35],
           supportRatio: 0.1,
           maxBelowFraction: 0.2,
-          seed: 7,
+          seed: Number(flags.seed ?? 7),
         });
       } catch (error) {
         floorError = error.message;

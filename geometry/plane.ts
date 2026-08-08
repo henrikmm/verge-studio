@@ -109,6 +109,12 @@ export interface GroundPlaneFit {
   candidatesConsidered: number;
   /** Share of the cloud below the fitted plane. Near zero for a real floor. */
   belowFraction: number;
+  /**
+   * True when least-squares refinement wanted to rotate the plane past `maxTiltDeg` and
+   * was declined, so `plane` is the last one that satisfied the gate rather than the
+   * best-fitting one. `tiltDeg` can never exceed `maxTiltDeg`; this says what that cost.
+   */
+  tiltClamped: boolean;
   seed: number;
 }
 
@@ -415,15 +421,39 @@ export function fitGroundPlane(
   }
 
   let inliers = collectInliers(chosen.plane, points, sampled, opts.inlierDistance);
-  let plane = refine(points, inliers, opts.weights, up) ?? chosen.plane;
-  // Re-collect against the refined plane: refinement moves it, so the old inlier set is
-  // no longer exactly the set of points within the band.
-  inliers = collectInliers(plane, points, sampled, opts.inlierDistance);
-  const improved = refine(points, inliers, opts.weights, up);
-  if (improved) {
-    plane = improved;
+  let plane = chosen.plane;
+  let tiltClamped = false;
+
+  /**
+   * Accept a refinement only if it stays inside the tilt gate.
+   *
+   * The orientation gate above rejects a tilted CANDIDATE, but least-squares refinement
+   * afterwards is free to rotate the winner, and the tilt reported at the end was never
+   * re-checked. Measured 2026-08-07 on `door-504px-112f`: `maxTiltDeg` set to 10° returned
+   * a plane reported at 11.3°. A control that does not bound the number it controls makes
+   * every fit unfalsifiable — the operator cannot tell a floor the gate allowed from one
+   * it should have excluded.
+   *
+   * Refusing the refinement rather than the whole fit is deliberate. Refinement is an
+   * improvement step, not the evidence; declining it returns the last plane that DID
+   * satisfy the gate, so no floor accepted before this change is rejected by it. The
+   * caller is told, because a silently unrefined plane is its own kind of lie.
+   */
+  const accept = (candidate: Plane | null): boolean => {
+    if (!candidate) return false;
+    if (angleBetweenDeg(candidate.normal, up) > opts.maxTiltDeg) {
+      tiltClamped = true;
+      return false;
+    }
+    plane = candidate;
+    // Re-collect against the refined plane: refinement moves it, so the old inlier set is
+    // no longer exactly the set of points within the band.
     inliers = collectInliers(plane, points, sampled, opts.inlierDistance);
-  }
+    return true;
+  };
+
+  accept(refine(points, inliers, opts.weights, up));
+  accept(refine(points, inliers, opts.weights, up));
 
   if (inliers.length < opts.minInliers) {
     throw new GroundPlaneNotFoundError(
@@ -458,6 +488,7 @@ export function fitGroundPlane(
     elevation: -plane.offset,
     candidatesConsidered: candidates.length,
     belowFraction: below,
+    tiltClamped,
     seed: opts.seed,
   };
 }
@@ -652,6 +683,10 @@ export function fitPlaneFromSeeds(
     elevation: -plane.offset,
     candidatesConsidered: 0,
     belowFraction: belowFraction(plane, points, sampled),
+    // The seeded fit has no tilt gate to clamp against: the operator picked the three
+    // points, and overriding their choice with a limit meant for random candidates would
+    // defeat the reason this path exists.
+    tiltClamped: false,
     seed: opts.seed,
   };
 }

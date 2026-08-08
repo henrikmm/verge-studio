@@ -6,7 +6,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { backprojectMask, erodeMask, type Frame } from "./backproject";
+import { backprojectFrame, backprojectMask, erodeMask, type Frame } from "./backproject";
 import type { Vec3 } from "./types";
 
 const WIDTH = 9;
@@ -174,6 +174,64 @@ describe("backprojectMask", () => {
     expect(() =>
       backprojectMask({ ...frame, intrinsics: [0, 0, 4, 0, 0, 4, 0, 0, 1] }, fullMask()),
     ).toThrow(/focal length/);
+  });
+});
+
+describe("backprojectFrame", () => {
+  /** A depth map with a distinct value per pixel, so no two pixels can be confused. */
+  function rampFrame(pose: number[]): Frame {
+    const depth = new Float32Array(WIDTH * HEIGHT);
+    for (let i = 0; i < depth.length; i++) depth[i] = 1.5 + i * 0.01;
+    return { ...blankFrame(pose), depth };
+  }
+
+  it("places the same points as backprojectMask, at the same pixels", () => {
+    const frame = rampFrame(TURNED_POSE);
+    // The mask path with every quality filter off is the reference: if these two ever
+    // disagree, a selection and the cloud it is measured against are in different frames.
+    const reference = backprojectMask(frame, fullMask(), {
+      erodeRadius: 0,
+      maxRelativeDepthStep: 0,
+    });
+    const perPixel = backprojectFrame(frame);
+
+    expect(perPixel.validCount).toBe(reference.pointCount);
+    let written = 0;
+    for (let index = 0; index < WIDTH * HEIGHT; index++) {
+      expect(perPixel.valid[index]).toBe(1);
+      for (let axis = 0; axis < 3; axis++) {
+        expect(perPixel.points[index * 3 + axis]).toBeCloseTo(
+          reference.points[written * 3 + axis],
+          6,
+        );
+      }
+      written += 1;
+    }
+  });
+
+  it("marks pixels with unusable depth invalid rather than dropping them", () => {
+    const frame = rampFrame(IDENTITY_POSE);
+    const depth = Float32Array.from(frame.depth as Float32Array);
+    depth[10] = Number.NaN;
+    depth[20] = 0;
+
+    const cloud = backprojectFrame({ ...frame, depth });
+    expect(cloud.valid[10]).toBe(0);
+    expect(cloud.valid[20]).toBe(0);
+    expect(cloud.valid[11]).toBe(1);
+    expect(cloud.validCount).toBe(WIDTH * HEIGHT - 2);
+    // The array still has a slot for every pixel — that is what makes it drawable.
+    expect(cloud.points).toHaveLength(WIDTH * HEIGHT * 3);
+  });
+
+  it("applies the confidence floor per pixel", () => {
+    const frame = rampFrame(IDENTITY_POSE);
+    const confidence = new Float32Array(WIDTH * HEIGHT).fill(10);
+    confidence[5] = 1;
+
+    const cloud = backprojectFrame({ ...frame, confidence }, { minConfidence: 5 });
+    expect(cloud.valid[5]).toBe(0);
+    expect(cloud.validCount).toBe(WIDTH * HEIGHT - 1);
   });
 });
 

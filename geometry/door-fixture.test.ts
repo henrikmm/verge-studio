@@ -43,7 +43,7 @@ function transformDirection(direction: Vec3, transform: number[]): Vec3 {
   return value;
 }
 
-async function fit(setting: string) {
+async function fit(setting: string, overrides: { maxTiltDeg?: number } = {}) {
   const root = new URL(`../fixtures/door/${setting}/`, import.meta.url);
   const { points, alignment } = readGlb(fileURLToPath(new URL("scene.glb", root)));
   const arrays = await parseNpz(readFileSync(new URL("verge-result.npz", root)).buffer as ArrayBuffer);
@@ -62,6 +62,7 @@ async function fit(setting: string) {
     supportRatio: 0.1,
     maxBelowFraction: 0.2,
     seed: 7,
+    ...overrides,
   });
 }
 
@@ -80,6 +81,32 @@ describe.skipIf(!available)("door floor regression", () => {
     expect(floor.tiltDeg).toBeLessThan(20);
     expect(floor.belowFraction).toBeLessThan(0.02);
     expect(floor.rmse).toBeLessThan(0.02);
+  }, 15_000);
+
+  /**
+   * The gate has to bound the number it names, at every setting rather than one.
+   *
+   * Measured 2026-08-07, before this was fixed: `maxTiltDeg` 10 returned a plane reported
+   * at 11.3°. The orientation gate rejected tilted CANDIDATES and then least-squares
+   * refinement rotated the winner past the limit, which nothing re-checked. A sweep rather
+   * than the single failing value, because one value passing is how the original defect
+   * survived — the code was only ever exercised at 30°.
+   */
+  it.each([8, 10, 12, 15, 20, 30])("never reports a tilt above a %i deg gate", async (limit) => {
+    const floor = await fit("504px-112f", { maxTiltDeg: limit });
+    expect(floor.tiltDeg).toBeLessThanOrEqual(limit);
+  }, 15_000);
+
+  it("reports that it declined a refinement rather than clamping silently", async () => {
+    // 10° is the measured case: refinement wants 11.3° and is refused.
+    const clamped = await fit("504px-112f", { maxTiltDeg: 10 });
+    expect(clamped.tiltClamped).toBe(true);
+    expect(clamped.tiltDeg).toBeLessThanOrEqual(10);
+
+    // At the app's own default the refinement fits inside the gate, so nothing is declined
+    // and the fit is exactly what it was before this change.
+    const free = await fit("504px-112f");
+    expect(free.tiltClamped).toBe(false);
   }, 15_000);
 
   it("keeps the gravity-aligned lower-region floor when the 252px cloud is degraded", async () => {

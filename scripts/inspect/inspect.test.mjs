@@ -16,7 +16,7 @@
 import { describe, expect, it } from "vitest";
 import { backprojectMask } from "../../geometry/backproject";
 import { canvas, setPixel, text, textWidth } from "./image.mjs";
-import { apply4x4, invert4x4, projectToPixel, renderCloud, viewBasis } from "./render.mjs";
+import { apply4x4, invert4x4, maskOverlay, projectToPixel, renderCloud, viewBasis } from "./render.mjs";
 
 const basisFromUp = (up) => {
   const helper = Math.abs(up[1]) < 0.9 ? [0, 1, 0] : [1, 0, 0];
@@ -156,6 +156,63 @@ describe("image primitives", () => {
     expect([...image.data].some((value) => value > 0)).toBe(true);
     // "11.8 DEG TILT - OK": the degree sign becomes four characters, the em dash one.
     expect(textWidth("11.8° tilt — ok")).toBe(textWidth("11.8 deg tilt - ok"));
+  });
+});
+
+describe("maskOverlay", () => {
+  // A photograph twice the reconstruction's resolution, so the nearest-neighbour scaling
+  // between mask space and image space is exercised rather than skipped.
+  const width = 4;
+  const height = 4;
+  const photo = canvas(8, 8, [10, 10, 10]);
+
+  function mask(...indices) {
+    const out = new Uint8Array(width * height);
+    for (const index of indices) out[index] = 1;
+    return out;
+  }
+
+  it("tints only the region the mask covers, scaled to the photograph", () => {
+    const image = maskOverlay(photo, [{ mask: mask(0), rgb: [255, 0, 0], label: "X" }], {
+      width,
+      height,
+      title: "T",
+      subtitle: "S",
+    });
+    const top = 22;
+    const at = (x, y) => image.data[((y + top) * image.width + x) * 3];
+
+    // Mask pixel 0 is the top-left quarter-cell, which is 2x2 image pixels.
+    expect(at(0, 0)).toBeGreaterThan(100);
+    expect(at(1, 1)).toBeGreaterThan(100);
+    expect(at(2, 2)).toBe(10);
+  });
+
+  it("lets a later layer win where two overlap, so absence is never hidden by cause", () => {
+    const image = maskOverlay(
+      photo,
+      [
+        { mask: mask(0), rgb: [255, 0, 0], label: "FIRST" },
+        { mask: mask(0), rgb: [0, 0, 255], label: "SECOND" },
+      ],
+      { width, height, title: "T", subtitle: "S" },
+    );
+    const at = ((22 + 0) * image.width + 0) * 3;
+    expect(image.data[at + 2]).toBeGreaterThan(image.data[at]);
+  });
+
+  it("leaves the photograph legible under the tint rather than painting over it", () => {
+    const bright = canvas(8, 8, [255, 255, 255]);
+    const image = maskOverlay(bright, [{ mask: mask(0), rgb: [0, 0, 0], label: "X" }], {
+      width,
+      height,
+      title: "T",
+      subtitle: "S",
+    });
+    const at = ((22 + 0) * image.width + 0) * 3;
+    // Blended, not replaced: a fully black tint over white must not reach black.
+    expect(image.data[at]).toBeGreaterThan(0);
+    expect(image.data[at]).toBeLessThan(255);
   });
 });
 

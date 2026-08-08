@@ -20,6 +20,38 @@ Every task states five things:
 
 ## Now
 
+### 0. Make the ground fit reproducible, before anything is measured against it
+
+**Outcome.** The same cloud fitted twice gives the same floor. Today it does not: changing only
+the RANSAC seed — which carries no information about the scene — moves the plane by up to **31.9
+cm** and its tilt by **14.55°**, and every one of those fits reports `ok`. Until this is fixed,
+every height this system reports carries that spread on top of its stated error, and no outdoor
+verdict means anything.
+
+**Owner.** Agent.
+
+**Gate.** None. Every measurement below is on this disk and costs nothing.
+
+**Evidence / starting points.** Measured 2026-08-08 across all five reconstructions on this disk;
+the table is REGISTRY section 3, "The ground fit is a coin flip". Reproduce with
+`node scripts/inspect.mjs floor <id> --repeat 8`. The app hard-codes `seed: 7`
+(`app/src/graph/nodes/measurement.ts:292`), so its answer is one arbitrary draw from that family.
+
+Three candidates, in the order worth testing. **Too few iterations** — 1200 draws may simply not
+converge, and raising them costs only local CPU. **The hypothesis choice is unstable** —
+`fitGroundPlaneRobust` picks between proposal pools on `groundPlaneQuality`, and the outdoor
+separations range 0.006–0.328 across seeds, so the winner changes. **The evidence is genuinely
+ambiguous** — in which case the honest answer is refusal, and this hands task 2 its threshold.
+
+A biased input makes it worse but is not the cause: rebuilding the outdoor cloud with no
+confidence floor (`--cloud npz`) moves the plane 12.7 cm, inside the 31.9 cm the seed moves it
+alone. Do not start there.
+
+**Done when.** Refitting the same cloud with eight different seeds agrees to a stated tolerance on
+every reconstruction on this disk, or reports a refusal — and the tolerance is written down with
+the measurement behind it. `floor --repeat` is the check, and it runs in the test suite on at least
+one fixture so this cannot silently return.
+
 ### 1. Take the system outdoors, guided, and find out what breaks
 
 **Outcome.** We know whether the ground plane and the measurement hold up outside, on a surface
@@ -31,11 +63,20 @@ including preparing the capture checklist, running the pipeline and doing the an
 
 **Gate.** Cloud spend + user confirmation.
 
-**Evidence / starting points.** The ground rule and why it works is REGISTRY decision 3; its known
-weak spots are in REGISTRY section 7. Per-clip measurement targets already exist and are keyed by
-the clip's digest, so an outdoor clip starts with an empty set — this task is the first real use
-of that flow. The camera must genuinely move through the scene: turning on the spot gives the
-model nothing to work with.
+**Gated behind task 0.** An outdoor verdict computed on a floor that moves 32 cm with the seed is
+not a result, it is a coin toss with a number attached.
+
+**Evidence / starting points.** The ground rule is REGISTRY decision 3; its weak spots are in
+REGISTRY section 7. Measurement targets are keyed by the clip's digest, so an outdoor clip starts
+with an empty set. The camera must genuinely move through the scene.
+
+**Half of this is already captured.** `~/verge-runs/20260806-193346-26d16e` (`testOutdoor.mp4`,
+99 frames, a 29 m walk down a side passage) reconstructs and can be inspected at no cost. What it
+lacks is usable tape truth: everything measured on that trip was vegetation, which is task 5's
+problem — a plant has no single height to be right or wrong about, so it cannot grade a ground
+plane. The second capture needs **rigid targets in the same clip**: a doorway, a step or kerb, a
+post, a window reveal. Scale does not transfer between clips, so the reference must be visible in
+the reconstruction being graded.
 
 **Done when.** One outdoor clip has been captured, run and measured, with these recorded: how much
 of the scene supports the fitted ground, its tilt, how much of the cloud sits below it, the fit
@@ -57,28 +98,24 @@ fit is a coin flip, and nothing currently reports it.
 
 **Gate.** User confirmation, for the final wording and behaviour of the warning.
 
-**Evidence / starting points.** `geometry/plane.ts` returns every hypothesis it scores, and
-`scripts/inspect.mjs floor <id>` now reports the separation between the best two — four cases are
-in REGISTRY section 3, and every thin fit is a narrow win. A seeded fit
-(`fitPlaneFromSeeds`) exists and has never been reachable from the interface — add that route only
-if task 1 shows the automatic evidence is not enough. Abstention must propagate: a measurement
-resting on an untrustworthy ground should refuse, not guess.
+**Evidence / starting points.** `geometry/plane.ts` returns every hypothesis it scores and
+`inspect floor` reports the separation between the best two; four cases are in REGISTRY section 3,
+and every thin fit is a narrow win. Abstention must propagate: a measurement resting on an
+untrustworthy ground should refuse, not guess. A seeded fit (`fitPlaneFromSeeds`) exists and has
+never been reachable from the interface — add that route only if the automatic evidence proves
+insufficient.
 
-Two live examples are on disk and cost nothing to look at: the run saved on 2026-08-06
-(`~/verge-runs/20260806-173802-d354a2`) fits a floor with **3.1% support**, and the committed
-fixture `room-504px-112f` passes as `ok` at **2.4% support, 19.3° tilt, 7.7% below and a
-separation of 0.059** — a coin flip. Those are the cases any threshold has to judge.
+The **display** half landed on 2026-08-07 (REGISTRY section 1). What remains is the harder half —
+making the app judge a fit *itself*. Today it refuses only on the loose gates inside
+`fitGroundPlaneRobust`: a fit at **6.2% support, 18° tilt, 6.6% below** passes as `ok`,
+reproducible on the door fixture at `inlierDistance 0.1, maxTiltDeg 45, stride 32,
+iterations 250`.
 
-The **display** half of this landed on 2026-08-07. A refusal reaches the viewport as `▲ NO FLOOR`
-carrying the fit's own message, the readout leads with `% BELOW`, and the `Below plane` layer
-draws the evidence for it (`app/src/panes/floor-state.ts`, `floor-overlay.ts`). Judging a fit by
-eye is now possible; what remains is the harder half — making the app judge one *itself*.
-
-Today it refuses only on the gates already inside `fitGroundPlaneRobust`, and those are loose: a
-fit at **6.2% support, 18° tilt and 6.6% below** passes as `ok` and is drawn exactly like the
-14.6%-support fit beside it, with nothing in the interface calling it thin. That case is
-reproducible on the door fixture with `inlierDistance 0.1, maxTiltDeg 45, stride 32,
-iterations 250`, costs nothing to study, and its separation is measured.
+⚠️ **No separation on record is a threshold candidate yet, because each is one seed's answer.**
+Across eight seeds the outdoor run's separation ranges 0.006–0.328 and the door fixture's
+0.021–0.417, with **zero refusals anywhere**. A threshold set on something that unstable fires at
+random. Task 0 comes first, and may hand this task its criterion for free: a fit whose answer
+moves with the seed is exactly a fit the app cannot establish.
 
 **Done when.** Outdoor evidence from task 1 has been used to set the thresholds, "ground cannot be
 established" is a first-class result that downstream steps respect, and the user has agreed the
@@ -87,48 +124,6 @@ warning reads correctly.
 ---
 
 ## Later
-
-### 3. The tilt gate does not bound the tilt that gets reported
-
-**Outcome.** The tilt limit either means what it says, or the control says what it means. Right
-now a fit can be reported at a tilt its own gate should have excluded.
-
-**Owner.** Agent.
-
-**Gate.** User confirmation — this changes fit behaviour, and therefore possibly measured numbers.
-
-**Evidence / starting points.** Measured on 2026-08-07 against `door-504px-112f`: `maxTiltDeg`
-set to **10°** returned a plane reported at **11.3°**. The gate rejects a candidate at
-`geometry/plane.ts:385`, the least-squares refinement after it (`plane.ts:418-426`) can rotate the
-plane past the limit, and the reported tilt (`plane.ts:457`) is never re-checked;
-`fitGroundPlaneRobust` only penalises tilt softly, so such a plane can still win.
-
-Either re-check tilt after refinement and reject — honest, but may reject floors accepted today —
-or relabel the control as a limit on the *proposal*. Decide after task 1: an outdoor clip is what
-would show which behaviour is wanted, and guessing now would be guessing.
-
-**Done when.** The reported tilt cannot exceed its gate, or the control says plainly that the gate
-applies to the proposal only, with outdoor evidence behind whichever was chosen.
-
-### 4. The OUTPUT row pushes its last chip out of a narrow pane
-
-**Outcome.** No pane control can leave the viewport, whatever the pane is resized to.
-
-**Owner.** Agent.
-
-**Gate.** None.
-
-**Evidence / starting points.** DESIGN.md warns that the `nowrap` control row silently pushes
-right-hand controls out of a narrow pane. Measured 2026-08-07: at 180 px, Depth 2D's OUTPUT row keeps
-its height and puts the `Confidence` chip **outside** its box, unreachable. `.layer-row` wraps and
-keeps its chips — the question is whether OUTPUT's one-of-N chips want that treatment or another.
-
-Viewport 3D passed on 2026-08-07 without answering it — its hint moved into a `Keys` panel inside
-the viewport, shortening the row rather than wrapping it. That settles an overflowing *hint* and
-leaves Depth 2D's harder case, an overflowing *chip*; `OutputRow` now takes a `wrap` prop.
-
-**Done when.** Every chip in every pane control row stays inside its row at 180 px, measured, and
-the checklist item that covers it is graded against a narrow pane rather than only 1280×800.
 
 ### 5. Decide what measuring grass actually means, then build it
 
@@ -143,10 +138,13 @@ is written. This is a definition problem before it is an engineering one.
 **Evidence / starting points.** Grass is not a door repeated many times. The intended direction is
 a grid laid on the local ground, with a robust height statistic per cell, a coverage and
 confidence gate per cell, abstention where evidence is thin, and a heat map as the output rather
-than a list of objects. Do not try to segment individual plants. The donor code in `donor/` has a
-worked version of this cell-and-percentile approach and is the template. The unproven automatic
-mask benchmark (REGISTRY section 7) only applies here if automatic object masks later become part
-of this workflow — the raster approach does not use them.
+than a list of objects. Do not try to segment individual plants; `donor/` has a worked version of
+this cell-and-percentile approach and is the template. The unproven automatic mask benchmark
+(REGISTRY section 7) does not apply — the raster approach uses no object masks.
+
+The outdoor clip already on disk (`20260806-193346-26d16e`) is a vegetation case with tape truth
+taken on the day, so this task has a first subject waiting. It is also why task 1 still needs a
+second capture: those measurements grade *this*, not a ground plane.
 
 **Done when.** The measurement definition and the physical reference protocol are agreed with the
 user, the raster is implemented, and it has been checked against a physical reference with its
@@ -161,19 +159,21 @@ estimate matches what a real run does at the top of the range.
 
 **Gate.** Cloud spend + user confirmation.
 
-**Evidence / starting points.** This task got smaller on 2026-08-06 and its question changed.
-Orientation is no longer a suspect: two 81-frame runs at 504 px, one landscape and one portrait,
-returned **byte-identical** driver and allocator peaks (REGISTRY section 3). Shape is free at equal
-pixel count, so "landscape costs more" cannot be the explanation.
+**Evidence / starting points.** Both original suspects are dead, at no cost. Orientation went on
+2026-08-06 (two 81-frame runs, landscape and portrait, byte-identical peaks). **Pixel count went
+on 2026-08-08**: the 22.02 GiB run was `da3Test.mp4`, 1920×1080 unrotated, which
+`upper_bound_resize` takes to 504×280 = **141,120 px/frame** — identical to the door clip's
+280×504 — and the 81-frame run of *that same clip*
+(`~/verge-runs/20260805-151526-a99a78`) matched the door clip byte for byte. The excess appears
+only at 112.
 
-Two candidates remain, and they are cheap to tell apart. Either the aspect ratio changed the
-**pixels per frame** — `upper_bound_resize` fixes the long edge at 504 and lets the short edge
-follow, so a 4:3 clip carries ~35% more pixels than a 16:9 one at the same setting — or the driver
-figure simply **saturated**, which REGISTRY section 3 already observes near the ceiling (144 frames
-reads lower than 128). The allocator peak does not saturate and is the number to trust.
+**One candidate is left: the driver figure near the ceiling**, which REGISTRY section 3 already
+observes (144 frames reads lower than 128). The allocator peak is the clean signal and was never
+recorded for that run — that missing number is now the whole task.
 
-The stored ladder does not record pixels per frame, which is why this is still open. Record it.
+Deferred on 2026-08-08 as out of scope for that session, not decided against.
 
-**Done when.** The excess is attributed to pixel count or to driver saturation with a measurement
-behind it, `docs/vram-measurements.json` carries pixels per frame for each rung, and the app's
-estimate is checked against one real run near the top of the range.
+**Done when.** One inference at 112 frames and 504 px on `da3Test.mp4` records its allocator peak
+— if it lands near the door clip's 17.23 GiB, the excess is driver-side and this closes.
+`docs/vram-measurements.json` carries pixels per frame, the clip and the frame shape for every
+rung, and the app's `MEASURED_DRIVER_PEAKS` estimate is checked against that run.

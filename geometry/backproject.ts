@@ -119,6 +119,28 @@ export function erodeMask(
   return out;
 }
 
+/**
+ * The camera terms every backprojection needs, validated once.
+ *
+ * Shared so `backprojectMask` and `backprojectFrame` cannot drift apart on convention:
+ * two copies of this arithmetic is exactly how a selection and the cloud it is compared
+ * against end up in different coordinate frames while both look plausible.
+ */
+function cameraOf(frame: Frame) {
+  const { width, height, depth, intrinsics: k, extrinsics: e } = frame;
+  if (depth.length !== width * height) {
+    throw new Error(`depth has ${depth.length} values, expected ${width}x${height}`);
+  }
+  if (k.length < 9) throw new Error("intrinsics must be a row-major 3x3");
+  if (e.length < 12) throw new Error("extrinsics must be a row-major 3x4");
+  const fx = k[0];
+  const fy = k[4];
+  if (!(Math.abs(fx) > 0) || !(Math.abs(fy) > 0)) {
+    throw new Error("intrinsics have a zero focal length");
+  }
+  return { fx, fy, cx: k[2], cy: k[5], t: [e[3], e[7], e[11]] as Vec3, e };
+}
+
 /** True when the pixel sits on a depth edge and should not be trusted. */
 function onDepthDiscontinuity(
   depth: ArrayLike<number>,
@@ -155,23 +177,11 @@ export function backprojectMask(
   options: BackprojectOptions = {},
 ): BackprojectResult {
   const opts = { ...DEFAULTS, ...options };
-  const { width, height, depth, confidence, intrinsics: k, extrinsics: e } = frame;
+  const { width, height, depth, confidence } = frame;
+  const { fx, fy, cx, cy, t, e } = cameraOf(frame);
 
-  if (depth.length !== width * height) {
-    throw new Error(`depth has ${depth.length} values, expected ${width}x${height}`);
-  }
   if (mask.length !== width * height) {
     throw new Error(`mask has ${mask.length} values, expected ${width}x${height}`);
-  }
-  if (k.length < 9) throw new Error("intrinsics must be a row-major 3x3");
-  if (e.length < 12) throw new Error("extrinsics must be a row-major 3x4");
-
-  const fx = k[0];
-  const fy = k[4];
-  const cx = k[2];
-  const cy = k[5];
-  if (!(Math.abs(fx) > 0) || !(Math.abs(fy) > 0)) {
-    throw new Error("intrinsics have a zero focal length");
   }
 
   let maskedPixels = 0;
@@ -181,7 +191,6 @@ export function backprojectMask(
   let erodedAway = 0;
   for (let i = 0; i < kept.length; i++) if (mask[i] && !kept[i]) erodedAway += 1;
 
-  const t: Vec3 = [e[3], e[7], e[11]];
   const out = new Float32Array(maskedPixels * 3);
   let written = 0;
   const rejected = { eroded: erodedAway, depth: 0, confidence: 0, discontinuity: 0 };
@@ -226,4 +235,62 @@ export function backprojectMask(
     maskedPixels,
     rejected,
   };
+}
+
+export interface FrameCloudOptions {
+  /** Drop pixels below this DA3 confidence. Ignored when the frame has no confidence map. */
+  minConfidence?: number;
+  /** Ignore depths outside this range, in metres. Guards against 0/inf sentinels. */
+  minDepth?: number;
+  maxDepth?: number;
+}
+
+export interface FrameCloud {
+  /** `width * height * 3`, indexed by pixel. Entries where `valid` is 0 are meaningless. */
+  points: Float32Array;
+  /** 1 where the pixel produced a point. Same layout as the depth map. */
+  valid: Uint8Array;
+  validCount: number;
+}
+
+/**
+ * Every pixel of one frame as a 3D point, INDEXED BY PIXEL.
+ *
+ * `backprojectMask` compacts its output, which is right for measuring an object and wrong
+ * for asking "is this part of the picture in the cloud at all" — that question needs the
+ * answer to stay addressable by pixel so it can be drawn back onto the photograph.
+ *
+ * Deliberately carries none of `backprojectMask`'s quality filters. Erosion and the
+ * discontinuity test exist to keep a *measurement* honest; here they would remove pixels
+ * and then blame their absence on something else. The only rejections are pixels with no
+ * usable depth, and the confidence floor the caller asks for.
+ */
+export function backprojectFrame(frame: Frame, options: FrameCloudOptions = {}): FrameCloud {
+  const opts = { minConfidence: 0, minDepth: DEFAULTS.minDepth, maxDepth: Infinity, ...options };
+  const { width, height, depth, confidence } = frame;
+  const { fx, fy, cx, cy, t, e } = cameraOf(frame);
+
+  const points = new Float32Array(width * height * 3);
+  const valid = new Uint8Array(width * height);
+  let validCount = 0;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const index = y * width + x;
+      const d = depth[index];
+      if (!Number.isFinite(d) || d < opts.minDepth || d > opts.maxDepth) continue;
+      if (confidence && confidence[index] < opts.minConfidence) continue;
+
+      const cxm = ((x - cx) * d) / fx;
+      const cym = ((y - cy) * d) / fy;
+      const rel: Vec3 = [cxm - t[0], cym - t[1], d - t[2]];
+      points[index * 3] = e[0] * rel[0] + e[4] * rel[1] + e[8] * rel[2];
+      points[index * 3 + 1] = e[1] * rel[0] + e[5] * rel[1] + e[9] * rel[2];
+      points[index * 3 + 2] = e[2] * rel[0] + e[6] * rel[1] + e[10] * rel[2];
+      valid[index] = 1;
+      validCount += 1;
+    }
+  }
+
+  return { points, valid, validCount };
 }

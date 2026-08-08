@@ -471,6 +471,51 @@ export function frameOverlay(photo, marks, { title, subtitle, hit, total }) {
   return image;
 }
 
+/**
+ * Tint regions of a photograph from masks at the reconstruction's own resolution.
+ *
+ * Sibling of `frameOverlay`, which draws scattered marks because a selection IS scattered.
+ * Absence is not: the question "what part of this picture never reached the cloud" has a
+ * region for an answer, and a region drawn as dots reads as sparse sampling — the exact
+ * confusion this command exists to settle.
+ *
+ * `layers` are drawn in order, each `{ mask, rgb, label }` at `width`×`height`, so a later
+ * layer wins where two overlap. Tinting blends rather than replaces, because the point is
+ * to see WHICH part of the photograph is missing, not to paint over it.
+ */
+export function maskOverlay(photo, layers, { width, height, title, subtitle }) {
+  const top = 22;
+  const bottom = 20;
+  const image = canvas(photo.width, top + photo.height + bottom);
+  blit(image, photo, 0, top);
+
+  for (const { mask, rgb } of layers) {
+    for (let py = 0; py < photo.height; py++) {
+      const sy = Math.min(height - 1, Math.floor((py * height) / photo.height));
+      for (let px = 0; px < photo.width; px++) {
+        const sx = Math.min(width - 1, Math.floor((px * width) / photo.width));
+        if (!mask[sy * width + sx]) continue;
+        const at = ((py + top) * image.width + px) * 3;
+        image.data[at] = Math.round(image.data[at] * 0.35 + rgb[0] * 0.65);
+        image.data[at + 1] = Math.round(image.data[at + 1] * 0.35 + rgb[1] * 0.65);
+        image.data[at + 2] = Math.round(image.data[at + 2] * 0.35 + rgb[2] * 0.65);
+      }
+    }
+  }
+
+  let x = 6;
+  const legendY = top + 6;
+  for (const { rgb, label } of layers) {
+    fillRect(image, x, legendY, 8, 8, rgb);
+    badge(image, x + 12, legendY + 1, label, INK);
+    x += 18 + textWidth(label);
+  }
+
+  text(image, 4, 7, title.slice(0, 100), INK);
+  text(image, 4, image.height - 13, subtitle.slice(0, 120), DIM);
+  return image;
+}
+
 /** Invert a row-major 4×4. Needed to send display-space points back to the cameras' own frame. */
 export function invert4x4(m) {
   const a = [
