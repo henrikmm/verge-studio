@@ -21,7 +21,10 @@ import {
 import { FIXTURE_SETTINGS, builtinRunId } from "../measurement/depth-field";
 import type { RunId } from "../lib/runs";
 import { useRuns } from "../lib/runs-store";
+import { useAdvanced } from "../lib/ui-mode";
+import { HelpDot } from "./help";
 import {
+  BUILTIN_DOOR_CLIP,
   MIN_TRIALS_FOR_SPREAD,
   addTarget,
   measurementObjects,
@@ -163,7 +166,10 @@ function downloadSession(): void {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "verge-m3b-measurements.json";
+  // Named for what it is. It was `verge-m3b-measurements.json` while the pane's own status row
+  // said `M3c evidence` — two internal milestone names, disagreeing, on one screen, and neither
+  // of them meaning anything to whoever opens the file six months from now.
+  link.download = "verge-measurements.json";
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -321,6 +327,7 @@ function AddTargetForm({
 }
 
 export function ObjectsPane() {
+  const advanced = useAdvanced();
   const graph = useGraph();
   const ui = useMeasurementUi();
   const object = activeMeasurementObject();
@@ -408,6 +415,22 @@ export function ObjectsPane() {
       ? objectBudget(ui.observations, object?.id ?? "", runId, clipModel)
       : undefined;
 
+  /**
+   * The resolution comparison only means something for the clip its three runs were made from.
+   *
+   * `FIXTURE_SETTINGS` is three recorded runs of the DOOR clip at different resolutions and frame
+   * counts. Until now the card built from them rendered for every clip: on `da3Test.mp4` it drew
+   * three rows of `—` under a heading promising a verdict, and closed with a sentence about B4's
+   * stand contact — a target that clip does not contain. A comparison with nothing in it is not a
+   * neutral blank, it is a claim that the comparison was run and came back empty.
+   */
+  const showsResolutionVerdict = ui.clipKey === BUILTIN_DOOR_CLIP;
+
+  /** How many graded targets a setting could have scored. Was written as a literal `3`. */
+  const holdoutCount = targets.filter(
+    (item) => item.truthM !== null && item.id !== calibrationTarget(targets)?.id && !item.availabilityNote,
+  ).length;
+
   const resolutionRows = useMemo(
     () =>
       FIXTURE_SETTINGS.map((setting) => {
@@ -465,10 +488,16 @@ export function ObjectsPane() {
 
   return (
     <div className="pane">
+      {/* `M3c evidence` used to sit here — a milestone number from a plan nobody is reading any
+          more. What a status row owes the reader is numbers about the thing in front of them. */}
       <div className="pane-status">
-        <span className={ui.blind ? "busy" : "ok"}>{ui.blind ? "BLIND" : "M3c evidence"}</span>
-        <span>{ui.observations.length} trials</span>
-        <span className="hint">{sourceMode === "recorded" ? "recorded DA3 evidence" : "live DA3 exploration"}</span>
+        {/* No glyph in the text: `.pane-status .ok` and `.busy` already draw one in CSS, and
+            writing a second one produced "● ● Evidence". */}
+        <span className={ui.blind ? "busy" : "ok"}>{ui.blind ? "BLIND" : "Evidence"}</span>
+        <span>
+          {targets.length} target{targets.length === 1 ? "" : "s"} · {ui.observations.length} trials
+        </span>
+        <span className="hint">{activeRun?.clipName || "no clip"}</span>
       </div>
       <div className="pane-body objects-pane">
         <section className="object-context">
@@ -578,23 +607,29 @@ export function ObjectsPane() {
             <b>{veil(ui.blind, rawDa3Text)}</b>
             <span>SELECTED</span><b>{selection ? `${selection.diagnostics.pointCount.toLocaleString()} pts` : "—"}</b>
             <span>SELECTION</span><b>{selection?.maskSource ?? "—"}</b>
+            {/*
+              `experimental` used to be suppressed for `door-leaf` and shown for everything else,
+              which had it exactly backwards: the door is the ONE target automatic selection has
+              ever been tried on, and one attempt is not a benchmark. REGISTRY section 7 gates
+              trust in automatic masks generally, so the caveat belongs on all of them.
+            */}
             {selection?.segmentation && (
               <>
                 <span>AUTOMATIC REVIEW</span>
                 <b>
                   {selection.segmentation.accepted
-                    ? `${object.id === "door-leaf" ? "accepted" : "accepted · experimental"} · ${selection.segmentation.prompts.length} clicks`
+                    ? `accepted · experimental · ${selection.segmentation.prompts.length} clicks`
                     : "height withheld"}
                 </b>
               </>
             )}
-            {selection?.segmentation && measurement && Number.isFinite(measurement.details.fullMaskControlM) && (
+            {advanced && selection?.segmentation && measurement && Number.isFinite(measurement.details.fullMaskControlM) && (
               <>
                 <span>FULL-MASK CONTROL</span><b>{formatM(measurement.details.fullMaskControlM)}</b>
                 <span>ENDPOINT ADAPTER</span><b>{formatM(measurement.details.endpointAdapterDeltaM)}</b>
               </>
             )}
-            {automaticStats.total > 0 && (
+            {advanced && automaticStats.total > 0 && (
               <>
                 <span>AUTO ATTEMPTS · {object.code}</span><b>{automaticStats.accepted}/{automaticStats.total} accepted</b>
                 <span>ABSTAIN / FAIL</span><b>{automaticStats.abstained} / {automaticStats.failed}</b>
@@ -611,7 +646,13 @@ export function ObjectsPane() {
             "INTERNAL SPREAD ±0.003 m" beside errors of 0.02–0.08 m. P0 measured the terms and
             found the residual is systematic scale, not scatter — so the bias is now stated and
             corrected rather than hidden inside a ± that never covered it.
+
+            Advanced, because it is the anatomy of a number rather than the number: what Standard
+            needs is the reading and its error, and those are two rows above and in the 3D pane's
+            result strip. The one thing here that is a live warning about this run — no calibration
+            basis — is rendered outside the switch below.
           */}
+          {advanced && (
           <div className="budget-block">
             <div className="reading-grid">
               <span>CLIP SCALE BIAS</span>
@@ -636,14 +677,23 @@ export function ObjectsPane() {
                 </small>
               )}
             </div>
-            {liveBudget && !liveBudget.calibrated && (
-              <div className="evidence-warning">
-                No calibration basis in this setting: record at least two different objects before
-                any bias figure can be quoted. The raw reading stands alone until then.
-              </div>
-            )}
-            <small className="honesty-note">⚠️ {UNCERTAINTY_LIMITATION}</small>
+            <span className="budget-help">
+              <HelpDot label="What this budget can and cannot cover">
+                <p>⚠️ {UNCERTAINTY_LIMITATION}</p>
+              </HelpDot>
+            </span>
           </div>
+          )}
+          {/*
+            Outside the switch: this describes the state of THIS run rather than explaining the
+            feature, so hiding it in Standard would be the honesty rule broken by a mode.
+          */}
+          {liveBudget && !liveBudget.calibrated && (
+            <div className="evidence-warning">
+              No calibration basis in this setting: record at least two different objects before
+              any bias figure can be quoted. The raw reading stands alone until then.
+            </div>
+          )}
           {measurementError && <div className="evidence-warning">{measurementError}</div>}
           {object.availabilityNote && <div className="evidence-warning">{object.availabilityNote}</div>}
           {!Number.isFinite(factor) && object.id !== calibrationTarget(targets)?.id && (
@@ -661,6 +711,13 @@ export function ObjectsPane() {
             </div>
           )}
           <section className="trial-block">
+            {/*
+              Two counts in Standard, six in Advanced.
+              `Record trial` stays in Standard, so the count it increments has to stay with it —
+              a button whose only feedback lives behind a mode switch is a button that appears to
+              do nothing. The medians and the two spread ranges are the repeatability STUDY, and
+              that is what Advanced is for.
+            */}
             <div className="trial-head">
               <div>
                 <span>REPEAT TRIALS</span>
@@ -670,6 +727,8 @@ export function ObjectsPane() {
                 <span>SITTINGS</span>
                 <b className={activeStats.sittingCount >= 2 ? "" : "unproven"}>{activeStats.sittingCount}</b>
               </div>
+              {advanced && (
+              <>
               <div>
                 <span>MEDIAN PAINT</span>
                 <b>{formatDuration(activeStats.medianPaintMs)}</b>
@@ -702,6 +761,8 @@ export function ObjectsPane() {
                   )}
                 </b>
               </div>
+              </>
+              )}
             </div>
             {activeStats.n > 0 && activeStats.sittingCount < 2 && (
               <div className="evidence-warning">
@@ -710,7 +771,7 @@ export function ObjectsPane() {
                 blind mode on, and repaint before reading the previous answer.
               </div>
             )}
-            {activeTrials.length > 0 && (
+            {advanced && activeTrials.length > 0 && (
               <ol className="trial-list">
                 {activeTrials.map((trial) => (
                   <li key={trial.id} className={repeatedMasks.has(trial.id) ? "repeated-mask" : ""}>
@@ -788,45 +849,96 @@ export function ObjectsPane() {
               {graph.running ? "Rebuilding…" : "Rebuild measurement"}
             </button>
           </div>
-          <small className="honesty-note">Masks are evidence. Automatic proposals stay amber and expose no height until reviewed; accepted masks turn teal, and later brush edits require acceptance again.</small>
-          <small className="honesty-note"><b>Paint:</b> {object.maskInstruction}</small>
+          {/*
+            The instruction stays; the two paragraphs around it went behind `?`.
+
+            It is the difference DESIGN.md draws between explanation and state: what to paint,
+            right now, for THIS target is the next action. How masks are reviewed and what a
+            sitting id is for are things you read once.
+          */}
           <small className="honesty-note">
-            Sitting <span className="mono">{currentSittingId().slice(-6)}</span> — trials recorded
-            now carry this id. A separated repeat means reloading later, not recording again.
+            <b>Paint:</b> {object.maskInstruction}
+            <HelpDot label="How masks and sittings are recorded">
+              <p>
+                <b>Masks are evidence.</b> An automatic proposal stays amber and exposes no height
+                until you review it; an accepted mask turns teal, and a later brush edit needs
+                accepting again.
+              </p>
+              <p>
+                Trials recorded now carry sitting{" "}
+                <span className="mono">{currentSittingId().slice(-6)}</span>. A genuinely separate
+                repeat means coming back later and painting again — repeats inside one sitting
+                measure the code, not the operator.
+              </p>
+            </HelpDot>
           </small>
         </section>
         )}
 
-        <section className="resolution-card">
-          <h3>Resolution vs frame-count verdict</h3>
-          <div className="resolution-head"><span>Setting</span><span>Holdouts</span><span>Raw MAE</span><span>Scaled</span></div>
-          {resolutionRows.map((row) => (
-            <div className="resolution-row" key={row.setting}>
-              <span>{row.setting}</span>
-              <span>{row.views}/3</span>
-              <span>{veil(ui.blind, formatM(row.rawMae))}</span>
-              <span>{veil(ui.blind, formatM(row.correctedMae))}</span>
-            </div>
-          ))}
-          <p>
-            The single door-derived factor is shown as a secondary scale check for every length. Raw DA3 remains primary; B4 stays excluded until its stand contact is visible.
-          </p>
-        </section>
+        {/*
+          Both cards are the repeatability study rather than the measurement, so both are Advanced.
+          The resolution card additionally only exists for the clip its three runs came from —
+          see `showsResolutionVerdict`.
+        */}
+        {advanced && showsResolutionVerdict && (
+          <section className="resolution-card">
+            <h3>
+              Resolution vs frame count · door clip
+              <HelpDot label="What this table compares">
+                <p>
+                  Three recorded runs of the door clip at different resolutions and frame counts,
+                  each graded on the targets that are <b>not</b> the calibration target.
+                </p>
+                <p>
+                  <b>Raw MAE</b> is mean absolute error straight from DA3. <b>Scaled</b> applies
+                  the clip's single calibration factor and is a secondary check only — the raw
+                  reading stays primary.
+                </p>
+              </HelpDot>
+            </h3>
+            <div className="resolution-head"><span>Setting</span><span>Holdouts</span><span>Raw MAE</span><span>Scaled</span></div>
+            {resolutionRows.map((row) => (
+              <div className="resolution-row" key={row.setting}>
+                <span>{row.setting}</span>
+                {/* Was hardcoded `/3`. The count is however many graded holdouts this clip has,
+                    which changes the moment a target is added or taped. */}
+                <span>{row.views}/{holdoutCount}</span>
+                <span>{veil(ui.blind, formatM(row.rawMae))}</span>
+                <span>{veil(ui.blind, formatM(row.correctedMae))}</span>
+              </div>
+            ))}
+          </section>
+        )}
 
-        <section className="error-model-card">
-          <h3>Current-run raw error model</h3>
-          {ui.blind ? (
-            <p>Hidden while blind mode is on.</p>
-          ) : clipModel ? (
-            <div className="reading-grid"><span>SLOPE</span><b>{clipModel.slope.toFixed(3)}</b><span>INTERCEPT</span><b>{clipModel.intercept.toFixed(3)} m</b><span>RESIDUAL RMS</span><b>{clipModel.residualRms.toFixed(3)} m</b><span>SCALE FACTOR</span><b>×{clipModel.scaleFactor.toFixed(3)}</b><span>MEAN ABSREL</span><b>{(clipModel.meanAbsRel * 100).toFixed(1)}%</b><span>MAX ERROR</span><b>{clipModel.maxAbsError.toFixed(3)} m</b></div>
-          ) : <p>Record at least two distinct truths.</p>}
-          <small className="honesty-note">
-            Fitted over {errorModelPoints.length} object{errorModelPoints.length === 1 ? "" : "s"} from{" "}
-            {currentRunObservations.length} trial{currentRunObservations.length === 1 ? "" : "s"}. Each object
-            contributes its trial mean once — repeat trials of one door are not independent truths.
-          </small>
-          <div className="evidence-actions"><button onClick={downloadSession}>Export evidence JSON</button></div>
-        </section>
+        {advanced && (
+          <section className="error-model-card">
+            <h3>
+              Current-run raw error model
+              <HelpDot label="How the error model is fitted">
+                <p>
+                  A straight line through every graded target in this run: predicted length against
+                  tape truth. <b>Scale factor</b> is what the clip's metric scale is off by,{" "}
+                  <b>residual RMS</b> is what is left after correcting for it.
+                </p>
+                <p>
+                  Each object contributes its trial mean once. Feeding in every trial would let a
+                  thrice-measured door outvote a once-measured table and shrink the residual by
+                  repetition alone.
+                </p>
+              </HelpDot>
+            </h3>
+            {ui.blind ? (
+              <p>Hidden while blind mode is on.</p>
+            ) : clipModel ? (
+              <div className="reading-grid"><span>SLOPE</span><b>{clipModel.slope.toFixed(3)}</b><span>INTERCEPT</span><b>{clipModel.intercept.toFixed(3)} m</b><span>RESIDUAL RMS</span><b>{clipModel.residualRms.toFixed(3)} m</b><span>SCALE FACTOR</span><b>×{clipModel.scaleFactor.toFixed(3)}</b><span>MEAN ABSREL</span><b>{(clipModel.meanAbsRel * 100).toFixed(1)}%</b><span>MAX ERROR</span><b>{clipModel.maxAbsError.toFixed(3)} m</b></div>
+            ) : <p>Record at least two distinct truths.</p>}
+            <small className="honesty-note">
+              Fitted over {errorModelPoints.length} object{errorModelPoints.length === 1 ? "" : "s"} from{" "}
+              {currentRunObservations.length} trial{currentRunObservations.length === 1 ? "" : "s"}.
+            </small>
+            <div className="evidence-actions"><button onClick={downloadSession}>Export evidence JSON</button></div>
+          </section>
+        )}
       </div>
     </div>
   );

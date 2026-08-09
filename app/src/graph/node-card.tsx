@@ -9,15 +9,13 @@
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import { useRef, useState } from "react";
-import { uploadVideo } from "../lib/infer-client";
+import { loadClip } from "../lib/load-clip";
 import {
   isNodeStale,
   nodeById,
   resolveInput,
-  runAuto,
   runNode,
   setNodeAuto,
-  setNodeParams,
   useGraph,
 } from "./graph-store";
 import { REGISTRY } from "./nodes";
@@ -97,25 +95,19 @@ export function NodeCard({ id, selected }: NodeProps) {
   const acceptsVideo = node.type === "frame-source";
 
   /**
-   * One path for both ways of choosing a clip.
+   * One path for every way of choosing a clip.
    *
-   * Dragging was the only way in until 2026-08-05, and it is the awkward one: the drop target
-   * is this card, which the Graph pane's default "Measurement view" filters out entirely. The
-   * Browse button reaches the same code through the OS file dialog.
+   * Dragging was the only way in until 2026-08-05, and it is the awkward one: the drop target is
+   * this card, which the Graph pane's default "Measurement view" filters out entirely — and since
+   * 2026-08-09 the Graph is not in the default layout at all. The Inspector's Clip section is now
+   * the usual route. Both land in `lib/load-clip.ts` and write the same node.
    */
   const loadVideo = async (file: File | undefined) => {
     if (!file) return;
     setDropError(null);
     setLoading(true);
     try {
-      const source = await uploadVideo(file);
-      setNodeParams(id, {
-        videoPath: source.path,
-        videoName: source.name,
-        videoSha256: source.sha256,
-        durationS: source.durationS,
-      });
-      await runAuto();
+      await loadClip(file);
     } catch (err) {
       setDropError(err instanceof Error ? err.message : String(err));
     } finally {

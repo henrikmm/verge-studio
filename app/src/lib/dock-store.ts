@@ -71,6 +71,11 @@ export const PANES: readonly PaneDef[] = [
     title: "Viewport 3D",
     anchors: [{ referencePanel: "depth", direction: "right" }, { direction: "right" }],
   },
+  /**
+   * Not in the default layout since 2026-08-09 — see `DEFAULT_PANES`. Still a pane in every other
+   * sense: the view bar opens it, it comes back where it always was, and its wiring is untouched
+   * while it is closed because node outputs live in the graph runtime rather than in the pane.
+   */
   { id: "graph", component: "graph", title: "Graph", anchors: [{ direction: "below" }] },
   { id: "inspector", component: "inspector", title: "Inspector", anchors: [{ direction: "right" }] },
   {
@@ -89,8 +94,27 @@ export const PANES: readonly PaneDef[] = [
 
 const PANE_BY_ID = new Map(PANES.map((pane) => [pane.id, pane]));
 
-/** Versioned: a layout referring to components this build no longer has must not be restored. */
-const LAYOUT_KEY = "verge.dock-layout/3";
+/**
+ * What a fresh app opens with — everything except the Graph.
+ *
+ * The Graph took 38% of the window by default and spent it on a pane that only earns the space
+ * when you are rewiring the pipeline or explaining how it works. Meanwhile Depth 2D and Viewport
+ * 3D, which are worth looking at continuously, were squeezed into the top half. It was also the
+ * only way to load a video, which made a configuration surface into the front door; the
+ * Inspector's Clip section is that now.
+ *
+ * Closed, not removed. One click on the view bar brings it back, with its wiring intact.
+ */
+const DEFAULT_PANES: readonly PaneDef[] = PANES.filter((pane) => pane.id !== "graph");
+
+/**
+ * Versioned: a layout referring to components this build no longer has must not be restored.
+ *
+ * Bumped 3 → 4 on 2026-08-09 with the Graph leaving the default arrangement. A version bump is
+ * how a new default reaches anybody who has already used the app — without it, every existing
+ * profile would restore the old layout and the change would only be visible on a fresh machine.
+ */
+const LAYOUT_KEY = "verge.dock-layout/4";
 
 export interface DockState {
   /** Panel ids currently mounted in the dock. */
@@ -187,9 +211,8 @@ function buildDefaultLayout(): void {
   if (!api) return;
   rebuilding = true;
   api.clear();
-  for (const pane of PANES) addPane(pane);
-  api.getPanel("graph")?.api.setSize({ height: Math.round(window.innerHeight * 0.38) });
-  api.getPanel("inspector")?.api.setSize({ width: 280 });
+  for (const pane of DEFAULT_PANES) addPane(pane);
+  api.getPanel("inspector")?.api.setSize({ width: 300 });
   // Inspector, not whichever tab was added last. Runs is added after it and would otherwise
   // win the group by accident, which is not a default anyone chose.
   api.getPanel("inspector")?.api.setActive();

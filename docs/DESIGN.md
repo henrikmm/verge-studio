@@ -22,17 +22,23 @@ Lineage: TouchDesigner and ComfyUI. Dense, dark, professional, everything observ
 
 ## Panes
 
-Six panes in a Dockview layout, gaps of 4 px or less, filling the window edge to edge:
+Six panes in a Dockview layout, gaps of 4 px or less, filling the window edge to edge. **Five of
+them open by default**; the Graph is closed and one click on the view bar brings it back.
 
 ```
 +--------------------+--------------------------------+-------------+
 | Depth 2D           | Viewport 3D                    | Inspector   |
-| (colour-mapped     | (point cloud, orbit)           | Objects     |
+| (colour-mapped     | (point cloud, orbit, turntable)| Objects     |
 |  depth, mask brush)|                                | Runs        |
-+--------------------+--------------------------------+             |
-| Graph (React Flow, full width)                      |             |
-+-----------------------------------------------------+-------------+
++--------------------+--------------------------------+-------------+
+   Graph (React Flow) — closed by default, opens full width below
 ```
+
+The Graph is a configuration and explanation surface, not a workspace: it earns the window when
+you are rewiring the pipeline or showing somebody how it works, and it took 38% of the height
+before either question was asked. It was also the only way to load a video, which made it the
+front door by accident. **A clip is loaded in the Inspector's Clip section**, which writes the same
+`frame-source` parameters the node card does — one node, two views.
 
 Every pane is draggable, resizable, and carries two verbs on its tab:
 
@@ -60,6 +66,31 @@ costs the control, and that is not a trade worth making.
 the pane, and both `.pane-controls` rows put `Focus`, `Hide` and `Pause` outside it — unreachable,
 because `nowrap` with hidden overflow clips silently instead of scrolling. **Do not reintroduce
 `white-space: nowrap` on a row that holds a control.**
+
+## Two modes, and where explanation lives
+
+The panes grew past being usable — Viewport 3D reached six control rows and nineteen buttons, and
+Objects explained its whole method underneath every reading. Every one of those was worth adding.
+Their sum was not. Two rules keep it from happening again.
+
+**Standard and Advanced.** One switch in the status bar, read by every pane, remembered across
+reloads, default Standard. Standard is the app doing its job: look at the reconstruction, mark a
+thing, read what it measures and how far off the tape it is. Advanced adds what only earns its
+space while debugging a fit. Three constraints hold it together:
+
+1. **Advanced is a strict superset.** No control exists only in Standard.
+2. **Standard never strands an effect.** A pane that hides the switch for something it is drawing
+   turns that thing off. Viewport 3D clears its layer set on entering Standard for this reason.
+3. **Warnings are not hidden by it.** A capped frame plan, an extrapolated VRAM figure, a
+   mock-backed readout, an instance still billing — all four honesty rules below apply in both
+   modes. Hiding one behind a mode is the same lie as not showing it.
+
+**Help dot.** Text explaining what a control or a reading *is* goes behind a `?`; text describing
+the state the app is in *right now* stays on the page. The `?` is a real button — instant on
+hover, opens on keyboard focus too, Escape closes, dark palette, wrapped to about 60 characters a
+line, portalled so no pane's hidden overflow can clip it. The native `title` tooltip stays for
+short chip labels and is not acceptable for a paragraph: a second of delay, an OS-styled light box
+and nothing at all for a keyboard.
 
 ## Colour
 
@@ -137,16 +168,29 @@ sliders only: sliders with `--slider` thumbs, dropdowns, checkboxes. Sections ar
 **Changing a control refreshes the graph by itself**, after a short delay that folds a slider drag
 into one pass — and that refresh can never reach a costly node, whatever its badge says.
 
-The inspector also carries **Cloud control**: sign-in state, project and region, whether the
-service exists, whether the stored image matches the current server source, and whether the next
-deploy is the quick path or the twenty-minute one. Deploy and Delete service both stream their
-logs. Every status read is free and cannot wake a machine.
+Its first section is **Clip**, and it is the app's front door: a drop target, Browse, the clip's
+name and duration, the sampling rate and frame cap, the frame plan with its VRAM bar, and Run.
+Loading is free; running DA3 is a separate press because it is the only step that costs money.
+
+The inspector also carries **Cloud control** (Advanced): sign-in state, project and region, whether
+the service exists, whether the stored image matches the current server source, and whether the
+next deploy is the quick path or the twenty-minute one. Deploy and Delete service both stream their
+logs. Every status read is free and cannot wake a machine. The **Instance** section — elapsed
+billed time and the idle warning — is not Advanced, because an instance bills whether or not
+anybody is looking at this pane.
+
+**Viewport 3D result strip**: a reserved row between the control rows and the canvas carrying the
+target, what it measured, the tape truth, the absolute error and the error percentage. Reserved
+rather than floating: the readout it replaced sat over the top left of the scene, which is where
+the subject of a shot usually is. In Advanced the fit diagnostics return as an overlay.
 
 **Objects pane**: one row per measurement target — raw value, truth and error, internal spread,
 selected-point count, and the current error model. Rows never mix incompatible reconstruction
 settings. Targets belong to a clip, keyed by its content digest; an unknown clip starts empty.
 A blind mode hides every reading except the tape truths, so a repeat measurement can be painted
-without the previous answer on screen.
+without the previous answer on screen. In Standard it shows the target list, the active reading
+and the actions; the uncertainty budget, the trial ledger, the error model and the resolution
+comparison are Advanced — they are the repeatability study rather than the measurement.
 
 **Runs pane**: one row per run, with its size on disk. Runs are temporary until an explicit Save,
 which is shown with a byte estimate. Delete is available. The built-in fixtures are read-only.
@@ -187,7 +231,8 @@ Design constraints, not copy guidelines.
 1. App background is `#151517` or darker; no white surfaces; no default-blue links or focus rings.
 2. **No status is signalled by hue alone.** In greyscale, every state is still readable from its
    glyph, weight or position. Green is absent; red appears only on hard failure and slider thumbs.
-3. All six panes are present with Dockview tabs, and drag-resize works.
+3. The five default panes are present with Dockview tabs and drag-resize works; the Graph opens
+   from the view bar and comes back with its wiring intact.
 4. Tab strip is 28 px or shorter; labels 11–12 px; density comparable to the reference captures.
 5. Viewport 3D renders the point cloud, drag-orbit visibly changes the view, the point count is
    shown, and the axis gizmo is visible.
@@ -213,3 +258,14 @@ Design constraints, not copy guidelines.
     control in every row of that pane is still inside it — measure, do not eyeball, by comparing
     each row child's bounding box against the pane's. Items 8 and 10 stay at 1280×800; this one
     exists because the defect it catches is invisible at that width.
+20. **Graded in both modes.** The status bar carries the Standard/Advanced switch and it survives
+    a reload. In Standard, Viewport 3D has two control rows and Objects shows the target list and
+    the active reading only. Every control present in Standard is also present in Advanced, and
+    switching back to Standard leaves nothing drawn that has no switch.
+21. **No paragraph of feature explanation sits in a pane body.** Explanation is behind a `?` that
+    opens on hover and on keyboard focus, closes on Escape, and lands fully inside the window with
+    the pane at 180 px. Live warnings — items 13, 14, 15 and the idle-billing note — are exempt
+    and must be visible in both modes.
+22. **The measurement is the headline.** Viewport 3D states what was measured, the tape truth, the
+    absolute error and the error percentage in reserved chrome that never overlaps the canvas.
+    With no tape truth it says so and quotes no error.

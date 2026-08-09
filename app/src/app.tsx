@@ -31,6 +31,8 @@ import {
   useDock,
 } from "./lib/dock-store";
 import { useSession } from "./lib/session-store";
+import { setUiMode, useUiMode, type UiMode } from "./lib/ui-mode";
+import { HelpDot } from "./panes/help";
 import { runAuto } from "./graph/graph-store";
 
 const components = {
@@ -115,6 +117,51 @@ function ViewBar() {
       <button className="chip-toggle" title="Rebuild the default arrangement" onClick={resetLayout}>
         Reset
       </button>
+    </span>
+  );
+}
+
+/**
+ * How much of itself the app shows — see `lib/ui-mode.ts` for what each mode means.
+ *
+ * It lives in the status bar rather than in any one pane because it is not a property of a pane:
+ * Viewport 3D, Objects and the Inspector all read it, and three switches saying the same thing in
+ * three places is how a mode stops being a mode.
+ */
+const MODES: readonly { id: UiMode; label: string }[] = [
+  { id: "standard", label: "Standard" },
+  { id: "advanced", label: "Advanced" },
+];
+
+function ModeSwitch() {
+  const mode = useUiMode();
+  return (
+    <span className="mode-switch">
+      <span className="mode-label">VIEW</span>
+      {MODES.map((item) => (
+        <button
+          key={item.id}
+          className={`chip-toggle${mode === item.id ? " on" : ""}`}
+          aria-pressed={mode === item.id}
+          onClick={() => setUiMode(item.id)}
+        >
+          {item.label}
+        </button>
+      ))}
+      <HelpDot label="What Standard and Advanced show">
+        <p>
+          <b>Standard</b> is the app doing its job: look at the reconstruction, mark a thing, read
+          what it measures and how far off the tape it is.
+        </p>
+        <p>
+          <b>Advanced</b> adds what is only useful while debugging a fit — the floor evidence
+          layers, the cloud rebuild controls, the trial ledger and the cloud plumbing.
+        </p>
+        <p>
+          Nothing is only in Standard, and warnings about the current run show in both. Your choice
+          is remembered.
+        </p>
+      </HelpDot>
     </span>
   );
 }
@@ -225,6 +272,7 @@ export function App() {
           </span>
         )}
         <ViewBar />
+        <ModeSwitch />
         <CloudMeter />
       </div>
     </div>

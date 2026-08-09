@@ -14,6 +14,7 @@ import { setNodeParam, runAuto, useGraph } from "../graph/graph-store";
 import { FIXTURE_RUN_ID } from "../graph/nodes";
 import { DEFAULT_RUN_ID } from "../graph/nodes/fixture-run";
 import { PaneControls } from "./pane-chrome";
+import { HelpDot } from "./help";
 
 function RunRow({
   run,
@@ -148,6 +149,24 @@ export function RunsPane() {
           <span className="pane-note">
             {runs.runs.length} runs · {formatBytes(savedBytes)} on disk
             {transient > 0 ? ` · ${transient} transient` : ""}
+            {/*
+              The paragraph that used to close this pane. It explains the storage policy, which is
+              a thing you read once — while the pane's job is to show what exists and what it
+              costs. The ▲ that needs acting on keeps its own visible mark on the row it belongs
+              to, and its tooltip still spells the urgency out there.
+            */}
+            <HelpDot label="How runs are stored">
+              <p>
+                <b>Runs are transient by default.</b> A finished cloud run is registered here as a
+                stub so it stays selectable, but nothing large is written to disk until you press
+                Save.
+              </p>
+              <p>
+                A stub's artifacts sit in cloud storage and are deleted after three days — sooner
+                if you delete the bucket. A stub marked <b>▲</b> never reached storage and dies
+                with its instance instead, so save that one before teardown.
+              </p>
+            </HelpDot>
           </span>
         }
       />
@@ -157,6 +176,9 @@ export function RunsPane() {
         </div>
         {runs.error && <div className="evidence-warning">{runs.error}</div>}
         {note && <div className="evidence-warning">{note}</div>}
+        {runs.runs.length === 0 && !runs.loading && (
+          <div className="pane-hint">No runs yet. Load a clip in the Inspector and run DA3.</div>
+        )}
         {runs.runs.map((run) => (
           <RunRow
             key={run.id}
@@ -188,13 +210,6 @@ export function RunsPane() {
             }
           />
         ))}
-        <small className="honesty-note">
-          Runs are transient by default. A completed cloud run is registered here as a manifest
-          stub so it stays selectable, but nothing large is written until you press Save. A stub's
-          artifacts sit in cloud storage and are deleted after three days — sooner if you delete
-          the bucket. A stub marked ▲ failed to reach storage and dies with its instance instead,
-          so save that one before teardown.
-        </small>
       </div>
     </div>
   );

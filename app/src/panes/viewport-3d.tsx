@@ -6,7 +6,7 @@
  * points at it); against a deployed service it is the run's GLB. Same code path,
  * which is what makes swapping to the cloud a base-URL change.
  *
- * ## Two ways to be in the scene
+ * ## Three ways to be in the scene
  *
  * **Free** is the orbit camera, now with keyboard navigation (`viewport-nav.ts`) so a trackpad is
  * not the only way through a cloud. The keys move the whole rig — camera and pivot together — so
@@ -16,6 +16,19 @@
  * (`camera-track.ts`). That makes this pane and Depth 2D the same viewpoint at the same index, so
  * a reconstruction that has drifted stops being a feeling and becomes a visible disagreement —
  * especially with the video ghosted over it.
+ *
+ * **Cinematic** turns the scene by itself (`cinematic.ts`), because a still image of a point cloud
+ * is the least convincing way to show one: what makes it read as a place rather than as speckle is
+ * parallax, and parallax needs motion.
+ *
+ * ## Standard and Advanced
+ *
+ * This pane reached six control rows and nineteen buttons, and the readout over the scene led with
+ * four numbers about how the ground plane was fitted. All of it is useful while debugging a fit;
+ * none of it is what a person wants when they are looking at a reconstruction. Standard keeps the
+ * view modes, the camera toggle and the measurement; everything else is behind the switch in the
+ * status bar (`lib/ui-mode.ts`). Entering Standard clears the layer set — hiding the switch for
+ * something still being drawn would leave an effect with no way to turn it off.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -40,8 +53,18 @@ import {
   type PointCloudValue,
   type SelectionValue,
 } from "../graph/nodes";
+import { useAdvanced } from "../lib/ui-mode";
 import { closestFrame, type DepthFieldValue } from "../measurement/depth-field";
-import { useMeasurementUi } from "../measurement/measurement-store";
+import { activeMeasurementObject, useMeasurementUi } from "../measurement/measurement-store";
+import {
+  ORBIT_RATE_DEG_S,
+  angleFacing,
+  cinematicPose,
+  rateFactor,
+  type CinematicScene,
+} from "./cinematic";
+import { describeResult, type ResultKind, type ResultReadout } from "./result-strip";
+import { HelpDot } from "./help";
 import {
   LOOK_PITCH_LIMIT,
   aimedOrientation,
@@ -72,12 +95,7 @@ import { ProvenanceBanner } from "./provenance";
 
 const GIZMO_PX = 72;
 
-const OUTPUTS = [
-  { id: "points", label: "Points" },
-  { id: "cameras", label: "+ Cameras" },
-];
-
-type ViewMode = "free" | "fixed";
+type ViewMode = "free" | "fixed" | "cinematic";
 
 const VIEW_MODES = [
   {
@@ -91,7 +109,23 @@ const VIEW_MODES = [
     title:
       "Stand where the recording camera stood for the frame the slider is on, with its field of view. You can turn to look around; you cannot walk.",
   },
+  {
+    id: "cinematic",
+    label: "Cinematic",
+    title:
+      "Turn the scene by itself: a slow orbit above the fitted ground, a minute to the revolution. Drag or use the keys to steer it; the turn resumes a moment after you stop.",
+  },
 ];
+
+/** Keyboard steering rates in Cinematic, per second. Slower than Free's: this is trimming a shot,
+ *  not travelling, and the same rate that feels responsive when walking overshoots here. */
+const CINE_KEY_YAW = Math.PI / 3;
+const CINE_KEY_PITCH = 0.5;
+const CINE_KEY_ZOOM = 0.6;
+/** Cap on the operator's own zoom, so a scroll cannot lose the scene entirely. */
+const CINE_ZOOM_RANGE: readonly [number, number] = [0.35, 3];
+/** How far the elevation may be trimmed from the shot's own, radians. */
+const CINE_PITCH_LIMIT = 0.9;
 
 const FLOOR_PLANE_LAYER = "floor-plane";
 const FLOOR_POINTS_LAYER = "floor-points";
@@ -165,6 +199,91 @@ interface LoopState {
   appliedIndex: number | null;
   tween: { from: THREE.Vector3; quaternion: THREE.Quaternion; fov: number; startedAt: number } | null;
   dragging: boolean;
+  /** The turntable. Null until a cloud exists to orbit. */
+  cineScene: CinematicScene | null;
+  cine: {
+    /** Accumulated orbit angle, unbounded radians. */
+    angle: number;
+    /** The operator's own trim on the shot's elevation and radius. */
+    elevation: number;
+    zoom: number;
+    /** When the operator last touched it, so the turn can hold and then ease back in. */
+    lastInputAt: number;
+  };
+}
+
+/** The status glyph, so the state survives greyscale — DESIGN.md's colour rule. */
+const RESULT_GLYPH: Record<ResultKind, string> = {
+  graded: "●",
+  ungraded: "○",
+  blind: "◐",
+  refused: "▲",
+  idle: "○",
+};
+
+/**
+ * The measurement, in reserved chrome above the canvas.
+ *
+ * Reserved, not floating: it costs about 26 px of viewport and in exchange it can never sit in
+ * front of the object being measured, whatever the scene is or wherever it has been orbited to.
+ * That trade is the whole reason it exists — the readout it replaces was a translucent panel at
+ * the top left, which is where the subject of a shot usually is.
+ *
+ * The wording is decided in `result-strip.ts`; this only lays it out.
+ */
+function ResultStrip({ readout }: { readout: ResultReadout }) {
+  const graded = readout.kind === "graded";
+  const quoting = graded || readout.kind === "ungraded" || readout.kind === "blind";
+  return (
+    <div className={`result-strip ${readout.kind}`}>
+      <span className="result-glyph" aria-hidden>
+        {RESULT_GLYPH[readout.kind]}
+      </span>
+      {readout.target && <span className="result-target">{readout.target}</span>}
+      {quoting ? (
+        <>
+          <span className="result-basis">{readout.basis}</span>
+          <b className="result-value">{readout.value}</b>
+          <span className="result-pair">
+            <i>tape</i>
+            {readout.truth}
+          </span>
+          {graded && (
+            <>
+              <span className="result-pair">
+                <i>error</i>
+                {readout.error}
+              </span>
+              <span className="result-pair">
+                <i>off by</i>
+                {readout.errorPercent}
+              </span>
+            </>
+          )}
+          {readout.note && <span className="result-note">{readout.note}</span>}
+        </>
+      ) : (
+        <span className="result-note">{readout.note}</span>
+      )}
+      <span className="spacer" />
+      <HelpDot label="How this reading is graded">
+        <p>
+          <b>{"The measured value"}</b> is what the reconstruction says, straight from DA3, with no
+          scale correction applied.
+        </p>
+        <p>
+          <b>tape</b> is what you measured with a real tape and typed in against this target.{" "}
+          <b>error</b> is the difference, and <b>off by</b> is that difference as a share of the
+          truth.
+        </p>
+        <p>
+          A target with no tape truth is measurable but ungradable — no error is quoted, because
+          there is nothing to quote it against. Full uncertainty, repeat trials and the clip's
+          scale bias are in the Objects pane.
+        </p>
+      </HelpDot>
+    </div>
+  );
 }
 
 export function Viewport3D() {
@@ -186,7 +305,14 @@ export function Viewport3D() {
    */
   const pausedRef = useRef(false);
   pausedRef.current = paused;
-  const [output, setOutput] = useState("points");
+  /**
+   * DA3's GLB carries camera frustums beside the points, and this shows them.
+   *
+   * It used to be a one-of-N row — `Points | + Cameras` — which offered a choice this port cannot
+   * make: the wire only ever carries points, so `Points` was the off position of a toggle wearing
+   * a mode's clothes. One chip says the same thing with half the controls.
+   */
+  const [cameras, setCameras] = useState(false);
   const [layers, setLayers] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [mode, setMode] = useState<ViewMode>("free");
   const [fly, setFly] = useState(false);
@@ -197,6 +323,7 @@ export function Viewport3D() {
   const [track, setTrack] = useState<CameraTrack | null>(null);
   const [trackError, setTrackError] = useState<string | null>(null);
 
+  const advanced = useAdvanced();
   const graph = useGraph();
   const incoming = resolveInput(graph, VIEWER_3D_ID, "points");
   // The cloud itself carries no provenance — it is a GLB. Read it from the depth field that
@@ -253,15 +380,45 @@ export function Viewport3D() {
     appliedIndex: null,
     tween: null,
     dragging: false,
+    cineScene: null,
+    cine: { angle: 0, elevation: 0, zoom: 1, lastInputAt: 0 },
   });
   // Straight assignment rather than an effect, matching `pausedRef` above: the loop must see the
   // current values on its very next frame, not one render later.
   loopRef.current.up = upAxis.up;
   loopRef.current.extent = cloud?.extent ?? 10;
   loopRef.current.fly = fly;
-  loopRef.current.mode = mode === "fixed" && canRideCamera ? "fixed" : "free";
+  // Fixed is the only mode that can be refused — it needs a checked camera track. Cinematic
+  // needs nothing but a cloud, and Free needs nothing at all.
+  loopRef.current.mode = mode === "fixed" && !canRideCamera ? "free" : mode;
   loopRef.current.pose = pose;
   loopRef.current.aspect = paneAspect;
+
+  /**
+   * What Cinematic orbits.
+   *
+   * Centre and radius come from the cloud's own bounding box, so the shot frames whatever is
+   * loaded rather than a size baked in here. `centerHeight` is what keeps the camera above the
+   * floor: the centre of a bounding box is halfway up the room, and in a bad reconstruction it
+   * can sit under the fitted plane entirely.
+   */
+  const cineScene = useMemo<CinematicScene | null>(() => {
+    if (!cloud) return null;
+    const center: Vec3 = [
+      (cloud.bbox.min[0] + cloud.bbox.max[0]) / 2,
+      (cloud.bbox.min[1] + cloud.bbox.max[1]) / 2,
+      (cloud.bbox.min[2] + cloud.bbox.max[2]) / 2,
+    ];
+    return {
+      center,
+      up: upAxis.up,
+      // 0.7 of the diagonal puts the whole cloud comfortably inside a 50° field of view without
+      // shrinking it to a speck in the middle of an empty pane.
+      radius: Math.max(0.5, cloud.extent * 0.7),
+      centerHeight: ground ? signedHeight(ground.plane, center) : undefined,
+    };
+  }, [cloud, ground, upAxis.up]);
+  loopRef.current.cineScene = cineScene;
 
   const toggleLayer = (id: string) =>
     setLayers((previous) => {
@@ -366,7 +523,9 @@ export function Viewport3D() {
         fly: state.fly,
       });
 
-      if (state.mode === "fixed" && state.pose) {
+      if (state.mode === "cinematic" && state.cineScene) {
+        rideTurntable(camera, state, now, dt);
+      } else if (state.mode === "fixed" && state.pose) {
         if (intent.yaw !== 0 || intent.pitch !== 0) {
           state.look.yaw += intent.yaw;
           state.look.pitch = Math.min(
@@ -484,6 +643,7 @@ export function Viewport3D() {
     if (!controls || !camera) return;
 
     const wasFixed = previousModeRef.current === "fixed";
+    const wasCinematic = previousModeRef.current === "cinematic";
     previousModeRef.current = state.mode;
 
     if (state.mode === "fixed") {
@@ -494,6 +654,48 @@ export function Viewport3D() {
       return;
     }
 
+    if (state.mode === "cinematic") {
+      // Same reason as Fixed: two things driving one camera fight, and the orbit controls would
+      // win on the frames where damping is still settling.
+      controls.enabled = false;
+      state.tween = null;
+      // Start from where the camera already is, so entering the mode is a turn rather than a cut
+      // to the far side of the scene. The trim resets — it belongs to a shot, not to the pane.
+      state.cine = {
+        angle: state.cineScene
+          ? angleFacing(state.cineScene, [
+              camera.position.x,
+              camera.position.y,
+              camera.position.z,
+            ])
+          : 0,
+        elevation: 0,
+        zoom: 1,
+        // Dated now, so the shot eases up to speed instead of starting at full rate.
+        lastInputAt: performance.now(),
+      };
+      // Fixed leaves the recorded field of view behind on the camera; the turntable is framed for
+      // 50° and would be wrong at 38°.
+      camera.fov = 50;
+      camera.updateProjectionMatrix();
+      return;
+    }
+
+    /*
+      Leaving Cinematic hands the orbit pivot the scene centre the turntable was circling, so the
+      first drag continues the same motion instead of swinging around a stale target. Guarded on
+      the transition, like everything else in this effect: `canRideCamera` flips when the camera
+      track finishes loading, and an unguarded reset here would yank the pivot out from under
+      somebody who had already orbited somewhere.
+
+      The up vector goes back to the scene's +Y because that is the axis Free has always orbited
+      about. Cinematic needs the measured up — it is drawing a level circle — but changing Free's
+      orbit axis is a different decision and not one this task is making.
+    */
+    if (wasCinematic) {
+      if (state.cineScene) controls.target.set(...state.cineScene.center);
+      camera.up.set(0, 1, 0);
+    }
     controls.enabled = true;
     state.tween = null;
     state.appliedIndex = null;
@@ -825,10 +1027,22 @@ export function Viewport3D() {
     if (!cloud) return;
     cloud.object.traverse((child) => {
       if (child instanceof THREE.Line || child instanceof THREE.Mesh) {
-        child.visible = output === "cameras";
+        child.visible = cameras;
       }
     });
-  }, [cloud, output]);
+  }, [cloud, cameras]);
+
+  /**
+   * Standard turns the layers off; it does not merely hide their chips.
+   *
+   * Hiding the switch for something the pane is still drawing leaves an effect with no way out —
+   * an amber below-plane cloud over the scene and nothing on screen that could remove it. This is
+   * the rule in `lib/ui-mode.ts` applied to the one pane that has state to strand.
+   */
+  useEffect(() => {
+    if (advanced) return;
+    setLayers((previous) => (previous.size === 0 ? previous : new Set<string>()));
+  }, [advanced]);
 
   const status = useMemo(() => {
     if (!cloud) return "no input";
@@ -839,6 +1053,27 @@ export function Viewport3D() {
   const frameRect = riding && pose ? recordedFrameRect(pose, paneAspect) : null;
   const cameraHeight =
     riding && pose && ground ? signedHeight(ground.plane, pose.position) : null;
+
+  /**
+   * The headline, decided in `result-strip.ts` where its honesty rules can be tested.
+   *
+   * The target comes from the measurement store rather than from the wire, because the wire
+   * carries a measurement and not the tape truth it should be graded against — and a reading with
+   * no truth beside it is exactly the thing this strip exists to stop being ambiguous.
+   */
+  const target = activeMeasurementObject();
+  const result = useMemo(
+    () =>
+      describeResult({
+        floor,
+        measurement,
+        target: target
+          ? { code: target.code, name: target.name, truthM: target.truthM }
+          : undefined,
+        blind: ui.blind,
+      }),
+    [floor, measurement, target, ui.blind],
+  );
 
   return (
     <div className="pane">
@@ -851,60 +1086,13 @@ export function Viewport3D() {
         extra={<span className="pane-note">{status}</span>}
       />
       {/*
-        The mouse hint that used to sit here is gone, and its absence is the point. It was a
-        45-character string at the right edge of a `nowrap` row that DESIGN.md already warns
-        clips — and there is now more to say about the controls than any one line can hold. The
-        `Keys` chip below says all of it, in a place that cannot be pushed out of the pane.
-      */}
-      <OutputRow choices={OUTPUTS} active={output} onSelect={setOutput} />
-      {/*
-        Which cloud is being measured, switchable from the pane that shows it.
-        It is a parameter of the Point Cloud node, and it is still editable there — but the
-        node lives in a graph pane the measurement layout keeps small, and a switch you have to
-        go and find is a switch nobody A/Bs. The hint carries the number that makes the two
-        clouds different: the share of its own pixels that the LEANEST frame contributed.
-      */}
-      <OutputRow
-        label="CLOUD"
-        choices={CLOUD_SOURCES}
-        active={requestedSource}
-        onSelect={(id) => setNodeParamAndRun(POINT_CLOUD_ID, "source", id)}
-        hint={
-          cloud?.leanestFrameShare == null
-            ? undefined
-            : `leanest frame ${(cloud.leanestFrameShare * 100).toFixed(0)}%`
-        }
-      />
-      {/*
-        Colour and budget belong to the rebuilt cloud only. DA3's export carries its own vertex
-        colours and its own fixed 1,000,000, so offering either against it would be a control
-        that does nothing — the failure DESIGN.md calls a lie in the interface.
+        The one row Standard has, and it answers one question: where am I standing.
 
-        The budget hint is the share of finite, non-edge display candidates it kept. Confidence
-        stays on the separate measurement cloud and does not erase the picture.
+        `Cameras` rides along because it is a property of what is drawn rather than of the view,
+        and it is the only such switch a person looking at a reconstruction reaches for. Everything
+        else that used to sit in these rows configures how the cloud was BUILT or draws evidence
+        about the ground fit, and both are debugging.
       */}
-      {requestedSource === "npz" && (
-        <>
-          <OutputRow
-            label="COLOUR"
-            choices={CLOUD_COLOURS}
-            active={requestedColour}
-            onSelect={(id) => setNodeParamAndRun(POINT_CLOUD_ID, "colour", id)}
-            hint={cloud?.coloured === false ? "no frames on disk — ramped" : undefined}
-          />
-          <OutputRow
-            label="POINTS"
-            choices={CLOUD_BUDGETS}
-            active={requestedBudget}
-            onSelect={(id) => setNodeParamAndRun(POINT_CLOUD_ID, "budget", Number(id))}
-            hint={
-              cloud?.keptOfCandidates == null
-                ? undefined
-                : `${(cloud.keptOfCandidates * 100).toFixed(0)}% of finite candidates`
-            }
-          />
-        </>
-      )}
       <OutputRow
         label="VIEW"
         choices={VIEW_MODES}
@@ -913,34 +1101,42 @@ export function Viewport3D() {
         /*
           Short, and permanent. A control nobody knows about is not a control: WASD was reachable
           only by first clicking `Keys`, which is a thing you click once you already suspect the
-          keys exist. The reference capture this pane is modelled on carries the same information
-          in the same place — "RMB look, WASD move" — and this row wraps, so unlike the OUTPUT row
-          it can hold a hint without pushing anything out of the pane.
-
-          Dropped in Fixed, where the row also carries the ghost controls and a hint costs a whole
-          extra line of chrome — 136 px of a 450 px pane, measured. What Fixed needs said goes in
-          the overlay instead, which is free.
+          keys exist. Dropped in Fixed, where the row also carries the ghost controls and a hint
+          costs a whole extra line of chrome — 136 px of a 450 px pane, measured — and in
+          Cinematic, which says what its keys do in the shot itself.
         */
-        hint={mode === "fixed" ? undefined : "WASD move · arrows look"}
+        hint={mode === "free" ? "WASD move · arrows look" : undefined}
         extra={
           <>
             <button
-              className={`chip-toggle${fly ? " on" : ""}`}
-              aria-pressed={fly}
-              title="Walk keeps W level with the ground, so a glance downwards cannot bury you in the floor. Fly follows wherever you are looking."
-              onClick={() => setFly((value) => !value)}
+              className={`chip-toggle${cameras ? " on" : ""}`}
+              aria-pressed={cameras}
+              title="Show the camera frustums DA3 exported beside the points — one per frame, where the camera was and what it could see."
+              onClick={() => setCameras((value) => !value)}
             >
-              {fly ? "Fly" : "Walk"}
+              Cameras
             </button>
-            <button
-              className={`chip-toggle${showKeys ? " on" : ""}`}
-              aria-pressed={showKeys}
-              title="Show every mouse and keyboard control this pane has"
-              onClick={() => setShowKeys((value) => !value)}
-            >
-              Keys
-            </button>
-            {mode === "fixed" && (
+            {advanced && (
+              <>
+                <button
+                  className={`chip-toggle${fly ? " on" : ""}`}
+                  aria-pressed={fly}
+                  title="Walk keeps W level with the ground, so a glance downwards cannot bury you in the floor. Fly follows wherever you are looking."
+                  onClick={() => setFly((value) => !value)}
+                >
+                  {fly ? "Fly" : "Walk"}
+                </button>
+                <button
+                  className={`chip-toggle${showKeys ? " on" : ""}`}
+                  aria-pressed={showKeys}
+                  title="Show every mouse and keyboard control this pane has"
+                  onClick={() => setShowKeys((value) => !value)}
+                >
+                  Keys
+                </button>
+              </>
+            )}
+            {advanced && mode === "fixed" && (
               <>
                 <button
                   className={`chip-toggle${ghost ? " on" : ""}`}
@@ -969,7 +1165,60 @@ export function Viewport3D() {
           </>
         }
       />
-      <LayerRow choices={LAYERS} active={layers} onToggle={toggleLayer} />
+      {advanced && (
+        <>
+          {/*
+            Which cloud is being measured, switchable from the pane that shows it.
+            It is a parameter of the Point Cloud node, and it is still editable there — but the
+            node lives in a graph pane the measurement layout keeps small, and a switch you have to
+            go and find is a switch nobody A/Bs. The hint carries the number that makes the two
+            clouds different: the share of its own pixels that the LEANEST frame contributed.
+          */}
+          <OutputRow
+            label="CLOUD"
+            choices={CLOUD_SOURCES}
+            active={requestedSource}
+            onSelect={(id) => setNodeParamAndRun(POINT_CLOUD_ID, "source", id)}
+            hint={
+              cloud?.leanestFrameShare == null
+                ? undefined
+                : `leanest frame ${(cloud.leanestFrameShare * 100).toFixed(0)}%`
+            }
+          />
+          {/*
+            Colour and budget belong to the rebuilt cloud only. DA3's export carries its own vertex
+            colours and its own fixed 1,000,000, so offering either against it would be a control
+            that does nothing — the failure DESIGN.md calls a lie in the interface.
+
+            The budget hint is the share of finite, non-edge display candidates it kept. Confidence
+            stays on the separate measurement cloud and does not erase the picture.
+          */}
+          {requestedSource === "npz" && (
+            <>
+              <OutputRow
+                label="COLOUR"
+                choices={CLOUD_COLOURS}
+                active={requestedColour}
+                onSelect={(id) => setNodeParamAndRun(POINT_CLOUD_ID, "colour", id)}
+                hint={cloud?.coloured === false ? "no frames on disk — ramped" : undefined}
+              />
+              <OutputRow
+                label="POINTS"
+                choices={CLOUD_BUDGETS}
+                active={requestedBudget}
+                onSelect={(id) => setNodeParamAndRun(POINT_CLOUD_ID, "budget", Number(id))}
+                hint={
+                  cloud?.keptOfCandidates == null
+                    ? undefined
+                    : `${(cloud.keptOfCandidates * 100).toFixed(0)}% of finite candidates`
+                }
+              />
+            </>
+          )}
+          <LayerRow choices={LAYERS} active={layers} onToggle={toggleLayer} />
+        </>
+      )}
+      <ResultStrip readout={result} />
       <ProvenanceBanner field={provenance} />
       <div
         className="pane-body"
@@ -984,17 +1233,32 @@ export function Viewport3D() {
           loopRef.current.dragging = false;
         }}
         onPointerDown={(event) => {
-          if (loopRef.current.mode !== "fixed") return;
-          loopRef.current.dragging = true;
+          const state = loopRef.current;
+          if (state.mode !== "fixed" && state.mode !== "cinematic") return;
+          state.dragging = true;
+          if (state.mode === "cinematic") state.cine.lastInputAt = performance.now();
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={(event) => {
           const state = loopRef.current;
-          if (!state.dragging || state.mode !== "fixed") return;
+          if (!state.dragging) return;
           const height = event.currentTarget.clientHeight || 1;
           // A full turn per screen height, matching what the orbit controls do in Free, and in
           // the same direction: dragging right slides the scene right, so the view turns left.
           const rate = (2 * Math.PI) / height;
+          if (state.mode === "cinematic") {
+            // The drag steers the shot rather than leaving the mode: it feeds the same angle and
+            // elevation the turn itself advances, so letting go resumes from where you left it
+            // instead of snapping back to a path you have been dragged off.
+            state.cine.angle += event.movementX * rate;
+            state.cine.elevation = Math.min(
+              CINE_PITCH_LIMIT,
+              Math.max(-CINE_PITCH_LIMIT, state.cine.elevation + event.movementY * rate),
+            );
+            state.cine.lastInputAt = performance.now();
+            return;
+          }
+          if (state.mode !== "fixed") return;
           state.look.yaw += event.movementX * rate;
           state.look.pitch = Math.min(
             LOOK_PITCH_LIMIT,
@@ -1002,8 +1266,22 @@ export function Viewport3D() {
           );
         }}
         onPointerUp={(event) => {
-          loopRef.current.dragging = false;
+          const state = loopRef.current;
+          state.dragging = false;
+          if (state.mode === "cinematic") state.cine.lastInputAt = performance.now();
           event.currentTarget.releasePointerCapture(event.pointerId);
+        }}
+        onWheel={(event) => {
+          // Cinematic has the orbit controls switched off, so the wheel would otherwise do
+          // nothing at all — and a dead wheel over a 3D scene reads as a broken pane.
+          const state = loopRef.current;
+          if (state.mode !== "cinematic") return;
+          const [low, high] = CINE_ZOOM_RANGE;
+          state.cine.zoom = Math.min(
+            high,
+            Math.max(low, state.cine.zoom * Math.exp(event.deltaY * 0.0015)),
+          );
+          state.cine.lastInputAt = performance.now();
         }}
       >
         {frameRect && (
@@ -1026,7 +1304,15 @@ export function Viewport3D() {
             )}
           </div>
         )}
-        {cloud && (
+        {/*
+          Advanced only, and that is the whole point of the result strip above.
+
+          This block is how the fit gets debugged and it sits over the scene, which is where the
+          thing being measured is. In Standard the strip carries what the run says and how wrong it
+          is, in reserved chrome that cannot occlude anything; here the diagnostics come back, in
+          full, for the pass where you are asking about the plane rather than about the object.
+        */}
+        {cloud && advanced && (
           <div className="viewport-overlay">
             {/*
               Three visibly different states, never silence. Amber-plus-◐ and red-plus-▲ follow the
@@ -1088,6 +1374,17 @@ export function Viewport3D() {
                 <br />
                 <span className="overlay-dim">drag or arrows to look · WASD off · F re-aims</span>
               </>
+            ) : mode === "cinematic" ? (
+              <>
+                CINEMATIC · {ORBIT_RATE_DEG_S}°/s · UP FROM{" "}
+                {upAxis.source === "floor"
+                  ? "FITTED FLOOR"
+                  : upAxis.source === "camera"
+                    ? "CAMERA PATH"
+                    : "SCENE +Y (UNMEASURED)"}
+                <br />
+                <span className="overlay-dim">drag or A D to turn · W S in and out · resumes on its own</span>
+              </>
             ) : (
               <>
                 FREE · {fly ? "FLY" : "WALK"} · UP FROM{" "}
@@ -1112,7 +1409,7 @@ export function Viewport3D() {
             )}
           </div>
         )}
-        {showKeys && (
+        {showKeys && advanced && (
           <div className="key-help">
             <b>Move</b> W A S D · <b>Up/down</b> E Q · <b>Look</b> arrows or drag
             <br />
@@ -1180,6 +1477,64 @@ function walk(
     controls.target.y += dy;
     controls.target.z += dz;
   }
+}
+
+/**
+ * Turn the scene by itself, and let the operator trim the shot without leaving the mode.
+ *
+ * The angle accumulates here rather than being derived from a clock, which is what lets the turn
+ * hold still while somebody is dragging and then ease back in: the rate is scaled by
+ * `rateFactor`, and a paused turn simply adds nothing. Deriving the angle from elapsed time would
+ * make every pause a jump, because time keeps running whether or not the shot does.
+ *
+ * Steering is deliberately coarser than Free's. This is framing a shot, not travelling through a
+ * scene, and Free's rates — tuned so a held key crosses the cloud in five seconds — overshoot
+ * badly when what you want is ten degrees to the left.
+ */
+function rideTurntable(
+  camera: THREE.PerspectiveCamera,
+  state: LoopState,
+  now: number,
+  dt: number,
+): void {
+  const scene = state.cineScene;
+  if (!scene) return;
+  const cine = state.cine;
+  const held = (...names: string[]) => names.some((name) => state.keys.has(name));
+
+  let steered = false;
+  const yaw = (held("a", "arrowleft") ? 1 : 0) - (held("d", "arrowright") ? 1 : 0);
+  if (yaw !== 0) {
+    cine.angle += yaw * CINE_KEY_YAW * dt;
+    steered = true;
+  }
+  const pitch = (held("arrowup", "e") ? 1 : 0) - (held("arrowdown", "q") ? 1 : 0);
+  if (pitch !== 0) {
+    cine.elevation = clampRange(cine.elevation + pitch * CINE_KEY_PITCH * dt, -CINE_PITCH_LIMIT, CINE_PITCH_LIMIT);
+    steered = true;
+  }
+  const dolly = (held("s") ? 1 : 0) - (held("w") ? 1 : 0);
+  if (dolly !== 0) {
+    // Multiplicative, so a step feels the same size whether you are near the cloud or far from
+    // it — the same reason Free scales its speed by the scene's extent.
+    cine.zoom = clampRange(cine.zoom * Math.exp(dolly * CINE_KEY_ZOOM * dt), ...CINE_ZOOM_RANGE);
+    steered = true;
+  }
+  if (steered) cine.lastInputAt = now;
+
+  cine.angle += (ORBIT_RATE_DEG_S * Math.PI) / 180 * dt * rateFactor(now - cine.lastInputAt);
+
+  const pose = cinematicPose(scene, cine.angle, cine.elevation, cine.zoom);
+  camera.position.set(...pose.position);
+  // Set before `lookAt`, which reads it to decide which way the horizon lies. Without this the
+  // shot rolls whenever the measured up is not the scene's +Y — which is most of the time, since
+  // DA3 aligns its scene to the first camera.
+  camera.up.set(...state.up);
+  camera.lookAt(pose.target[0], pose.target[1], pose.target[2]);
+}
+
+function clampRange(value: number, low: number, high: number): number {
+  return Math.min(high, Math.max(low, value));
 }
 
 /**

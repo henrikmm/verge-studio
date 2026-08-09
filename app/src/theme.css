@@ -129,6 +129,22 @@ body {
   margin-left: auto;
 }
 
+/*
+  How much of itself the app shows. Two chips rather than one toggle, because a single button
+  reading "Advanced" cannot say whether that is the current state or the offer — and this switch
+  changes what several panes contain, which is too much to leave ambiguous.
+*/
+.mode-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.mode-switch .mode-label {
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+}
+
 .chip-toggle.focused {
   border-color: var(--emph-hi);
 }
@@ -311,6 +327,77 @@ body {
   text-overflow: ellipsis;
   font-size: 10px;
   opacity: 0.75;
+}
+
+/*
+  The `?` and its panel — see panes/help.tsx for the rule about what may go inside one.
+
+  Deliberately quiet: a row of loud help marks would be its own kind of clutter, so the dot sits
+  at --text-dim until hovered. It is a real button, so it is reachable by Tab; the focus style is
+  a border rather than the browser's blue ring, which DESIGN.md item 1 forbids.
+*/
+.help-dot {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg-node);
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 9px;
+  line-height: 1;
+  cursor: help;
+}
+
+.help-dot:hover,
+.help-dot[aria-expanded="true"] {
+  color: var(--emph-hi);
+  border-color: var(--text-dim);
+}
+
+.help-dot:focus-visible {
+  outline: none;
+  border-color: var(--emph-hi);
+}
+
+/*
+  Portalled to document.body at fixed coordinates, so no pane's `overflow: hidden` can clip it.
+  Width is capped in characters rather than pixels: 44em of 11px text is roughly 60 characters a
+  line, which is the width prose stops being work to read at.
+*/
+.help-panel {
+  position: fixed;
+  z-index: 50;
+  max-width: min(44ch, calc(100vw - 16px));
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: rgba(21, 21, 23, 0.98);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.55);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.help-panel b {
+  color: var(--emph-hi);
+  font-weight: 500;
+}
+
+.help-panel p {
+  margin: 0 0 5px;
+}
+
+.help-panel p:last-child {
+  margin-bottom: 0;
+}
+
+.help-panel .mono {
+  font-family: var(--font-mono);
+  color: var(--emph);
 }
 
 .pane-empty {
@@ -628,13 +715,75 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+/* Flex so a section heading can carry its `?` at the right without a second row. */
 .inspector-section > h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   margin: 0;
   padding: 5px 8px;
   font-size: 11px;
   font-weight: 600;
   color: var(--text);
   background: var(--bg-header);
+}
+
+/*
+  The clip drop zone — the first thing anyone sees in a fresh app.
+
+  A dashed border rather than a filled panel: it has to read as a target for something, and a
+  solid box in this palette reads as a disabled control. It stays a drop target once a clip is
+  loaded, so replacing one is the same gesture as choosing the first.
+*/
+.clip-drop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 8px;
+  padding: 8px;
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.clip-drop.dropping {
+  border-color: var(--emph-hi);
+  border-style: solid;
+}
+
+.clip-drop .clip-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.clip-drop .clip-meta {
+  color: var(--emph);
+}
+
+.clip-drop .clip-empty {
+  flex: 1;
+  min-width: 0;
+}
+
+/* A `?` that has no heading to sit in — it ends a block of rows instead. */
+.section-help,
+.budget-help {
+  display: flex;
+  justify-content: flex-end;
+  padding: 2px 8px 4px;
+}
+
+.pane-hint {
+  padding: 10px 8px;
+  font-size: 11px;
+  color: var(--text-dim);
 }
 
 .inspector-row {
@@ -875,6 +1024,90 @@ input[type="range"]::-moz-range-track {
   font-family: var(--font-mono);
   font-size: 10px;
   padding: 2px 4px;
+}
+
+/*
+  The result strip — what was measured, and how wrong it is.
+
+  Reserved chrome, deliberately: it is a flex row in the pane's column, not a layer over the
+  canvas, so it cannot land in front of the thing being measured no matter where the scene is
+  orbited to. It wraps like every other control row (DESIGN.md ⚠️), which is what lets it keep all
+  four figures at a 180 px pane instead of dropping the last one off the right edge.
+*/
+.result-strip {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-node);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.result-strip .spacer {
+  flex: 1;
+}
+
+/* The glyph carries the state; the hue only reinforces it, so this survives greyscale. */
+.result-strip .result-glyph {
+  color: var(--text-dim);
+}
+
+.result-strip.graded .result-glyph {
+  color: var(--emph-hi);
+}
+
+.result-strip.blind .result-glyph,
+.result-strip.refused .result-glyph {
+  color: var(--accent-busy);
+}
+
+.result-strip.refused .result-glyph {
+  color: var(--accent-err);
+}
+
+.result-strip .result-target {
+  color: var(--text);
+}
+
+.result-strip .result-basis {
+  letter-spacing: 0.06em;
+}
+
+/* The one number a person came to read. 14px is the largest type in any pane and it is spent here
+   on purpose — everything else is 10–12px. Not larger: 14 is the ceiling DESIGN.md item 9 sets for
+   rendered copy, and the headline does not get to be the one thing that breaks the density rule. */
+.result-strip .result-value {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.1;
+  color: var(--emph-hi);
+}
+
+.result-strip .result-pair {
+  color: var(--emph);
+}
+
+/* Label above value would cost a second line; inline and dimmed costs nothing and reads the
+   same way the inspector rows do. */
+.result-strip .result-pair i {
+  margin-right: 4px;
+  color: var(--text-dim);
+  font-style: normal;
+  letter-spacing: 0.04em;
+}
+
+.result-strip .result-note {
+  min-width: 0;
+  color: var(--text-dim);
+}
+
+.result-strip.refused .result-note {
+  color: var(--accent-err);
 }
 
 /* Viewport overlays */
@@ -1426,12 +1659,20 @@ canvas {
 .resolution-card h3,
 .error-model-card h3 {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 6px;
   margin: 0;
   padding: 5px 7px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-header);
   font-size: 11px;
+}
+
+/* The paint instruction keeps its `?` on the same line — it is one thought, not two. */
+.honesty-note .help-dot {
+  margin-left: 5px;
+  vertical-align: middle;
 }
 
 /* A tape truth is reference data, not a verdict — it sits below the reading it grades. */

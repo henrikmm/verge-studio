@@ -32,9 +32,10 @@ Around that spine:
   the browser through signed links that expire in twelve hours, so deleting the service destroys
   nothing and the browser never touches the instance to read a result. The objects themselves are
   deleted after three days by a rule GCS enforces. Saving is still the only way to keep a run.
-- **The fitted floor can be looked at, on demand.** Viewport 3D carries a LAYERS row of four
-  independent switches, **all off by default**, so the cloud is seen unaltered until the floor is
-  asked for. Turning them on is how a fit gets checked by eye, which catches what the numbers
+- **The fitted floor can be looked at, on demand.** Viewport 3D carries a LAYERS row of five
+  independent switches, **all off by default and Advanced-only**, so the cloud is seen unaltered
+  until the floor is asked for. Turning them on is how a fit gets checked by eye, which catches
+  what the numbers
   cannot: support, tilt and RMSE all say how well the plane fits the points it chose, and none of
   them says whether it chose the right points. A visibly wrong floor once hid behind a 2 cm fit
   error. Every layer is geometry in the scene, not marks on the glass — confirmed by orbiting and
@@ -53,10 +54,18 @@ Around that spine:
     vertices land on the plane for tilted floors as well as level ones, the grid is clipped to
     its circle, an origin off the plane is dropped onto it, and below-ness is measured along the
     normal rather than world down.)
-- **The floor readout leads with the number that decides the question.** `FLOOR 14.6% SUPPORT ·
-  0.0% BELOW · 11.8° TILT · 1.2 cm RMSE`, then the camera-up coherence that qualifies the tilt.
-  `belowFraction` had been computed on every fit since the ground rule was written and displayed
-  in no pane at all — it reached the export file and nothing else.
+- **The measurement is the headline; the fit diagnostics are behind the mode switch.** Viewport
+  3D's reserved result strip states the target, the reading, the tape truth, the error in
+  centimetres and the error as a percentage — measured 2026-08-09 on the door fixture as
+  `B1 Door leaf · VERTICAL EXTENT 1.526 m · tape 2.100 m · error −57.4 cm · off by −27.3%`,
+  agreeing digit for digit with the Objects pane. It is a row of chrome, never a layer over the
+  canvas, so it cannot sit in front of the thing being measured. With no tape truth it says so and
+  quotes no error; over a failed or stale ground fit it refuses instead of quoting a number
+  (`app/src/panes/result-strip.ts`, 9 tests).
+- **The floor readout leads with the number that decides the question**, in Advanced:
+  `FLOOR 14.6% SUPPORT · 0.0% BELOW · 11.8° TILT · 1.2 cm RMSE`, then the camera-up coherence that
+  qualifies the tilt. `belowFraction` had been computed on every fit since the ground rule was
+  written and displayed in no pane at all — it reached the export file and nothing else.
 - **The viewport says which of three things is true about the floor**: a current fit and its
   numbers, `◐ FLOOR STALE` for a held fit whose inputs have moved, or `▲ NO FLOOR` carrying the
   fit's own refusal message. All three used to render identically — as an unchanged viewport — so
@@ -75,6 +84,15 @@ Around that spine:
     nicety: DA3's scene is aligned to the *first camera*, so its +Y sits 33.2° from true up on the
     room fixture, and walking along it would climb a third of a right angle while the horizon
     looked level. (`app/src/panes/viewport-nav.ts`, 27 tests.)
+- **The scene can turn by itself.** A third VIEW mode, **Cinematic**, orbits the cloud's centre at
+  6°/s — a minute to the revolution — riding 18° above the fitted ground with a slow ±8% dolly. A
+  still point cloud reads as speckle; what makes it read as a place is parallax, and parallax needs
+  motion. Two properties are held by test rather than by eye: a full turn returns to its starting
+  pose exactly, because the dolly is a function of the orbit angle and not of a second clock, and
+  the elevation is raised as far as it takes to keep the camera above the fitted plane — the centre
+  of a bounding box is halfway up the room, and in a bad reconstruction it can sit under the floor.
+  A drag, the wheel or A/D/W/S steers the shot; the turn holds for 1.2 s afterwards and then eases
+  back over 0.9 s. (`app/src/panes/cinematic.ts`, 13 tests.)
 - **The viewport can stand where the camera stood.** A VIEW row switches between **Free** — the
   orbit camera, as before — and **Fixed**, which places the viewer at the recording camera's
   position, orientation and field of view for whichever frame the slider is on. You can turn to
@@ -88,6 +106,32 @@ Around that spine:
     what the comparison catches is drift, scale error and collapsed geometry.
   - **Camera path** joins the LAYERS row: the route walked, with the current frame marked and
     aimed, drawn through the cloud so it stays visible when the camera is behind something.
+- **The app shows as much of itself as you ask for.** A `Standard | Advanced` switch in the status
+  bar, remembered across reloads, default Standard. Measured 2026-08-09 at 1280×800: Viewport 3D
+  goes from 6 control rows and 19 buttons to **2 rows and 4 buttons** — Free, Fixed, Cinematic and
+  Cameras — with zero overlay elements inside the canvas; Objects drops the uncertainty budget, the
+  trial ledger, the error model and the resolution table. Advanced restores every one of them.
+  Three rules hold it together and all three are graded (DESIGN.md items 20–22):
+  - **Advanced is a strict superset.** Nothing exists only in Standard.
+  - **Standard never strands an effect.** Entering it clears Viewport 3D's layer set rather than
+    hiding the chips — verified by turning Below plane on, switching to Standard and back, and
+    finding it off. Hiding the switch for something still being drawn would be a state with no way
+    out.
+  - **A warning is not an explanation and is never hidden by the mode.** The capped frame plan, the
+    extrapolated VRAM figure, the mock badge and the idle-billing meter render in both.
+- **An explanation costs one glyph.** Feature prose moved out of the pane bodies into a `?` that
+  opens instantly on hover *and* on keyboard focus, closes on Escape, is linked by
+  `aria-describedby`, and is portalled to the document so no pane's hidden overflow can clip it —
+  measured staying fully inside the window with its pane squeezed to 180 px. The native `title`
+  tooltip stays for short chip labels; it is the wrong tool for a paragraph, most of all because it
+  never appears for a keyboard. (`app/src/panes/help.tsx`.)
+- **A clip is loaded from the Inspector, and the Graph is closed by default.** The Graph took 38%
+  of the window, filtered the Frame Source card out of its own default view, and was nonetheless
+  the only way to load a video. The Inspector's **Clip** section is the front door now — drop or
+  browse, see the frame plan and the VRAM it will need, then press Run — and Depth 2D and Viewport
+  3D get the height back. Both entry points write `frame-source` through `lib/load-clip.ts`, so the
+  node card still works and the two cannot disagree. One click on the view bar reopens the Graph
+  with its wiring intact.
 - **Measurement targets belong to a clip**, keyed by the video's content digest. A clip nobody has
   measured before starts with an empty set, never another clip's objects.
 - **Repeat measurements accumulate.** Each recorded trial freezes the exact mask it was measured
@@ -1067,3 +1111,15 @@ Kept because each one was paid for once.
   of what a naive probe reports. A run planned as a landscape test on 2026-08-06 turned out to be
   portrait, and would have been recorded under the wrong label had the manifest's own frame
   dimensions not been checked against the probe.
+- **An interface accumulates truths that quietly expire, and a confident wrong readout costs more
+  than a missing one.** Four were found on 2026-08-09 by reading the panes against the code that
+  fed them. Objects rendered a "Resolution vs frame-count verdict" built from three recorded runs
+  of the **door** clip for every clip: on `da3Test.mp4` it drew three rows of `—` under a heading
+  promising a verdict, and closed with a sentence about a target that clip does not contain. Its
+  holdout column was the literal `/3`. `AUTOMATIC REVIEW` suppressed the word "experimental" for
+  `door-leaf` and applied it to everything else — backwards, since the door is the one target
+  automatic selection has ever been tried on. The status row said `M3c evidence` while the export
+  button wrote `verge-m3b-measurements.json`. And the Inspector's `Instance alive` row rendered a
+  label with an empty value once contact had been made. None of the four was ever wrong when it was
+  written; each stopped being true and nothing was watching. A blank in a comparison is not neutral
+  — it reads as a claim the comparison ran and came back empty.

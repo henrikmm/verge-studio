@@ -6,6 +6,54 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
+## 2026-08-09 — Standard/Advanced, the result strip and the new front door, 1280×800 (commit pending, on bba67f3)
+
+Partial pass, on the door fixture at 504 px · 112f. This grades the items the change touches —
+1, 3, 4, 8, 9, 19 and the three new items 20–22 — plus the interactions each of them names. Items
+2, 5, 6, 7, 10–18 were not re-run; nothing in this change alters what they grade, and a PASS
+nobody measured is what the log exists to prevent.
+
+1. Dark surfaces, no white — **PASS**. `body` computed `rgb(13,13,15)`. The new surfaces are the
+   result strip on `--bg-node`, the help panel on `rgba(21,21,23,0.98)` and the dashed clip drop
+   zone; none is a light surface and the `?` uses a border for focus, not a blue ring.
+3. Default panes and the Graph's return — **PASS**. A cleared `localStorage` opened on Depth 2D,
+   Viewport 3D, Inspector, Objects and Runs — pane titles read exactly those five, no Graph. The
+   view bar's Graph button read `Show Graph` and brought it back.
+4. Tab density — **PASS**. Tab strips measured 26 px; labels unchanged at 11 px.
+8. Window bounds — **PASS**. `scrollWidth === innerWidth === 1280` and
+   `scrollHeight === innerHeight === 800`.
+9. Type — **PASS**, after a fix during the pass. The result value was written at 15 px, which is
+   the only thing in the app that would have exceeded the 14 px ceiling; it is 14 px now and the
+   sweep for rendered text above 14 px returns empty in both modes, with a reading on screen.
+19. Narrow pane — **PASS** in both modes. With the Viewport pane forced to 180 px, every child of
+    every `.pane-controls`, `.output-row` and `.result-strip` was inside the pane's box —
+    0 overflowing of 5 rows in Advanced, 2 in Standard. The strip wraps to 71 px rather than
+    clipping, which is the trade DESIGN.md already makes for control rows.
+20. Both modes — **PASS**. The switch is in the status bar and survives a reload. Standard:
+    **2 control rows, 4 buttons** (Free, Fixed, Cinematic, Cameras); Objects has no budget block,
+    no trial ledger, no error model and no resolution table. Advanced: 4 control rows, 13 buttons,
+    all four Objects sections back. Nothing-stranded was tested rather than assumed — Below plane
+    switched on in Advanced, then Standard, then Advanced again, and it came back **off**.
+21. Explanation behind a `?` — **PASS**. The dot opens on keyboard `focus()` as well as hover,
+    `aria-describedby` matches the panel id, Escape closes it. Opened from the Viewport pane
+    squeezed to 180 px the panel measured left 587, right 912, top 304, bottom 473 in a 1280×800
+    window — fully inside, flipped to the side with room.
+22. The measurement is the headline — **PASS**. A brush stroke down the door leaf produced
+    `● B1 Door leaf · EXTENT 1.444 m · tape 2.100 m · error -65.6 cm · off by -31.2%`, agreeing
+    with the Objects pane digit for digit. 23 px tall, one line, in mono, and
+    `.pane-body .viewport-overlay` counted **0** elements in Standard.
+
+Fixed during the pass: the result value at 15 px (item 9); the `?` wrapping to a second line at
+the default width, fixed by shortening the basis label to `EXTENT` / `ABOVE FLOOR` and the row gap
+to 8 px, taking the strip from 39 px to 23 px; and a doubled `● ●` in the Objects status row,
+where the text repeated a glyph `.pane-status .ok::before` already draws.
+
+Not verified here: Cinematic's frame cost. The browser pane throttles `requestAnimationFrame` to
+zero when it is not being painted, so the pane's own millisecond readout froze at a startup
+artefact (1498 ms — one `elapsed` of ~30 s entering a fresh EMA) and cannot be read in this
+environment. Motion itself is confirmed: two screenshots three seconds apart differ, and the pose
+function's revolution and floor-clearance properties are held by 13 unit tests.
+
 ## 2026-08-08 — complete rebuilt-cloud and lifetime pass, 1280×800 (commit pending, on c508b6e)
 
 Full checklist run on saved outdoor run `20260806-193346-26d16e`, with `Ours`, Photo and 6M

@@ -1,12 +1,29 @@
 /**
- * Inspector — bound to graph selection. Click a node, its parameters appear.
+ * Inspector — where a session starts, and where a selected node's parameters appear.
  *
- * The rows are generated from the selected node's `controls` schema, so a new node
- * type brings its own inspector with it. The GPU and Last-run sections stay global:
- * they describe the machine, not the node.
+ * Two jobs, and the first one is new. Until 2026-08-09 the only way to load a video was to drop it
+ * on a node card in the Graph pane — a pane that opened taking 38% of the window, whose default
+ * view filtered that very card out, and that earns its space only when you are rewiring the
+ * pipeline or explaining it. The Graph is no longer in the default layout, so the **Clip** section
+ * below is the front door: drop a file, see what it will cost in frames and VRAM, run it.
+ *
+ * It is a second VIEW of `frame-source`, not a second copy of its state — both write the node
+ * through `lib/load-clip.ts`, so the node card keeps working and the two can never disagree.
+ *
+ * The rest is unchanged: rows are generated from the selected node's `controls` schema, so a new
+ * node type brings its own inspector with it, and the GPU and Last-run sections stay global
+ * because they describe the machine rather than the node.
+ *
+ * ## What Standard hides here, and what it may not
+ *
+ * Cloud control, Cloud session and GPU are Advanced: they are the plumbing, and a first-time
+ * screen full of registry tags and service URLs says nothing about measuring anything. The
+ * exception is money. An instance that has been woken keeps billing whether or not anybody is
+ * looking at this pane, so the billing meter and the idle warning render in **both** modes —
+ * DESIGN.md's rule that a mode switch may hide an explanation and never a live warning.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   formatBytes,
   L4_TOTAL_VRAM_BYTES,
@@ -44,6 +61,9 @@ import {
   warmup,
 } from "../lib/infer-client";
 import { update, useSession } from "../lib/session-store";
+import { useAdvanced } from "../lib/ui-mode";
+import { FRAME_SOURCE_ID, loadClip } from "../lib/load-clip";
+import { HelpDot } from "./help";
 import {
   isNodeStale,
   nodeById,
@@ -162,6 +182,143 @@ function Control({
 }
 
 /**
+ * The front door: choose a clip, see what it will cost, run it.
+ *
+ * Drop and Browse both go through `loadClip`, which writes `frame-source` — the same node the
+ * Graph's card writes. Running DA3 is deliberately a separate, explicit press: loading a clip is
+ * free and the forward pass is the one paid step in this project, so the two must never be one
+ * button. `runNode` is used rather than `runAuto` for the same reason.
+ */
+function ClipSection({
+  clipName,
+  durationS,
+  fps,
+  maxFrames,
+  running,
+}: {
+  clipName: string;
+  durationS: number;
+  fps: number;
+  maxFrames: number;
+  running: boolean;
+}) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [dropping, setDropping] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const take = async (file: File | undefined) => {
+    if (!file) return;
+    setError(null);
+    setLoading(true);
+    try {
+      await loadClip(file);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+      setDropping(false);
+    }
+  };
+
+  return (
+    <div className="inspector-section">
+      <h3>
+        Clip
+        <HelpDot label="What happens to a clip you load">
+          <p>
+            The file is copied to a temporary directory so ffmpeg has a real path — browsers never
+            expose one — and frames are sampled evenly across the <b>whole</b> clip on this Mac.
+            Nothing is uploaded anywhere and nothing is billed.
+          </p>
+          <p>
+            Sampling rate and the frame cap decide how much the GPU will be asked to hold. Running
+            DA3 is a separate press, and it is the only step that costs money.
+          </p>
+        </HelpDot>
+      </h3>
+      <div
+        className={`clip-drop${dropping ? " dropping" : ""}`}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDropping(true);
+        }}
+        onDragLeave={() => setDropping(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          void take(event.dataTransfer.files[0]);
+        }}
+      >
+        <input
+          ref={fileInput}
+          type="file"
+          accept="video/*"
+          style={{ display: "none" }}
+          onChange={(event) => {
+            void take(event.target.files?.[0]);
+            // Clearing lets the same file be picked again after a failure.
+            event.target.value = "";
+          }}
+        />
+        {clipName ? (
+          <>
+            <span className="clip-name mono" title={clipName}>
+              {clipName}
+            </span>
+            <span className="clip-meta mono">{durationS.toFixed(1)} s</span>
+          </>
+        ) : (
+          <span className="clip-empty">
+            {loading ? "reading clip…" : "Drop a video here, or"}
+          </span>
+        )}
+        <button disabled={loading} onClick={() => fileInput.current?.click()}>
+          {loading ? "Reading…" : clipName ? "Change…" : "Browse…"}
+        </button>
+      </div>
+      {error && <div className="inspector-note error">{error}</div>}
+      {clipName && (
+        <>
+          <div className="inspector-row control">
+            <span className="k">Sampling FPS</span>
+            <input
+              type="range"
+              min={1}
+              max={50}
+              value={fps}
+              onChange={(e) => setNodeParamAndRun(FRAME_SOURCE_ID, "fps", Number(e.target.value))}
+            />
+            <span className="v num">{fps}</span>
+          </div>
+          <div className="inspector-row control">
+            <span className="k">Max frames</span>
+            <input
+              type="range"
+              min={2}
+              max={144}
+              value={maxFrames}
+              onChange={(e) =>
+                setNodeParamAndRun(FRAME_SOURCE_ID, "maxFrames", Number(e.target.value))
+              }
+            />
+            <span className="v num">{maxFrames}</span>
+          </div>
+          <div className="inspector-actions">
+            <button
+              disabled={running}
+              title="Send the sampled frames to the depth model. This is the only control in the app that spends GPU time."
+              onClick={() => void runNode("da3-depth")}
+            >
+              {running ? "Running…" : "Run DA3 Depth"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/**
  * Live instance clock. Its own ticker rather than a poll: this counts local wall time since
  * first contact and touches the network never, so watching the meter cannot feed the meter.
  */
@@ -175,6 +332,7 @@ function InstanceClock({ since }: { since: number }) {
 }
 
 export function Inspector() {
+  const advanced = useAdvanced();
   const session = useSession();
   const graph = useGraph();
   const cloud = useCloud();
@@ -366,6 +524,53 @@ export function Inspector() {
         <span className="hint">{selected ? spec?.label : "no selection"}</span>
       </div>
       <div className="pane-body inspector">
+        <ClipSection
+          clipName={String(source?.params.videoName ?? "")}
+          durationS={durationS}
+          fps={Number(source?.params.fps ?? 10)}
+          maxFrames={Number(source?.params.maxFrames ?? 112)}
+          running={graph.running}
+        />
+
+        {/*
+          The frame plan is the consequence of the two sliders above, so it sits directly under
+          them. Every note in it is a live warning about this plan rather than an explanation of
+          the feature, which is why none of them moved behind a `?` and none is gated on a mode:
+          honesty rules 1 and 2, and acceptance items 13 and 14.
+        */}
+        {durationS > 0 && (
+          <div className="inspector-section">
+            <h3>Frame plan</h3>
+            <Row k="Frames" v={`${plan.count}`} />
+            <Row k="Effective FPS" v={plan.effectiveFps.toFixed(2)} />
+            <VramBar
+              used={vram.bytes}
+              total={L4_TOTAL_VRAM_BYTES}
+              label={vram.measured ? "VRAM (measured)" : "VRAM (interpolated)"}
+            />
+            {plan.count > MAX_MEASURED_FRAMES && (
+              <div className="inspector-note">
+                Beyond {MAX_MEASURED_FRAMES} frames is extrapolated — the sweep has not run that
+                high. Peak VRAM here is a projection, not a measurement.
+              </div>
+            )}
+            {vram.bytes > L4_TOTAL_VRAM_BYTES && (
+              <div className="inspector-note">
+                Projected over the L4's {formatBytes(L4_TOTAL_VRAM_BYTES)} — expect an OOM. Lower
+                the frame cap or the process resolution.
+              </div>
+            )}
+            {plan.capped && (
+              <div className="inspector-note">
+                {Number(source?.params.fps)} fps × {durationS.toFixed(1)}s ={" "}
+                {Math.floor(Number(source?.params.fps) * durationS)} frames, over the{" "}
+                {Number(source?.params.maxFrames)}-frame cap. FPS lowered to{" "}
+                {plan.effectiveFps.toFixed(2)} so the frames still span the whole clip.
+              </div>
+            )}
+          </div>
+        )}
+
         {selected && spec ? (
           <>
             <div className="inspector-section">
@@ -414,49 +619,47 @@ export function Inspector() {
               </div>
             )}
           </>
-        ) : (
+        ) : null}
+
+        {/*
+          The money guard, and the one part of the cloud plumbing that is not Advanced.
+
+          Cloud Run bills an instance's whole lifetime — cold start and idle tail included — and it
+          keeps doing so whether or not this pane is on screen or which mode it is in. So the
+          elapsed meter and the idle warning render in both. This is DESIGN.md's rule that a mode
+          may hide an explanation and never a live warning, applied to the most expensive state
+          this app can be in.
+        */}
+        {remote && (
           <div className="inspector-section">
-            <h3>Inspector</h3>
-            <Row k="—" v="select a node" />
+            <h3>
+              Instance
+              <HelpDot label="What you are being billed for">
+                <p>{COST_BASIS}</p>
+                <p>
+                  Deleting the service is the only thing that stops the meter. Pointing the app at
+                  the local fixture does not — the instance keeps running.
+                </p>
+              </HelpDot>
+            </h3>
+            {cloud.firstContactAt === null ? (
+              <Row k="Billing" v="no contact yet" title={COST_BASIS} />
+            ) : (
+              <div className="inspector-row">
+                <span className="k">Billing since</span>
+                <span className="v num" title={COST_BASIS}>
+                  <InstanceClock since={cloud.firstContactAt} />
+                </span>
+              </div>
+            )}
+            {idleMinutes !== null && idleMinutes >= IDLE_WARN_MINUTES && (
+              <div className="inspector-note error">
+                Idle {idleMinutes} min — still billing. Save any runs you want to keep, then Delete
+                service.
+              </div>
+            )}
           </div>
         )}
-
-        <div className="inspector-section">
-          <h3>Frame plan</h3>
-          {durationS > 0 ? (
-            <>
-              <Row k="Frames" v={`${plan.count}`} />
-              <Row k="Effective FPS" v={plan.effectiveFps.toFixed(2)} />
-              <VramBar
-                used={vram.bytes}
-                total={L4_TOTAL_VRAM_BYTES}
-                label={vram.measured ? "VRAM (measured)" : "VRAM (interpolated)"}
-              />
-              {plan.count > MAX_MEASURED_FRAMES && (
-                <div className="inspector-note">
-                  Beyond {MAX_MEASURED_FRAMES} frames is extrapolated — the sweep has not run
-                  that high. Peak VRAM here is a projection, not a measurement.
-                </div>
-              )}
-              {vram.bytes > L4_TOTAL_VRAM_BYTES && (
-                <div className="inspector-note">
-                  Projected over the L4's {formatBytes(L4_TOTAL_VRAM_BYTES)} — expect an OOM.
-                  Lower the frame cap or the process resolution.
-                </div>
-              )}
-              {plan.capped && (
-                <div className="inspector-note">
-                  {Number(source?.params.fps)} fps × {durationS.toFixed(1)}s ={" "}
-                  {Math.floor(Number(source?.params.fps) * durationS)} frames, over the{" "}
-                  {Number(source?.params.maxFrames)}-frame cap. FPS lowered to{" "}
-                  {plan.effectiveFps.toFixed(2)} so the frames still span the whole clip.
-                </div>
-              )}
-            </>
-          ) : (
-            <Row k="—" v="no clip loaded" />
-          )}
-        </div>
 
         {/*
           Cloud control: the state of the world before anything is spent.
@@ -466,6 +669,7 @@ export function Inspector() {
           difference between a ~1-3 min deploy and a 15-20 min rebuild. Until this existed the
           only way to learn that was to start the deploy and watch the log.
         */}
+        {advanced && (
         <div className="inspector-section">
           <h3>Cloud control</h3>
           {status ? (
@@ -576,19 +780,37 @@ export function Inspector() {
                   <pre className="job-log">{deployLog.slice(-14).join("\n") || "starting…"}</pre>
                 </>
               )}
-              <div className="inspector-note">
-                Checking costs nothing: these read gcloud metadata and never touch the service,
-                so they cannot wake an instance.
-              </div>
             </>
           ) : (
             <Row k="—" v={statusError ? "unavailable" : "checking…"} />
           )}
           {statusError && <div className="inspector-note error">{statusError}</div>}
         </div>
+        )}
 
+        {advanced && (
         <div className="inspector-section">
-          <h3>Cloud session</h3>
+          <h3>
+            Cloud session
+            {/*
+              Four paragraphs of billing prose used to sit inline here and in Cloud control. They
+              are correct and they are read once; the meter and the idle warning, which are about
+              the state right now, are up in the Instance section and show in both modes.
+            */}
+            <HelpDot label="What these actions cost">
+              <p>{COST_BASIS}</p>
+              <p>
+                <b>Checking costs nothing.</b> The Cloud control rows read gcloud metadata and
+                never touch the service, so they cannot wake an instance.
+              </p>
+              <p>
+                <b>Warm up</b> loads the model into VRAM: measured 64 s cold start plus 40 s model
+                load against ~31 s of inference, so warming before you need it usually pays.{" "}
+                <b>Release model</b> frees VRAM but does not stop billing. <b>Delete service</b> is
+                the only thing that does.
+              </p>
+            </HelpDot>
+          </h3>
           {remote ? (
             <>
               <Row
@@ -597,40 +819,8 @@ export function Inspector() {
                 title={cloud.serviceUrl ?? cloud.baseUrl ?? ""}
               />
               {cloud.proxied && <Row k="Auth" v="signed by dev server · no token held" />}
-              <Row
-                k="Instance alive"
-                v={cloud.firstContactAt === null ? "no contact yet" : ""}
-                title={COST_BASIS}
-              />
-              {cloud.firstContactAt !== null && (
-                <div className="inspector-row">
-                  <span className="k">Billing since</span>
-                  <span className="v num" title={COST_BASIS}>
-                    <InstanceClock since={cloud.firstContactAt} />
-                  </span>
-                </div>
-              )}
               <Row k="Requests" v={`${cloud.requestCount}`} />
               <Row k="Runs" v={`${cloud.runCount}`} />
-              {/*
-                Idle watchdog. Cloud Run bills the instance's lifetime, so an instance nobody is
-                using costs exactly as much as one running inference. The app cannot delete it
-                automatically — artifacts that have not been saved yet live only on that
-                instance, and a surprise deletion would destroy paid-for work — so it says so
-                loudly and leaves the decision where it belongs.
-              */}
-              {idleMinutes !== null && idleMinutes >= IDLE_WARN_MINUTES && (
-                <div className="inspector-note error">
-                  Idle {idleMinutes} min — still billing. Save any runs you want to keep, then
-                  Delete service.
-                </div>
-              )}
-              {/*
-                No currency figure, on purpose (DESIGN.md honesty rule 1). The app has no
-                billing data and the true lifetime started before our first contact, so the
-                measured elapsed time plus the billing model in words is the honest maximum.
-              */}
-              <div className="inspector-note">{COST_BASIS}</div>
               <div className="inspector-actions">
                 <button disabled={busy} onClick={() => act(refreshGpu)}>
                   Refresh
@@ -697,6 +887,8 @@ export function Inspector() {
                   Use local fixture
                 </button>
               </div>
+              {/* Not moved behind a `?`: it corrects a belief the button itself creates, at the
+                  moment it is about to be clicked, about the one thing here that costs money. */}
               <div className="inspector-note">
                 “Use local fixture” only points this app elsewhere — the instance keeps running
                 and keeps billing until it is deleted.
@@ -739,13 +931,20 @@ export function Inspector() {
                   Connect
                 </button>
               </div>
-              <div className="inspector-note">
-                Connecting starts nothing by itself, but the first request wakes an instance and
-                Cloud Run then bills its whole lifetime. These two fields are the manual path,
-                kept for a service this Mac's gcloud cannot see. Otherwise prefer{" "}
-                <b>Connect (signed locally)</b> in Cloud control above: it finds the service
-                itself and keeps the credential out of the browser entirely.
-              </div>
+              <span className="section-help">
+                <HelpDot label="When to use these two fields">
+                  <p>
+                    Connecting starts nothing by itself, but the first request wakes an instance and
+                    Cloud Run then bills its whole lifetime.
+                  </p>
+                  <p>
+                    These two fields are the manual path, kept for a service this Mac's gcloud
+                    cannot see. Otherwise prefer <b>Connect (signed locally)</b> in Cloud control
+                    above: it finds the service itself and keeps the credential out of the browser
+                    entirely.
+                  </p>
+                </HelpDot>
+              </span>
               {cloud.deleted && (
                 <div className="inspector-note">Service deleted this session. Meter stopped.</div>
               )}
@@ -753,7 +952,9 @@ export function Inspector() {
           )}
           {teardownLog && <div className="inspector-note error">{teardownLog}</div>}
         </div>
+        )}
 
+        {advanced && (
         <div className="inspector-section">
           <h3>GPU</h3>
           {gpu ? (
@@ -770,6 +971,7 @@ export function Inspector() {
             <Row k="State" v={remote ? "not polled — press Refresh" : "unreachable"} />
           )}
         </div>
+        )}
 
         <div className="inspector-section">
           <h3>Last run</h3>
