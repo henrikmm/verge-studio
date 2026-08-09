@@ -212,6 +212,40 @@ describe("computeDesiredKeys — the invalidation rule", () => {
     const keys = computeDesiredKeys(nodes, [], registry());
     expect(keys.get("a")).toBe(keys.get("b"));
   });
+
+  it("keeps a semantic output stable when only a display parameter changes", () => {
+    const reg = registry();
+    reg.source.outputs = [
+      { id: "display", label: "Display", type: "point_cloud" },
+      { id: "measurement", label: "Measure", type: "point_cloud" },
+    ];
+    reg.source.outputParameters = (port, params) =>
+      port === "measurement" ? { source: params.source } : params;
+    const makeNodes = (budget: number): GraphNode[] => [
+      {
+        id: "a",
+        type: "source",
+        params: { source: "npz", budget },
+        position: { x: 0, y: 0 },
+        auto: true,
+      },
+      { id: "b", type: "sink", params: {}, position: { x: 1, y: 0 }, auto: true },
+    ];
+    const edges: GraphEdge[] = [
+      {
+        id: "e",
+        source: "a",
+        sourcePort: "measurement",
+        target: "b",
+        targetPort: "points",
+      },
+    ];
+    const before = computeDesiredKeys(makeNodes(1_000_000), edges, reg);
+    const after = computeDesiredKeys(makeNodes(6_000_000), edges, reg);
+
+    expect(after.get("a")).not.toBe(before.get("a"));
+    expect(after.get("b")).toBe(before.get("b"));
+  });
 });
 
 describe("isStale", () => {
@@ -513,5 +547,37 @@ describe("runGraph", () => {
 
     expect(calls.source).toBe(1);
     expect(calls.gpu).toBe(0);
+  });
+
+  it("disposes a result that finishes after its pass was aborted", async () => {
+    const { nodes, edges } = pipeline();
+    const h = makeHarness();
+    const controller = new AbortController();
+    const reg = registry();
+    const dispose = vi.fn();
+    let finish: (() => void) | undefined;
+    reg.source.execute = () =>
+      new Promise((resolve) => {
+        finish = () => resolve({ frames: { type: "frames", value: "obsolete", dispose } });
+      });
+
+    const running = runGraph({
+      nodes,
+      edges,
+      registry: reg,
+      runtime: h.runtime,
+      onChange: h.onChange,
+      allowManual: true,
+      signal: controller.signal,
+    });
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    controller.abort();
+    finish!();
+    const report = await running;
+
+    expect(report.ran).toEqual([]);
+    expect(report.failed).toEqual([]);
+    expect(h.runtime["n-source"]?.outputs).toBeNull();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 });

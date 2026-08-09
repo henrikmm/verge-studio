@@ -456,36 +456,70 @@ frame would share one exact value. They do not: the most-repeated depth covers u
 in every frame of both the door fixture and the outdoor run, with ~140,000 distinct values among
 141,120 pixels. `maxDepthM` exists as housekeeping, not as a rescue.
 
-### The outdoor run keeps every frame now, and the holes left are the budget — 2026-08-08
+### The holes were our confidence cut, not missing DA3 depth — fixed 2026-08-08
 
-**`inspect coverage` was reporting DA3's losses under our cloud's name.** `cmdCoverage` called
-`readCloud(run.glb)` directly and never went through `scene()`, so `--cloud npz` was accepted and
-ignored: both invocations printed identical numbers. The Gate for the point-cloud task names this
-command, so until it was repaired the Gate could not have been checked. Fixed with the same
-voxel-key overflow found in `geometry/cloud.ts`: 21-bit axis fields scaled by 2^42 exceed 2^53,
-where two distant cells collide and the occupancy set reports an absent pixel as present.
+The first repair changed DA3's pooled confidence floor into one floor per frame. That stopped
+whole frames disappearing, but it kept the exporter's other decision: discard the least confident
+40% of **each** frame. The 1M/3M/6M point budget ran afterwards. A larger budget could only keep
+more of the remaining 60%; it could never restore the coherent region already deleted. This is
+why 3M and 6M looked nearly identical in the reported outdoor frames.
 
-With the tool repaired, on the 99-frame outdoor run `20260806-193346-26d16e`:
+DA3 did return depth for those regions. The saved depth arrays are finite at every pixel in UI
+frames 1 and 96, and the missing pixels are overwhelmingly on the low side of that frame's
+confidence rank. Confidence says the prediction is less trustworthy; it does not say there was
+no prediction. This rules out missing DA3 inference as the cause of these black regions. It does
+not prove that the newly visible geometry is accurate.
 
-| | DA3's export | ours, per frame |
-|---|---|---|
-| frames under 2% survival | **5** — 23, 25, 96, 97, 98 | **none** |
-| leanest frame | 0.0% | **58.8%** |
-| confidence floor | 6.882, pooled over the run | 4.526–12.224, one per frame |
+The coverage harness makes the distinction numerical. It compares each source-frame pixel with
+the rebuilt cloud in 8 cm cells. On saved run `20260806-193346-26d16e`, at a 6M budget:
 
-**A cloud that drops no frames can still look holey, and the cause is arithmetic.** 99 frames of
-504×280 are 13.97 million pixels; the per-frame floor keeps 8.3 million; a 1,000,000-point budget
-then keeps **12%** of those. On frame 49, 21.4% of pixels land in an empty 8 cm voxel. Remove the
-confidence floor entirely and that falls to **6.8%** — the residue is the budget alone, nothing to
-do with confidence. The budget is a comparison choice (it matches DA3's own 1,000,000 so the two
-clouds are like-for-like), not a limit, and the viewport now offers 1M/3M/6M. At 6M the browser
-heap goes 184 → 314 MB and the build takes 5.6 s.
+| UI frame | Per-frame 40% cut: empty cells | Every finite, non-edge point: empty cells |
+|---|---:|---:|
+| 1 | 22.50% | **0.66%** |
+| 96 | 28.44% | **3.04%** |
 
-**The rebuilt cloud carries the photographs' colour.** The npz holds depth and confidence and no
-colour at all, so the first version was a height ramp — a reading of one coordinate, and
-unrecognisable as a place. The source frames are on this disk, so `buildCloud` takes a per-frame
-RGB buffer, the app resamples each frame onto the depth grid through one reused canvas, and a
-voxel cell averages the colours it merges. `COLOUR Photo | Height` in the viewport, Photo default.
+The right column is the shipped display rule. The run contains 13,821,004 finite, non-edge
+candidates, and the 6M cloud keeps 43.4% of them uniformly. The remaining 0.66–3.04% is therefore
+the point budget plus the deliberate depth-edge check, not a confidence-shaped hole. Reproduce
+the two figures with `inspect coverage 20260806-193346-26d16e --cloud npz --keep-all --points
+6000000 --frame 0 --json` and the same command with `--frame 95`.
+
+The visual check agrees. In the 1280×800 browser harness, Fixed frame 1 contains the walkway and
+right-hand foliage that were black in the report. The harness render for frame 96 leaves only
+sparse marks around depth boundaries and the far top edge; the large missing far region is gone.
+The generated evidence is `coverage-0000.png` and `coverage-0095.png` under `.inspect/`.
+
+**Display density no longer changes the measurement.** The rebuilt node now has two outputs. The
+viewport receives the complete display candidates. Ground fitting and brush selection receive a
+separate, exact 1M sample with the old per-frame confidence rule. Its cache key excludes colour,
+display budget, stride and point size, so those controls do not refit the floor. The browser kept
+the Ground Plane result at 20.8% support, 9.3° tilt and 1.7 cm RMSE through 1M → 3M → 6M. The
+door fixture's maskless tabletop remains 0.69603 m, its established rebuilt-cloud baseline.
+
+**The fuller display is bounded by its chosen size.** Reservoir sampling, which gives every
+candidate the same chance while points stream past, allocates at most 1M, 3M or 6M loose point
+slots. The previous builder first allocated all 13.8M candidates and then copied the selected
+ones. The exact legacy measurement sample is cached on its depth field, so a display-only switch
+does not repeat that older sampler's transient allocation. `BuiltCloud.allocatedPoints` makes the
+bound testable.
+
+**The crash paths now have owners.** Fetches receive the graph's cancellation signal. A late
+result from an aborted pass is refused and disposed instead of replacing the newer choice. Every
+retired Three.js subtree releases its geometry and materials after the viewport detaches it. A
+partly loaded set of photographs falls back to the height ramp instead of painting the missing
+frames black. Fixed view remains selected while the replacement cloud and camera check are in
+flight, and only a completed camera refusal returns it to Free.
+
+The browser switched 1M → 3M → 6M in Fixed view and then accepted ten rapid budget clicks. It
+settled on one 6M cloud, stayed Fixed, kept the measurement result unchanged and logged zero
+warnings or errors. The local tests cover the allocation bound, deterministic sampling, partial
+colour, nested resource disposal, output-specific cache keys and aborted late results. The full
+local verification passed all 467 tests and every server contract check.
+
+**The rebuilt cloud still carries the photographs' colour.** The npz holds depth and confidence
+but no RGB. The source frames are resampled onto the depth grid through one reused canvas. If all
+frames load, the point cloud uses those colours; otherwise it says colour is unavailable by using
+the height ramp. `COLOUR Photo | Height` keeps that choice visible.
 
 ### Where DA3's metric scale lives, and what cannot lose it — 2026-08-08
 
@@ -942,9 +976,10 @@ These are stated, not scheduled. Anything being actively worked on is in `TASK.m
   cannot check the door leaf, the tower or the monitor — the three graded objects it cannot reach.
 - **Accuracy across scenes is unverified.** One room, one operator, one camera path. A second
   capture with different orientation and motion remains the largest untested risk.
-- **The exported cloud is a biased 7% sample of the reconstruction** — DA3's global confidence
-  floor discards the least-confident 40% of every pixel and can remove whole frames (section 3).
-  The full-resolution depth is on disk, so this is fixable locally; nothing in the app uses it yet.
+- **DA3's exported cloud remains a biased 7% sample of the reconstruction.** Its pooled confidence
+  floor can remove whole frames. The app keeps that cloud as a named comparison, while the rebuilt
+  display now uses every finite, non-edge depth candidate. Measurements deliberately use a fixed
+  1M per-frame-confidence sample so changing the picture cannot move a recorded result (section 3).
 - **A pane squeezed below about 100 px tall cuts its own control stack off at the bottom.** Rows
   wrap horizontally and then run out of pane vertically. Found 2026-08-08 while verifying the
   wrapping fix; it needs a scrolling control stack, and is not reachable by dragging in the

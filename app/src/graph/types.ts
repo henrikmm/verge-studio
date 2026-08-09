@@ -73,6 +73,20 @@ export interface NodeOutput {
   thumbnailUrl?: string;
   /** Short mono line under the thumbnail, e.g. "351,232 pts". */
   summary?: string;
+  /**
+   * Release resources owned only by this output.
+   *
+   * Most outputs are plain data and omit this. Point clouds own WebGL buffers, though, and a
+   * content-addressed replacement must release the old buffers instead of trusting the browser
+   * to notice that a Three.js object became unreachable.
+   */
+  dispose?: () => void;
+}
+
+/** Dispose a node result once it is no longer reachable from the graph. */
+export function disposeNodeOutputs(outputs: Record<string, NodeOutput> | null | undefined): void {
+  if (!outputs) return;
+  for (const output of Object.values(outputs)) output.dispose?.();
 }
 
 export interface ExecuteContext {
@@ -119,6 +133,14 @@ export interface NodeSpec {
    * neither block execution nor participate in the content-addressed cache key.
    */
   activeInputs?: (params: Params) => readonly string[];
+  /**
+   * Parameters that define one output's semantic content.
+   *
+   * Omit for the normal case where every parameter changes every output. A node with a
+   * display-only control can keep its measurement output stable, so downstream measurements do
+   * not rerun merely because point size or display density changed.
+   */
+  outputParameters?: (outputPort: string, params: Params) => Params;
   /** Inspector rows, in the order they should appear. */
   controls?: ControlSpec[];
   execute: Executor;

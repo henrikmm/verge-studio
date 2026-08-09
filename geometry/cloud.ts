@@ -69,6 +69,13 @@ export interface BuildCloudOptions {
   maxPoints?: number;
   /** Seed for the cap's selection. Fixed by default, because the fit caches on content. */
   seed?: number;
+  /**
+   * How a finite cap is chosen.
+   *
+   * `legacy` preserves every measurement already graded in this project. `reservoir` bounds
+   * memory by the cap and is for display clouds, whose point order is not scientific evidence.
+   */
+  sampling?: "legacy" | "reservoir";
   /** Ignore depths outside this range, in metres. */
   minDepthM?: number;
   maxDepthM?: number;
@@ -86,6 +93,10 @@ export interface BuildCloudOptions {
   maxRelativeDepthStep?: number;
   /** Row-major 4×4 applied to every point — DA3's `hf_alignment`. Identity when absent. */
   transform?: ArrayLike<number>;
+  /** Do not allocate colour buffers for a measurement-only cloud. */
+  includeColors?: boolean;
+  /** Stop an obsolete browser build at the next frame or row boundary. */
+  signal?: AbortSignal;
 }
 
 /** What one frame put into the cloud, and what it did not. */
@@ -131,6 +142,13 @@ export interface BuiltCloud {
   voxelM: number;
   /** Points before voxelling. Equals `pointCount` when downsampling was off. */
   pointsBeforeVoxel: number;
+  /**
+   * Largest loose point buffer allocated by this build.
+   *
+   * With a finite cap this never exceeds the cap. Kept as a diagnostic because the old builder
+   * allocated all 13.8 million outdoor points before copying the chosen 1M–6M.
+   */
+  allocatedPoints: number;
   /** One line saying where these points came from, for the inspector to print. */
   origin: string;
 }
@@ -367,6 +385,11 @@ function makeRandom(seed: number): () => number {
   };
 }
 
+function assertNotAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  throw signal.reason instanceof Error ? signal.reason : new Error("cloud build aborted");
+}
+
 interface CloudBuffers {
   positions: Float32Array;
   weights: Float32Array;
@@ -390,15 +413,17 @@ function capPoints(built: CloudBuffers, keep: number, seed: number): CloudBuffer
   const positions = new Float32Array(keep * 3);
   const weights = new Float32Array(keep);
   const confidence = new Float32Array(keep);
-  const colors = new Uint8Array(keep * 3);
+  const colors = new Uint8Array(built.colors.length > 0 ? keep * 3 : 0);
   for (let i = 0; i < keep; i++) {
     const source = index[i];
     positions[i * 3] = built.positions[source * 3];
     positions[i * 3 + 1] = built.positions[source * 3 + 1];
     positions[i * 3 + 2] = built.positions[source * 3 + 2];
-    colors[i * 3] = built.colors[source * 3];
-    colors[i * 3 + 1] = built.colors[source * 3 + 1];
-    colors[i * 3 + 2] = built.colors[source * 3 + 2];
+    if (colors.length > 0) {
+      colors[i * 3] = built.colors[source * 3];
+      colors[i * 3 + 1] = built.colors[source * 3 + 1];
+      colors[i * 3 + 2] = built.colors[source * 3 + 2];
+    }
     weights[i] = built.weights[source];
     confidence[i] = built.confidence[source];
   }
@@ -447,28 +472,46 @@ export function buildCloud(frames: readonly Frame[], options: BuildCloudOptions 
   const minDepthM = options.minDepthM ?? 1e-4;
   const maxDepthM = options.maxDepthM ?? Infinity;
   const maxRelativeDepthStep = options.maxRelativeDepthStep ?? 0.08;
+  const maxPoints = options.maxPoints ?? Infinity;
+  const includeColors = options.includeColors ?? true;
+  const sampling = options.sampling ?? "legacy";
+  // A partly coloured cloud used to encode every point from a missing photograph as RGB 0,0,0.
+  // That looked exactly like missing geometry. Photo colour is therefore all-or-nothing.
+  const allFramesColoured =
+    includeColors &&
+    frames.length > 0 &&
+    frames.every((frame) => frame.rgb?.length === frame.width * frame.height * 3);
 
   const contributions: FrameContribution[] = [];
   const grid = voxelM > 0 ? new VoxelGrid(voxelM) : null;
 
-  // Pre-sized to the most the sampling could produce, then trimmed. A growable JS array here
-  // would hold 47 million boxed entries on a 112-frame run; this is one 190 MB allocation.
-  let capacity = 0;
+  // A finite point budget is also the allocation bound. Reservoir sampling chooses uniformly
+  // while points stream past, so the 6M display never first materialises all 13.8M candidates.
+  let upperBound = 0;
   if (!grid) {
     for (const frame of frames) {
-      capacity +=
+      upperBound +=
         Math.ceil(frame.height / pixelStride) * Math.ceil(frame.width / pixelStride);
     }
   }
+  const finiteCap = Number.isFinite(maxPoints)
+    ? Math.max(0, Math.floor(maxPoints))
+    : upperBound;
+  const capacity = grid
+    ? 0
+    : sampling === "reservoir"
+      ? Math.min(upperBound, finiteCap)
+      : upperBound;
   const loosePositions = new Float32Array(capacity * 3);
   const looseWeights = new Float32Array(capacity);
   const looseConfidence = new Float32Array(capacity);
-  const looseColors = new Uint8Array(capacity * 3);
+  const looseColors = new Uint8Array(allFramesColoured ? capacity * 3 : 0);
+  const random = makeRandom(options.seed ?? 7);
   let written = 0;
   let before = 0;
-  let coloured = 0;
 
   for (let f = 0; f < frames.length; f++) {
+    assertNotAborted(options.signal);
     const frame = frames[f];
     const { width, height, confidence, rgb } = frame;
     const pixels = width * height;
@@ -492,6 +535,7 @@ export function buildCloud(frames: readonly Frame[], options: BuildCloudOptions 
 
     let kept = 0;
     for (let y = 0; y < height; y += pixelStride) {
+      if ((y & 15) === 0) assertNotAborted(options.signal);
       for (let x = 0; x < width; x += pixelStride) {
         const index = y * width + x;
         if (!cloud.valid[index]) continue;
@@ -510,22 +554,36 @@ export function buildCloud(frames: readonly Frame[], options: BuildCloudOptions 
           cloud.points[index * 3 + 2],
         );
         before += 1;
-        const r = rgb ? rgb[index * 3] : 0;
-        const g = rgb ? rgb[index * 3 + 1] : 0;
-        const b = rgb ? rgb[index * 3 + 2] : 0;
-        if (rgb) coloured += 1;
+        const r = allFramesColoured && rgb ? rgb[index * 3] : 0;
+        const g = allFramesColoured && rgb ? rgb[index * 3 + 1] : 0;
+        const b = allFramesColoured && rgb ? rgb[index * 3 + 2] : 0;
         if (grid) {
           grid.add(px, py, pz, weight, raw, r, g, b);
         } else {
-          loosePositions[written * 3] = px;
-          loosePositions[written * 3 + 1] = py;
-          loosePositions[written * 3 + 2] = pz;
-          looseColors[written * 3] = r;
-          looseColors[written * 3 + 1] = g;
-          looseColors[written * 3 + 2] = b;
-          looseWeights[written] = weight;
-          looseConfidence[written] = raw;
-          written += 1;
+          let slot: number;
+          if (written < capacity) {
+            slot = written;
+            written += 1;
+          } else if (sampling === "reservoir") {
+            // Standard reservoir sampling: the nth candidate replaces one of the first `cap`
+            // with probability cap/n. The final set is uniform without a full-size index array.
+            const replacement = Math.floor(random() * before);
+            if (replacement >= capacity) continue;
+            slot = replacement;
+          } else {
+            // `capacity` is the exact pixel upper bound in legacy mode, so this is unreachable.
+            throw new Error("cloud buffer capacity was underestimated");
+          }
+          loosePositions[slot * 3] = px;
+          loosePositions[slot * 3 + 1] = py;
+          loosePositions[slot * 3 + 2] = pz;
+          if (allFramesColoured) {
+            looseColors[slot * 3] = r;
+            looseColors[slot * 3 + 1] = g;
+            looseColors[slot * 3 + 2] = b;
+          }
+          looseWeights[slot] = weight;
+          looseConfidence[slot] = raw;
         }
       }
     }
@@ -548,7 +606,6 @@ export function buildCloud(frames: readonly Frame[], options: BuildCloudOptions 
         confidence: looseConfidence.subarray(0, written),
         colors: looseColors.subarray(0, written * 3),
       };
-  const maxPoints = options.maxPoints ?? Infinity;
   const drained =
     maxPoints < built.weights.length
       ? capPoints(built, Math.floor(maxPoints), options.seed ?? 7)
@@ -567,11 +624,12 @@ export function buildCloud(frames: readonly Frame[], options: BuildCloudOptions 
     confidence: drained.confidence,
     // Null rather than a black buffer when no frame carried an image: a caller must be able to
     // tell "the scene is dark here" from "nobody told me the colour".
-    colors: coloured > 0 ? drained.colors : null,
+    colors: allFramesColoured ? drained.colors : null,
     pointCount: drained.positions.length / 3,
     frames: contributions,
     voxelM,
     pointsBeforeVoxel: before,
+    allocatedPoints: grid ? grid.size : capacity,
     origin: describe({
       confidence: confidenceRule,
       weight: weightRule,

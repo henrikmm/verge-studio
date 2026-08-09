@@ -278,7 +278,7 @@ export const groundPlaneSpec: NodeSpec = {
     if (gravity.coherence < 0.7) {
       throw new Error(`camera up is incoherent (${gravity.coherence.toFixed(2)}); do not fit a floor automatically`);
     }
-    const fit = fitGroundPlaneRobust(cloud.positions, {
+    const fit = fitGroundPlaneRobust(cloud.measurementPositions, {
       up: gravity.up,
       maxTiltDeg: Number(params.maxTiltDeg),
       inlierDistance: Number(params.inlierDistance),
@@ -291,7 +291,7 @@ export const groundPlaneSpec: NodeSpec = {
       seed: 7,
     });
     const evidence = collectPlaneEvidence(
-      cloud.positions,
+      cloud.measurementPositions,
       fit.plane,
       Number(params.inlierDistance),
       Number(params.stride),

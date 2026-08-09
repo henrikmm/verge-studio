@@ -12,6 +12,7 @@ import type { JsonValue } from "./cache-key";
 import { computeDesiredKeys, downstreamOf, isStale, runGraph, type RunReport } from "./evaluate";
 import { defaultGraph, REGISTRY } from "./nodes";
 import {
+  disposeNodeOutputs,
   emptyRuntime,
   type GraphEdge,
   type GraphNode,
@@ -153,6 +154,10 @@ export function getGraph(): GraphStoreState {
 }
 
 export function setNodes(nodes: GraphNode[]) {
+  const retained = new Set(nodes.map((node) => node.id));
+  for (const [id, runtime] of Object.entries(state.runtime)) {
+    if (!retained.has(id)) deferDispose(runtime.outputs);
+  }
   state.nodes = nodes;
   // A node added by the user needs a runtime slot before anything reads it.
   for (const node of nodes) state.runtime[node.id] ??= emptyRuntime();
@@ -279,7 +284,10 @@ export function invalidateFrom(nodeIds: readonly string[]): string[] {
   const affected = downstreamOf(nodeIds, state.nodes, state.edges);
   if (affected.length === 0) return affected;
   const runtime = { ...state.runtime };
-  for (const id of affected) runtime[id] = emptyRuntime();
+  for (const id of affected) {
+    deferDispose(runtime[id]?.outputs);
+    runtime[id] = emptyRuntime();
+  }
   state.runtime = runtime;
   commit();
   return affected;
@@ -314,6 +322,22 @@ export function resolveCurrentInput(
 
 let activeRun: AbortController | null = null;
 
+/**
+ * Let mounted panes detach an old object before its WebGL buffers disappear.
+ *
+ * Two animation frames also cover a hidden pane: nothing is mounted there, so the graph remains
+ * the owner and performs the release itself. Point-cloud disposers are idempotent because both
+ * paths may meet on the same output.
+ */
+function deferDispose(outputs: Record<string, NodeOutput> | null | undefined): void {
+  if (!outputs) return;
+  if (typeof requestAnimationFrame === "function") {
+    requestAnimationFrame(() => requestAnimationFrame(() => disposeNodeOutputs(outputs)));
+  } else {
+    setTimeout(() => disposeNodeOutputs(outputs), 0);
+  }
+}
+
 export interface RunRequest {
   /** Evaluate only what this node needs. Omit for the whole graph. */
   target?: string;
@@ -341,14 +365,22 @@ export async function run(request: RunRequest = {}): Promise<RunReport> {
       deny: request.deny,
       signal: controller.signal,
       onChange: (id, patch) => {
-        state.runtime = { ...state.runtime, [id]: { ...(state.runtime[id] ?? emptyRuntime()), ...patch } };
+        const previous = state.runtime[id] ?? emptyRuntime();
+        state.runtime = { ...state.runtime, [id]: { ...previous, ...patch } };
         commit();
+        if (patch.outputs && previous.outputs && patch.outputs !== previous.outputs) {
+          deferDispose(previous.outputs);
+        }
       },
     });
   } finally {
-    if (activeRun === controller) activeRun = null;
-    state.running = false;
-    commit();
+    // An aborted pass can finish after its replacement has started. It must not clear the
+    // replacement's running state or make the status bar claim the graph is idle.
+    if (activeRun === controller) {
+      activeRun = null;
+      state.running = false;
+      commit();
+    }
   }
 }
 

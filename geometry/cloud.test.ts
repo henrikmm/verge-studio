@@ -219,6 +219,45 @@ describe("buildCloud", () => {
     expect(cloud.colors).toBeNull();
   });
 
+  it("reports colour unavailable when even one frame is missing its photograph", () => {
+    const coloured = flatFrame(2, () => 5);
+    coloured.rgb = new Uint8Array(WIDTH * HEIGHT * 3).fill(180);
+    const cloud = buildCloud([coloured, flatFrame(2, () => 5)], {
+      confidence: { kind: "none" },
+    });
+
+    // A mixed buffer would encode the second frame as black and make real geometry look absent.
+    expect(cloud.colors).toBeNull();
+  });
+
+  it("bounds loose allocations by the cap while sampling all candidates", () => {
+    const frames = [flatFrame(2, (x) => 1 + x), flatFrame(3, (x) => 1 + x)];
+    const first = buildCloud(frames, {
+      confidence: { kind: "none" },
+      maxPoints: 100,
+      sampling: "reservoir",
+      seed: 9,
+    });
+    const again = buildCloud(frames, {
+      confidence: { kind: "none" },
+      maxPoints: 100,
+      sampling: "reservoir",
+      seed: 9,
+    });
+    const anotherSeed = buildCloud(frames, {
+      confidence: { kind: "none" },
+      maxPoints: 100,
+      sampling: "reservoir",
+      seed: 10,
+    });
+
+    expect(first.pointsBeforeVoxel).toBe(WIDTH * HEIGHT * 2);
+    expect(first.pointCount).toBe(100);
+    expect(first.allocatedPoints).toBe(100);
+    expect(first.positions).toEqual(again.positions);
+    expect(first.positions).not.toEqual(anotherSeed.positions);
+  });
+
   it("averages colour inside a voxel, so a downsampled cloud still looks like the scene", () => {
     const frame = flatFrame(2, () => 5);
     const rgb = new Uint8Array(WIDTH * HEIGHT * 3);

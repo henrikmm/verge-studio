@@ -515,8 +515,10 @@ export function Viewport3D() {
     if (!scene) return;
 
     if (mountedRef.current) {
-      scene.remove(mountedRef.current);
+      const retired = mountedRef.current;
+      scene.remove(retired);
       mountedRef.current = null;
+      if (retired !== cloud?.object) disposeSubtree(retired);
     }
     if (!cloud) return;
 
@@ -570,11 +572,11 @@ export function Viewport3D() {
     };
   }, [cloud, provenance]);
 
-  // Fall back to Free the moment riding the camera stops being possible, rather than leaving the
-  // pane in a mode it cannot honour.
+  // A replacement cloud temporarily has no checked camera track. Keep the operator's requested
+  // mode through that gap; only a completed check that actually refused the pose returns to Free.
   useEffect(() => {
-    if (mode === "fixed" && !canRideCamera) setMode("free");
-  }, [mode, canRideCamera]);
+    if (mode === "fixed" && (fixedRefused || trackError)) setMode("free");
+  }, [mode, fixedRefused, trackError]);
 
   const showFloorPlane = layers.has(FLOOR_PLANE_LAYER);
   const showFloorPoints = layers.has(FLOOR_POINTS_LAYER);
@@ -677,7 +679,7 @@ export function Viewport3D() {
     if (ground && cloud && showBelow) {
       // The definition of ground, drawn. Same 5 cm test the reported BELOW percentage uses, so the
       // picture and the number cannot disagree.
-      const below = collectPointsBelow(cloud.positions, ground.plane);
+      const below = collectPointsBelow(cloud.measurementPositions, ground.plane);
       if (below.length > 0) {
         const belowGeometry = new THREE.BufferGeometry();
         belowGeometry.setAttribute("position", new THREE.BufferAttribute(below, 3));
@@ -878,8 +880,8 @@ export function Viewport3D() {
         colours and its own fixed 1,000,000, so offering either against it would be a control
         that does nothing — the failure DESIGN.md calls a lie in the interface.
 
-        The budget hint is the number that explains a holey cloud once no frame is being
-        dropped: the share of confidence-floor survivors the budget actually kept.
+        The budget hint is the share of finite, non-edge display candidates it kept. Confidence
+        stays on the separate measurement cloud and does not erase the picture.
       */}
       {requestedSource === "npz" && (
         <>
@@ -896,9 +898,9 @@ export function Viewport3D() {
             active={requestedBudget}
             onSelect={(id) => setNodeParamAndRun(POINT_CLOUD_ID, "budget", Number(id))}
             hint={
-              cloud?.keptOfSurvivors == null
+              cloud?.keptOfCandidates == null
                 ? undefined
-                : `${(cloud.keptOfSurvivors * 100).toFixed(0)}% of what survived the floor`
+                : `${(cloud.keptOfCandidates * 100).toFixed(0)}% of finite candidates`
             }
           />
         </>
@@ -906,7 +908,7 @@ export function Viewport3D() {
       <OutputRow
         label="VIEW"
         choices={VIEW_MODES}
-        active={riding ? "fixed" : "free"}
+        active={mode}
         onSelect={(id) => setMode(id as ViewMode)}
         /*
           Short, and permanent. A control nobody knows about is not a control: WASD was reachable
@@ -919,7 +921,7 @@ export function Viewport3D() {
           extra line of chrome — 136 px of a 450 px pane, measured. What Fixed needs said goes in
           the overlay instead, which is free.
         */
-        hint={riding ? undefined : "WASD move · arrows look"}
+        hint={mode === "fixed" ? undefined : "WASD move · arrows look"}
         extra={
           <>
             <button
@@ -938,7 +940,7 @@ export function Viewport3D() {
             >
               Keys
             </button>
-            {riding && (
+            {mode === "fixed" && (
               <>
                 <button
                   className={`chip-toggle${ghost ? " on" : ""}`}

@@ -88,6 +88,7 @@ OPTIONS
   --cloud <glb|npz>          which cloud to work on. npz rebuilds it from the depth maps,
                              taking the confidence floor PER FRAME the way DA3 takes it once
                              for the whole run, at the GLB's own point count (default glb)
+  --points <n>               rebuilt-cloud budget (default: the GLB's point count)
   --conf <value>             one fixed floor for every frame instead — how DA3's own export
                              behaves, and the only honest way to reproduce it
   --keep-all                 no confidence floor at all
@@ -621,10 +622,13 @@ async function cmdCoverage(positional, flags) {
   const perFrameThreshold = new Map();
   if (rebuilding) {
     const rule = confidenceRule(flags);
+    const target = Number(flags.points ?? cloud.count);
+    if (!Number.isFinite(target) || target < 1) throw new Error(`--points must be a positive number`);
     const built = T.buildCloud(T.framesFromArrays(arrays), {
       confidence: rule,
       weight: "none",
-      maxPoints: cloud.count,
+      maxPoints: Math.floor(target),
+      sampling: rule.kind === "none" ? "reservoir" : "legacy",
       transform: cloud.alignment ?? undefined,
     });
     cloud = { ...cloud, points: built.positions, count: built.pointCount };
@@ -924,6 +928,7 @@ async function npzCloud(T, arrays, glb, { rule, target = glb.count } = {}) {
     confidence: rule,
     weight: "none",
     maxPoints: target,
+    sampling: rule?.kind === "none" ? "reservoir" : "legacy",
     transform: glb.alignment ?? undefined,
   });
 
@@ -968,7 +973,12 @@ async function scene(run, flags, { fitFloor }) {
   if (run.npz) {
     arrays = await readArrays(run);
     if (flags.cloud === "npz") {
-      cloud = await npzCloud(T, arrays, cloud, { rule: confidenceRule(flags) });
+      const target = Number(flags.points ?? cloud.count);
+      if (!Number.isFinite(target) || target < 1) throw new Error(`--points must be a positive number`);
+      cloud = await npzCloud(T, arrays, cloud, {
+        rule: confidenceRule(flags),
+        target: Math.floor(target),
+      });
     } else if (flags.cloud !== undefined && flags.cloud !== "glb") {
       throw new Error(`--cloud must be glb or npz, not "${flags.cloud}"`);
     }

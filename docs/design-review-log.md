@@ -6,6 +6,68 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
+## 2026-08-08 — complete rebuilt-cloud and lifetime pass, 1280×800 (commit pending, on c508b6e)
+
+Full checklist run on saved outdoor run `20260806-193346-26d16e`, with `Ours`, Photo and 6M
+selected. The point-cloud change is visible in the viewport and adds a second graph output, so
+this pass grades the whole interface rather than only the new row.
+
+1. Dark surfaces, no white — **PASS**. `body` computed `rgb(13,13,15)`; the full capture has no
+   light application surface or default-blue link.
+2. No status by hue alone — **PASS**. Current, running, blocked and failed remain `●`, `◐`, `○`
+   and `▲`; active cloud controls also change border and weight. The new Display/Measure split is
+   text and port position, not a status colour.
+3. Six panes and resize — **PASS**. All six Dockview tabs were present. Dragging the first splitter
+   changed the top groups from 500/500 px to 480/520 px, then restored them.
+4. Tab density — **PASS**. All six tab strips measured 26 px; tab labels remain 11 px.
+5. 3D viewport — **PASS**. The viewport showed `6.000.000 pts`, the cloud and axis gizmo. In Free
+   view, a drag changed 4,313 bytes of the cropped canvas capture and changed its encoded size
+   from 4,551 to 21,671 bytes.
+6. Depth view — **PASS**. The turbo-coloured depth view rendered and its metric legend read
+   2.64–7.32 m.
+7. Numeric pane status — **PASS**. Observed Depth 2D 2,139.2 ms; Viewport 23.6 ms and 6M points;
+   Graph 8 nodes, 13 wires, 2 stale; Inspector 204.1 ms; Objects 12 trials; Runs 0.0 ms, 6 runs and
+   303 MB.
+8. Window bounds and gaps — **PASS**. `scrollWidth === innerWidth === 1280` and
+   `scrollHeight === innerHeight === 800`; adjacent group edges meet with no gap above 4 px.
+9. Type — **PASS**. Numeric readouts had 130 visible JetBrains Mono matches. The only 16 px
+   elements were the document and an empty root wrapper; no rendered copy exceeded 14 px.
+10. Squint test — **PASS**. Against both Sentinel captures, the app has comparable near-black
+    panes, one-pixel borders, compact rows and graph density. The viewport still spends more
+    height on explicit Cloud/Colour/Points/View/Layers rows; that deliberate mismatch is unchanged
+    from the 2026-08-07 review and no row clipped.
+11. Inference parameters — **PASS**. Selecting DA3 Depth exposed Process res 504 and Max frames
+    112 as sliders, plus Res method and Ref view as selects, with values aligned in mono.
+12. Memory — **N/A for movement; presence passed**. Both Inspector and the status bar showed
+    `0 B / 22.03 GiB`. This saved-run review did not start a paid GPU run, so it could not observe
+    the live bar move.
+13. Memory provenance — **N/A**. There was no live frame plan or inference run in this offline
+    review, so no measured/interpolated/extrapolated estimate was presented.
+14. Capped frame arithmetic — **N/A**. No clip was loaded into Frame Source and no frame cap was
+    applied. The saved run remains labelled 99f.
+15. Mock provenance — **PASS**. The Inspector said `NVIDIA L4 (mock)` and the status bar said
+    `cloud: local fixture` and `GPU: cold`.
+16. Focus and hide — **PASS**. Focus made Viewport 3D 1280×775 while the other groups measured
+    zero in one axis. Escape restored 500/500/1000/280 px groups without losing the 6M cloud.
+    Hiding Depth 2D reduced the tab count to five; its status-bar button restored it at 43.1 ms.
+17. Automatic parameter refresh — **PASS**. Changing Point Cloud colour from Photo to Height in
+    the Inspector changed the Point Cloud pass from 8,290.7 to 3,064.3 ms without another action.
+    Ground Plane stayed at 1,679.4 ms and Run Source at 67.3 ms; no costly node started.
+18. Wire selection — **PASS**. The point-cloud→viewer wire gained React Flow's `selected` class.
+    Backspace changed 13 wires to 12 and removed only that edge. Reload restored the unsaved
+    default graph to 13 wires.
+19. Narrow pane — **PASS**. At 183 px, Depth 2D's four control rows measured 84.5, 78.5, 92.5
+    and 52.5 px high. Every row had `scrollWidth === clientWidth === 183` and zero children outside
+    its bounds.
+
+The rebuilt cloud itself passed its visual check: Fixed frame 1 contains the walkway and foliage
+that were black in the report, and the harness render for frame 96 no longer has the coherent far
+hole. A 1M→3M→6M pass stayed Fixed, and ten rapid budget clicks settled on 6M with zero browser
+warnings or errors.
+
+**Fix-list:** none. No new checklist defect was found. Items 12–14 were inapplicable because this
+review deliberately used saved local evidence and spent no GPU time.
+
 ## 2026-08-08 — the CLOUD switch in Viewport 3D, 1280×800 (commit pending, on d09859c)
 
 A **scoped** pass, not a full checklist run. One control row was added — `CLOUD [DA3] [Ours]` in

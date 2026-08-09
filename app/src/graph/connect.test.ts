@@ -84,7 +84,9 @@ describe("connectEdges — one wire per input", () => {
   });
 
   it("lets one output feed as many inputs as it likes", () => {
-    const fromPoints = edges.filter((e) => e.source === "point-cloud" && e.sourcePort === "points");
+    const fromPoints = edges.filter(
+      (e) => e.source === "point-cloud" && e.sourcePort === "measurement",
+    );
     expect(fromPoints.length).toBeGreaterThan(1);
   });
 

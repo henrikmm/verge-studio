@@ -11,13 +11,14 @@
  */
 
 import { artifactCacheKey, sha256Hex } from "./cache-key";
-import type {
-  GraphEdge,
-  GraphNode,
-  NodeOutput,
-  NodeRegistry,
-  NodeRuntime,
-  NodeSpec,
+import {
+  disposeNodeOutputs,
+  type GraphEdge,
+  type GraphNode,
+  type NodeOutput,
+  type NodeRegistry,
+  type NodeRuntime,
+  type NodeSpec,
 } from "./types";
 
 export class GraphCycleError extends Error {
@@ -130,6 +131,7 @@ export function computeDesiredKeys(
 ): Map<string, string> {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const keys = new Map<string, string>();
+  const outputKeys = new Map<string, string>();
 
   for (const id of topoOrder(nodes, edges)) {
     const node = byId.get(id)!;
@@ -139,19 +141,32 @@ export function computeDesiredKeys(
     for (const edge of edges) {
       if (edge.target !== id) continue;
       if (activeInputs && !activeInputs.has(edge.targetPort)) continue;
-      const upstreamKey = keys.get(edge.source);
+      const upstreamKey =
+        outputKeys.get(`${edge.source}:${edge.sourcePort}`) ?? keys.get(edge.source);
       if (upstreamKey === undefined) continue; // dangling edge
       inputContentSha256[edge.targetPort] = portIdentity(upstreamKey, edge.sourcePort);
     }
-    keys.set(
-      id,
-      artifactCacheKey({
-        producerNode: node.type,
-        producerVersion: spec.version,
-        inputContentSha256,
-        parameters: node.params,
-      }),
-    );
+    const fullKey = artifactCacheKey({
+      producerNode: node.type,
+      producerVersion: spec.version,
+      inputContentSha256,
+      parameters: node.params,
+    });
+    keys.set(id, fullKey);
+    for (const output of spec.outputs) {
+      const parameters = spec.outputParameters?.(output.id, node.params);
+      outputKeys.set(
+        `${id}:${output.id}`,
+        parameters
+          ? artifactCacheKey({
+              producerNode: node.type,
+              producerVersion: spec.version,
+              inputContentSha256,
+              parameters,
+            })
+          : fullKey,
+      );
+    }
   }
   return keys;
 }
@@ -282,13 +297,26 @@ export async function runGraph(options: RunOptions): Promise<RunReport> {
     onChange(id, { status: "running", error: null });
     const started = now();
     try {
-      const outputs = await spec.execute({ params: node.params, inputs, signal: signal ?? neverAborts() });
+      const outputs = await spec.execute({
+        params: node.params,
+        inputs,
+        signal: signal ?? neverAborts(),
+      });
+      // An executor may finish after a newer pass aborted this one. Never let that obsolete
+      // result win the race, and release anything expensive it created before returning.
+      if (signal?.aborted) {
+        disposeNodeOutputs(outputs);
+        break;
+      }
       const elapsedMs = now() - started;
       live.set(id, outputs);
       upToDate.add(id);
       report.ran.push(id);
       onChange(id, { status: "ok", heldKey: key, outputs, elapsedMs, error: null });
     } catch (err) {
+      // Cancellation is control flow, not a failed node. The replacement run owns the status
+      // from here; an obsolete pass must not paint it red after the user changed a control.
+      if (signal?.aborted) break;
       const elapsedMs = now() - started;
       report.failed.push(id);
       onChange(id, {
