@@ -110,11 +110,23 @@ const DEFAULT_PANES: readonly PaneDef[] = PANES.filter((pane) => pane.id !== "gr
 /**
  * Versioned: a layout referring to components this build no longer has must not be restored.
  *
- * Bumped 3 → 4 on 2026-08-09 with the Graph leaving the default arrangement. A version bump is
- * how a new default reaches anybody who has already used the app — without it, every existing
- * profile would restore the old layout and the change would only be visible on a fresh machine.
+ * Bumped 3 → 4 on 2026-08-09 with the Graph leaving the default arrangement, and 4 → 5 the same
+ * day for the 40/40/20 split below. A version bump is how a new default reaches anybody who has
+ * already used the app — without it, every existing profile would restore the old layout and the
+ * change would only be visible on a fresh machine.
  */
-const LAYOUT_KEY = "verge.dock-layout/4";
+const LAYOUT_KEY = "verge.dock-layout/5";
+
+/**
+ * The window is split 40% Depth 2D, 40% Viewport 3D, 20% for the Inspector group.
+ *
+ * The two panes you look at are equals, so they get equal width; the panel you read gets what is
+ * left. What was written here before asked for a 300 px Inspector and never got it, because the
+ * layout was built before the dock knew how wide it was: the sizes went to disk as `size: 100`
+ * each against a container of width 0, and Dockview restored that as three equal thirds. So the
+ * share is applied only once the host reports a real width — see `applyDefaultSplit`.
+ */
+const SIDE_PANEL_SHARE = 0.2;
 
 export interface DockState {
   /** Panel ids currently mounted in the dock. */
@@ -130,6 +142,8 @@ let api: DockviewApi | null = null;
 let saveTimer: number | undefined;
 /** Suppresses layout saves while we are the ones rebuilding the layout. */
 let rebuilding = false;
+/** A default layout is waiting for the host to report a width it can be split by. */
+let splitPending = false;
 
 const listeners = new Set<() => void>();
 
@@ -207,12 +221,34 @@ function addPane(pane: PaneDef): void {
   });
 }
 
+/**
+ * Give the three columns their shares of the window. Returns false when the host has no width
+ * yet, so the caller knows the split still has to happen.
+ *
+ * Order matters, because `setSize` takes what it needs from the columns to its RIGHT rather than
+ * from everybody. Sizing the Inspector first only got it 13.4% of 1280 px — Depth 2D was set
+ * after it and helped itself to 85 of its pixels. So the two viewers are set first, in order,
+ * and the Inspector is whatever is left.
+ */
+function applyDefaultSplit(): boolean {
+  if (!api) return false;
+  // The GRID's width, not the host element's. The host is sized by CSS straight away while the
+  // grid only learns its size from `layout()`, and a share of a grid that still believes it is
+  // 0 wide is normalised back to equal columns without complaint.
+  const width = api.width;
+  if (width <= 0) return false;
+  const viewer = Math.round((width * (1 - SIDE_PANEL_SHARE)) / 2);
+  api.getPanel("depth")?.api.setSize({ width: viewer });
+  api.getPanel("viewport")?.api.setSize({ width: viewer });
+  return true;
+}
+
 function buildDefaultLayout(): void {
   if (!api) return;
   rebuilding = true;
   api.clear();
   for (const pane of DEFAULT_PANES) addPane(pane);
-  api.getPanel("inspector")?.api.setSize({ width: 300 });
+  splitPending = !applyDefaultSplit();
   // Inspector, not whichever tab was added last. Runs is added after it and would otherwise
   // win the group by accident, which is not a default anyone chose.
   api.getPanel("inspector")?.api.setActive();
@@ -226,7 +262,7 @@ function buildDefaultLayout(): void {
  * still coherent with this build, and rebuilds the default when it is not — a stale layout
  * naming a component we removed would otherwise throw on every boot with no way out.
  */
-export function registerDock(next: DockviewApi, host: HTMLElement): void {
+export function registerDock(next: DockviewApi, element: HTMLElement): void {
   api = next;
 
   /**
@@ -238,8 +274,13 @@ export function registerDock(next: DockviewApi, host: HTMLElement): void {
    * any restore is what keeps the grid honest.
    */
   const relayout = () => {
-    if (host.clientWidth > 0 && host.clientHeight > 0) {
-      next.layout(host.clientWidth, host.clientHeight);
+    if (element.clientWidth > 0 && element.clientHeight > 0) {
+      next.layout(element.clientWidth, element.clientHeight);
+      // The first honest width is also the first chance to split a default layout by it.
+      if (splitPending && applyDefaultSplit()) {
+        splitPending = false;
+        saveLayout();
+      }
     }
   };
 
@@ -260,11 +301,15 @@ export function registerDock(next: DockviewApi, host: HTMLElement): void {
     rebuilding = false;
   }
 
-  if (!restored) buildDefaultLayout();
+  // Size the grid before building into it, so the split below has a real width to divide.
+  if (!restored) {
+    relayout();
+    buildDefaultLayout();
+  }
 
   // Belt and braces: the grid can never be left describing a container size that is gone.
   const observer = new ResizeObserver(relayout);
-  observer.observe(host);
+  observer.observe(element);
 
   next.onDidLayoutChange(() => {
     sync();

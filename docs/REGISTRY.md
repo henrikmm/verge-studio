@@ -341,6 +341,48 @@ line whatever the row does. Verified at 183 px by dragging: zero escaped childre
 rows, on both axes. One limit remains, on the other axis — a pane squeezed to ~74 px TALL cuts the
 stacked rows off at its bottom edge, which needs a scrolling control stack rather than wrapping.
 
+### The 2D frame fits its pane, and the window splits 40/40/20
+
+Fixed 2026-08-09. Depth 2D sized its frame by height alone — `height: zoom * 100%` plus an
+`aspect-ratio` — so the width fell out of the shape of the image and a landscape frame ran off the
+side. Measured on the outdoor run `20260806-193346-26d16e`: a 1024×576 frame drew **835 px wide in
+a 427 px stage**, leaving 51% of the image scrollable but invisible with nothing on screen saying
+so. The door fixture never showed it, because 576×1024 fits a tall narrow pane by height. That is
+the whole reason it survived this long: **the one fixture in daily use was the one shape that
+already worked.**
+
+Zoom 1 now means the whole frame, whatever its shape, and every zoom above it scales that fit, so
+the slider is the only thing that produces a scrollbar. The fit is computed in `frameSize`
+(`app/src/panes/depth-2d.tsx`) from a `ResizeObserver` on the scroller's **border** box, floored.
+Both details are load-bearing:
+
+- The border box does not change when a scrollbar appears. Watching the content box feeds the
+  scrollbar back into the fit — it appears, takes 15 px, the frame shrinks to fit, the scrollbar
+  goes, the frame grows. Verified stable by sampling zoom 1.25 and 2.25 six times over 1.5 s each,
+  the case where the frame overflows one axis only.
+- Flooring matters because the stage is 505.33 px tall on the door fixture, and a frame fitted to
+  the third of a pixel the client box rounds away is a scrollbar on an image that fits.
+
+The stage stopped being the scroll container in the same change. `.depth-scroll` scrolls inside it,
+so the legend and the mask readout overlay the image instead of being laid out beside it — as flex
+items of the scroller they added their own width to the row, and the frame ended up pushed 5 px
+right of centre by a scrollbar it had caused itself. The `margin-left: -150px` on `.mask-readout`
+that used to hide that contribution is gone.
+
+**The window is 40% Depth 2D, 40% Viewport 3D, 20% Inspector.** The two panes you look at are
+equals; the panel you read gets what is left. What the code asked for before was a 300 px
+Inspector, and it never got it: the layout was built before Dockview knew how wide it was, the
+sizes went to disk as `size: 100` each against a container of width 0, and they were restored as
+three equal thirds. So `applyDefaultSplit` runs off `api.width` — the grid's own width, not the
+host element's, which CSS fills in immediately and misleadingly — and `relayout()` is called before
+the default layout is built. Two consequences worth knowing:
+
+- **`setSize` takes from the columns to its right, not from everybody.** Sizing the Inspector first
+  got it 13.4% of 1280 px, because Depth 2D was set afterwards and helped itself to 85 of its
+  pixels. The two viewers are set first, in order, and the Inspector is the remainder.
+- The share is a share, not a size. At 1280 px it is 256 px, too narrow for the Inspector group's
+  three tabs — Runs sits behind an overflow chevron. TASK 6 carries the minimum width.
+
 ### Inference settings, and why each one
 
 | Setting | Value | Reason |

@@ -6,6 +6,56 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
+## 2026-08-09 — the 2D frame fits its pane, and a 40/40/20 window, 1280×800 (commit pending, on d4a91d3)
+
+Partial pass. The change is a containment fix in Depth 2D and a new default split, so this grades
+1, 3, 4, 5, 6, 8, 9, 16 and 19 — every item the two touch — on **both** the portrait door fixture
+(576×1024) and the landscape outdoor run `20260806-193346-26d16e` (1024×576). Items 2, 7, 10–15,
+17, 18 and 20–22 were not re-run.
+
+The defect, measured before the fix on the outdoor run: the frame drew **835 px wide inside a
+427 px stage**. The stage was sized by height alone, so a landscape frame ran off the side and
+**51% of the image was scrollable but invisible**, with nothing on screen saying so. The portrait
+fixture hid it — 576×1024 fits a tall narrow pane by height, the one shape that already worked.
+
+1. Dark surfaces — **PASS**. `body` computed `rgb(13,13,15)`; no new surfaces in this change.
+3. Default panes and drag-resize — **PASS**. A cleared `localStorage` opened on the five default
+   panes. Dragging the Depth/Viewport sash to 181 px and back to 400 px reflowed both, and Reset
+   returned the layout to 512/512/256.
+4. Tab density — **PASS**. Tab strips 26 px, labels 11 px, unchanged.
+5. Orbit — **PASS**. Two screenshots either side of a drag inside Viewport 3D differ; 1,000,000
+   pts on the status row, gizmo visible.
+6. Depth and its legend — **PASS**. Turbo mapping with `0.52 m` / `2.66 m` either side of the
+   ramp. The legend and the mask readout moved out of the scroller's flex row in this change and
+   both still land where they did.
+8. Window bounds — **PASS**. `documentElement.scrollWidth - clientWidth === 0` at 1280×800;
+   measured gap between adjacent dock groups **0 px**.
+9. Type — **PASS**. The sweep for rendered text above 14 px returns empty.
+16. Focus and restore — **PASS**. Focus filled the window with Depth 2D — the frame recentred to
+    440 px wide of a 1600 px stage rather than staying at its old size — and Escape restored
+    512/512/256 exactly.
+19. Narrow pane — **PASS**. At a 181 px Depth 2D pane, **0 of 4** control rows put a child outside
+    the pane's box, and the frame fitted to 181×321 in a 181×415 stage with zero overflow.
+
+Measured after the fix, all at zoom 1 and all with `scrollWidth === clientWidth`: outdoor
+512×288 in a 512×505 stage; door 283×504 in 512×504; door at a 181 px pane 181×321. Zoom 2.25 and
+zoom 1.25 were each sampled six times over 1.5 s and held 1152×648 and 640×360 — the fit is taken
+from the stage's BORDER box, so a scrollbar appearing cannot shrink the frame that caused it and
+then grow it back. Painting still lands where it is clicked: a stroke down the centre of the
+displayed frame selected 24,993 px, drew down the centre of the image, and lit the matching band
+in the 3D cloud.
+
+Found and not fixed: at 1280 px the Inspector group's 20% share is **256 px**, which is too narrow
+for its three tabs — Dockview moves Runs into an overflow chevron reading `1`. It was one click
+away before, at 427 px. Below about 1100 px the Objects target names truncate to `D…`, `Ta…` as
+well. A minimum width for the side column would settle both; it is a task, not a defect of this
+change, because 40/40/20 is what was asked for.
+
+Environment note, same as the 2026-08-09 entry below: the browser pane stops painting between
+tool calls, and `requestAnimationFrame` never runs while it is stopped. `ResizeObserver` is on the
+same clock, so a pane resize looks like a dead observer until a screenshot forces a paint. Every
+measurement above was taken after one.
+
 ## 2026-08-09 — Standard/Advanced, the result strip and the new front door, 1280×800 (commit pending, on bba67f3)
 
 Partial pass, on the door fixture at 504 px · 112f. This grades the items the change touches —

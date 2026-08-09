@@ -1356,15 +1356,26 @@ canvas {
   font-family: var(--font-mono);
 }
 
+/* The stage does not scroll; `.depth-scroll` inside it does. That separation is what lets the
+   readout and the legend sit over the image without being laid out beside it — as flex items
+   of the scroller they added their own width to the row, and the frame was pushed 5 px right
+   of centre by a scrollbar it had caused itself. */
 .depth-stage {
-  display: flex;
-  overflow: auto;
   background: #0a0a0c;
 }
 
+.depth-scroll {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  overflow: auto;
+}
+
+/* Sized in pixels by the pane, which fits the frame to the stage — see `frameSize` in
+   depth-2d.tsx. `min-height: 100%` used to live here and would now stretch a landscape frame
+   past its own fitted height, so the canvas inside it would come out distorted. */
 .depth-canvas-frame {
   flex: none;
-  min-height: 100%;
   margin: auto;
   background: #070708;
 }
@@ -1389,12 +1400,9 @@ canvas {
 }
 
 .mask-readout {
-  position: sticky;
-  align-self: flex-start;
+  position: absolute;
   left: 8px;
   top: 7px;
-  height: fit-content;
-  margin-left: -150px;
   padding: 2px 6px;
   border: 1px solid #ffffff33;
   background: #0a0a0ccc;

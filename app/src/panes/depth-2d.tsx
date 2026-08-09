@@ -100,6 +100,8 @@ function acceptanceLabel(accepted: boolean, validated: boolean, heightUnavailabl
 
 export function Depth2D() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const [stage, setStage] = useState<{ width: number; height: number }>();
   const lastPointRef = useRef<{ x: number; y: number } | undefined>(undefined);
   const liveTimerRef = useRef<number | undefined>(undefined);
   const segmentationRequestRef = useRef(0);
@@ -212,6 +214,35 @@ export function Depth2D() {
       setMeasurementFrame(descriptor.canonicalIndex);
     }
   }, [descriptor, ui.canonicalFrame]);
+
+  /**
+   * How much room the frame has, measured rather than left to CSS.
+   *
+   * Sizing it by height alone let a landscape frame run off the side of the pane: the outdoor
+   * run's 1024×576 frame drew 835 px wide inside a 427 px stage, so half of it was scrollable
+   * but invisible with nothing on screen saying so. The portrait door fixture hid the bug —
+   * 576×1024 fits a tall narrow pane by height, which is the one shape that already worked.
+   *
+   * Measured on the BORDER box, which a scrollbar does not change. Watching the content box
+   * would feed the scrollbar back into the fit: it appears, takes 15 px away, the frame shrinks
+   * to fit, the scrollbar goes, the frame grows, forever.
+   */
+  useEffect(() => {
+    const element = stageRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      const box = entry.borderBoxSize?.[0];
+      // Floored: the stage is 505.33 px tall on the door fixture, and a frame fitted to the
+      // third of a pixel the client box rounds away is a scrollbar on an image that fits.
+      setStage(
+        box
+          ? { width: Math.floor(box.inlineSize), height: Math.floor(box.blockSize) }
+          : { width: Math.floor(entry.contentRect.width), height: Math.floor(entry.contentRect.height) },
+      );
+    });
+    observer.observe(element, { box: "border-box" });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -470,6 +501,20 @@ export function Depth2D() {
     liveTimerRef.current = window.setTimeout(syncMeasurementGraph, 120);
   };
 
+  /**
+   * The frame's size on screen. Zoom 1 is the whole frame, whatever its shape; every zoom above
+   * that scales the same fit, so the slider is the only thing that ever produces a scrollbar.
+   * Floored, because half a pixel of overflow is still a scrollbar.
+   */
+  const frameSize = useMemo(() => {
+    if (!image || !stage || stage.width <= 0 || stage.height <= 0) return undefined;
+    const fit = Math.min(stage.width / image.naturalWidth, stage.height / image.naturalHeight);
+    return {
+      width: Math.floor(image.naturalWidth * fit * ui.zoom),
+      height: Math.floor(image.naturalHeight * fit * ui.zoom),
+    };
+  }, [image, stage, ui.zoom]);
+
   const framePosition = descriptor ? field?.frames.indexOf(descriptor) ?? 0 : 0;
   const unit = output === "depth" ? " m" : "";
   const status = field
@@ -631,64 +676,65 @@ export function Depth2D() {
       </div>
       <ProvenanceBanner field={field} />
       <div className="pane-body depth-stage">
-        {field ? (
-          <div
-            className="depth-canvas-frame"
-            style={{
-              height: image ? `${ui.zoom * 100}%` : undefined,
-              aspectRatio: image ? `${image.naturalWidth} / ${image.naturalHeight}` : undefined,
-            }}
-          >
-            <canvas
-              ref={canvasRef}
-              className={tool === "segment" ? "segmenting" : tool === "erase" ? "erasing" : "painting"}
-              onContextMenu={(event) => event.preventDefault()}
-              onPointerDown={(event) => {
-                if (tool === "segment") {
-                  if (!preparedFrame || segmentBusy) return;
-                  const point = canvasPoint(event);
-                  const canvas = canvasRef.current;
-                  if (!point || !canvas) return;
-                  const next = [
-                    ...prompts,
-                    {
-                      x: point.x / canvas.width,
-                      y: point.y / canvas.height,
-                      label: event.button === 2 ? 0 : 1,
-                    } as SegmentPrompt,
-                  ];
-                  void proposeMask(next);
-                  return;
-                }
-                event.currentTarget.setPointerCapture(event.pointerId);
-                lastPointRef.current = undefined;
-                const beforeCorrection = getMask()?.segmentation;
-                if (beforeCorrection?.accepted && segmentationStartedRef.current === undefined) {
-                  segmentationStartedRef.current =
-                    performance.now() - (beforeCorrection.selectionDurationMs ?? 0);
-                }
-                beginMaskCorrection();
-                const correction = getMask()?.segmentation;
-                if (correction) {
-                  recordAttempt("abstained", correction, "brush correction awaiting acceptance");
-                }
-                paintAt(event);
-              }}
-              onPointerMove={(event) => {
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) paintAt(event);
-              }}
-              onPointerUp={(event) => {
-                if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-                  event.currentTarget.releasePointerCapture(event.pointerId);
-                }
-                lastPointRef.current = undefined;
-                syncMeasurementGraph();
-              }}
-            />
-          </div>
-        ) : (
-          <div className="pane-empty">No depth field on the wire yet.</div>
-        )}
+        <div className="depth-scroll" ref={stageRef}>
+          {field ? (
+            <div
+              className="depth-canvas-frame"
+              style={
+                frameSize ? { width: `${frameSize.width}px`, height: `${frameSize.height}px` } : undefined
+              }
+            >
+              <canvas
+                ref={canvasRef}
+                className={tool === "segment" ? "segmenting" : tool === "erase" ? "erasing" : "painting"}
+                onContextMenu={(event) => event.preventDefault()}
+                onPointerDown={(event) => {
+                  if (tool === "segment") {
+                    if (!preparedFrame || segmentBusy) return;
+                    const point = canvasPoint(event);
+                    const canvas = canvasRef.current;
+                    if (!point || !canvas) return;
+                    const next = [
+                      ...prompts,
+                      {
+                        x: point.x / canvas.width,
+                        y: point.y / canvas.height,
+                        label: event.button === 2 ? 0 : 1,
+                      } as SegmentPrompt,
+                    ];
+                    void proposeMask(next);
+                    return;
+                  }
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  lastPointRef.current = undefined;
+                  const beforeCorrection = getMask()?.segmentation;
+                  if (beforeCorrection?.accepted && segmentationStartedRef.current === undefined) {
+                    segmentationStartedRef.current =
+                      performance.now() - (beforeCorrection.selectionDurationMs ?? 0);
+                  }
+                  beginMaskCorrection();
+                  const correction = getMask()?.segmentation;
+                  if (correction) {
+                    recordAttempt("abstained", correction, "brush correction awaiting acceptance");
+                  }
+                  paintAt(event);
+                }}
+                onPointerMove={(event) => {
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) paintAt(event);
+                }}
+                onPointerUp={(event) => {
+                  if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+                    event.currentTarget.releasePointerCapture(event.pointerId);
+                  }
+                  lastPointRef.current = undefined;
+                  syncMeasurementGraph();
+                }}
+              />
+            </div>
+          ) : (
+            <div className="pane-empty">No depth field on the wire yet.</div>
+          )}
+        </div>
         {range && field && (
           <div className="depth-legend">
             <span>{range[0].toFixed(2)}{unit}</span>

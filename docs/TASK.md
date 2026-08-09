@@ -151,3 +151,30 @@ carries an allocator peak for 112 frames of that clip.
 - [ ] Add pixels per frame, the clip and the frame shape to every rung already recorded.
 - [ ] Batch this with any other GPU work rather than paying for a startup on its own.
 - [ ] Run it, record the allocator peak, tear down, and write the answer into the Registry.
+
+### 6. Give the side column a floor, so 20% cannot squeeze its own tabs out
+
+**Why.** The window is split 40/40/20 as of 2026-08-09, and 20% is a share rather than a size. At
+1280 px it is 256 px, which Dockview cannot fit three tabs into — Runs moves behind an overflow
+chevron, one click deeper than it was at 427 px. Below about 1100 px the Objects target names
+truncate to `D…` and `Ta…`, so the list stops naming what it lists. Nobody chose either; they are
+what a pure percentage does at the small end.
+
+**Gate.** At 1024×800 the Inspector group shows all three tabs with no overflow chevron, and every
+target name in Objects renders without an ellipsis. At 1600×900 and above the split is still
+40/40/20 to within a pixel — a minimum must not become the layout on a wide screen.
+
+**Regression.** Depth 2D and Viewport 3D stay equal to each other at every width. A minimum that
+takes from one viewer and not the other trades a squeezed panel for a lopsided window, which is
+the asymmetry this split was introduced to remove.
+
+**Approval.** `user confirmation`, for the minimum width itself. 280 px is a guess from the two
+measured failures above, not a measurement.
+
+**Start.** `applyDefaultSplit` and `SIDE_PANEL_SHARE` in `app/src/lib/dock-store.ts`; the
+2026-08-09 entry in `docs/design-review-log.md` has the measurements.
+
+- [ ] Find the width at which the three tabs stop fitting, by measuring rather than guessing.
+- [ ] Clamp the side column to that, taking the difference from both viewers equally.
+- [ ] Confirm the clamp is inactive at 1280 px and above, so the asked-for 40/40/20 is what a
+      normal window gets.
