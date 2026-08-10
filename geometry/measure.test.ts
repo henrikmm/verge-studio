@@ -7,6 +7,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  endpointGeometry,
   heightsAbovePlane,
   InsufficientSupportError,
   measureDistance,
@@ -16,6 +17,7 @@ import {
   median,
   nmad,
   percentile,
+  voxelConnectivity,
 } from "./measure";
 import { syntheticRoom } from "./synthetic";
 import type { Plane } from "./types";
@@ -168,6 +170,35 @@ describe("measureVerticalExtent", () => {
     expect(() =>
       measureVerticalExtent(slab(1, 300), FLOOR, { lowerPercentile: 99, upperPercentile: 2 }),
     ).toThrow(/lower percentile/);
+  });
+});
+
+describe("endpointGeometry", () => {
+  it("keeps the ruler vertical while reporting sideways endpoint displacement", () => {
+    const points: number[] = [];
+    for (let i = 0; i < 100; i++) points.push(0, 0, i * 0.0001);
+    for (let i = 0; i < 100; i++) points.push(0.3, 1.2, i * 0.0001);
+    const result = endpointGeometry(points, FLOOR, 0, 1.2);
+
+    expect(result.lateralOffset).toBeCloseTo(0.3, 4);
+    expect(result.centroidDistance).toBeCloseTo(Math.hypot(0.3, 1.2), 4);
+    expect(result.ruler.top[0]).toBeCloseTo(result.ruler.bottom[0], 9);
+    expect(result.ruler.top[1] - result.ruler.bottom[1]).toBeCloseTo(1.2, 9);
+  });
+});
+
+describe("voxelConnectivity", () => {
+  it("separates distant surfaces and weights components by their point support", () => {
+    const points = [
+      0, 0, 0,
+      0.01, 0, 0,
+      0.02, 0, 0,
+      1, 1, 1,
+    ];
+    const result = voxelConnectivity(points, 0.05);
+    expect(result.componentCount).toBe(2);
+    expect(result.largestPointCount).toBe(3);
+    expect(result.largestPointFraction).toBeCloseTo(0.75, 9);
   });
 });
 

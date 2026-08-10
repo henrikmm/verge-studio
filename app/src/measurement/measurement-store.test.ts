@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   acceptActiveModelMask,
+  activeMeasurementObject,
+  activeMeasurementSubject,
   addObservation,
   automaticMaskReviewIssue,
   beginMaskCorrection,
@@ -22,6 +24,8 @@ import {
   recordSegmentationAttempt,
   segmentationAttemptStats,
   setActiveMeasurementObject,
+  setFreeMeasurement,
+  setFreeMeasurementMode,
   setMaskData,
   setMeasurementFrame,
   trialStats,
@@ -60,6 +64,27 @@ describe("measurement store", () => {
     expect(MEASUREMENT_OBJECTS.find((item) => item.id === "pc-tower")?.mode).toBe(
       "vertical_extent",
     );
+  });
+
+  it("keeps free measurement temporary and separate from named-object evidence", () => {
+    setFreeMeasurement();
+    setFreeMeasurementMode("top_above_floor");
+    expect(activeMeasurementObject()).toBeUndefined();
+    expect(activeMeasurementSubject()).toMatchObject({ id: "__free__", mode: "top_above_floor" });
+
+    ensureMask(4, 3);
+    paintMask(1, 1, 1, false);
+    expect(getMask()?.data.some(Boolean)).toBe(true);
+
+    setActiveMeasurementObject("door-leaf");
+    expect(getMask("door-leaf", 1)?.data.some(Boolean)).toBe(false);
+
+    const exported = JSON.parse(exportMeasurementSession()) as {
+      workingMasks: Record<string, unknown>;
+      observations: MeasurementObservation[];
+    };
+    expect(Object.keys(exported.workingMasks)).not.toContain("__free__:1");
+    expect(exported.observations).toHaveLength(0);
   });
 
   it("paints continuous strokes, erases them and clears without mutating older masks", () => {

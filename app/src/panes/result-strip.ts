@@ -101,7 +101,9 @@ export function describeResult({ floor, measurement, target, blind }: ResultInpu
   if (!measurement || !Number.isFinite(measurement.rawM)) {
     return {
       ...blank,
-      note: target ? "paint this target in Depth 2D to measure it" : "select a target in Objects",
+      note: target
+        ? "paint this target in Depth 2D to measure it"
+        : "free measurement — paint anything in Depth 2D",
     };
   }
 

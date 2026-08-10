@@ -2,15 +2,20 @@ import {
   backprojectMask,
   composeUncertainty,
   estimateGravity,
+  endpointGeometry,
   fitGroundPlaneRobust,
   fitErrorModel,
   measureHeight,
   measureVerticalExtent,
   normalize,
+  resampleMaskNearest,
   percentile,
+  pointBandCentroid,
   scaleVerdict,
   selectEndpointEvidence,
   signedHeight,
+  transformPoints,
+  verticalRuler,
   type BackprojectResult,
   type ErrorModel,
   type GravityEstimate,
@@ -88,22 +93,7 @@ export interface ScaleCheckValue {
 }
 
 /** Apply a row-major 4x4 affine transform to flat xyz positions. */
-export function transformPoints(
-  points: ArrayLike<number>,
-  transform: ArrayLike<number>,
-): Float32Array {
-  if (transform.length !== 16) throw new Error(`expected a 4x4 transform, got ${transform.length} values`);
-  const out = new Float32Array(points.length);
-  for (let i = 0; i + 2 < points.length; i += 3) {
-    const x = points[i];
-    const y = points[i + 1];
-    const z = points[i + 2];
-    out[i] = transform[0] * x + transform[1] * y + transform[2] * z + transform[3];
-    out[i + 1] = transform[4] * x + transform[5] * y + transform[6] * z + transform[7];
-    out[i + 2] = transform[8] * x + transform[9] * y + transform[10] * z + transform[11];
-  }
-  return out;
-}
+export { resampleMaskNearest, transformPoints };
 
 /** Directions use only the rotation/scale part of an affine transform. */
 export function transformDirection(direction: Vec3, transform: ArrayLike<number>): Vec3 {
@@ -117,88 +107,9 @@ export function transformDirection(direction: Vec3, transform: ArrayLike<number>
   return aligned;
 }
 
-export function resampleMaskNearest(
-  source: ArrayLike<number>,
-  sourceWidth: number,
-  sourceHeight: number,
-  targetWidth: number,
-  targetHeight: number,
-): Uint8Array {
-  const out = new Uint8Array(targetWidth * targetHeight);
-  for (let y = 0; y < targetHeight; y++) {
-    const sy = Math.min(sourceHeight - 1, Math.floor(((y + 0.5) * sourceHeight) / targetHeight));
-    for (let x = 0; x < targetWidth; x++) {
-      const sx = Math.min(sourceWidth - 1, Math.floor(((x + 0.5) * sourceWidth) / targetWidth));
-      out[y * targetWidth + x] = source[sy * sourceWidth + sx] ? 1 : 0;
-    }
-  }
-  return out;
-}
-
 function percentileThreshold(values: ArrayLike<number> | undefined, p: number): number {
   if (!values) return 0;
   return percentile(values, Math.max(0, Math.min(100, p)));
-}
-
-function pointNearestHeight(points: ArrayLike<number>, plane: Plane, wanted: number): Vec3 {
-  let best: Vec3 = [points[0] ?? 0, points[1] ?? 0, points[2] ?? 0];
-  let bestDistance = Infinity;
-  for (let i = 0; i + 2 < points.length; i += 3) {
-    const point: Vec3 = [points[i], points[i + 1], points[i + 2]];
-    const distance = Math.abs(signedHeight(plane, point) - wanted);
-    if (distance < bestDistance) {
-      best = point;
-      bestDistance = distance;
-    }
-  }
-  return best;
-}
-
-function pointBandCentroid(
-  points: ArrayLike<number>,
-  plane: Plane,
-  wanted: number,
-  band = 0.05,
-): Vec3 {
-  let x = 0;
-  let y = 0;
-  let z = 0;
-  let count = 0;
-  for (let i = 0; i + 2 < points.length; i += 3) {
-    const point: Vec3 = [points[i], points[i + 1], points[i + 2]];
-    if (Math.abs(signedHeight(plane, point) - wanted) > band) continue;
-    x += point[0];
-    y += point[1];
-    z += point[2];
-    count += 1;
-  }
-  return count > 0 ? [x / count, y / count, z / count] : pointNearestHeight(points, plane, wanted);
-}
-
-function verticalRuler(
-  tangentAnchor: Vec3,
-  plane: Plane,
-  bottomHeight: number,
-  topHeight: number,
-): { bottom: Vec3; top: Vec3 } {
-  const anchorHeight = signedHeight(plane, tangentAnchor);
-  const base: Vec3 = [
-    tangentAnchor[0] - plane.normal[0] * anchorHeight,
-    tangentAnchor[1] - plane.normal[1] * anchorHeight,
-    tangentAnchor[2] - plane.normal[2] * anchorHeight,
-  ];
-  return {
-    bottom: [
-      base[0] + plane.normal[0] * bottomHeight,
-      base[1] + plane.normal[1] * bottomHeight,
-      base[2] + plane.normal[2] * bottomHeight,
-    ],
-    top: [
-      base[0] + plane.normal[0] * topHeight,
-      base[1] + plane.normal[1] * topHeight,
-      base[2] + plane.normal[2] * topHeight,
-    ],
-  };
 }
 
 function collectPlaneEvidence(
@@ -475,7 +386,7 @@ export const measureHeightSpec: NodeSpec = {
     let internalSpreadM: number;
     let topHeight: number;
     let bottomHeight: number;
-    let rulerAnchor: Vec3;
+    let ruler: MeasurementValue["ruler"];
     let rulerKind: MeasurementValue["rulerKind"];
     let details: Record<string, number>;
     if (mode === "vertical_extent") {
@@ -488,13 +399,8 @@ export const measureHeightSpec: NodeSpec = {
       internalSpreadM = result.uncertainty;
       bottomHeight = result.bottom;
       topHeight = result.top;
-      const bottomCentroid = pointBandCentroid(measurementPoints, ground.plane, result.bottom);
-      const topCentroid = pointBandCentroid(measurementPoints, ground.plane, result.top);
-      rulerAnchor = [
-        (bottomCentroid[0] + topCentroid[0]) / 2,
-        (bottomCentroid[1] + topCentroid[1]) / 2,
-        (bottomCentroid[2] + topCentroid[2]) / 2,
-      ];
+      const endpoints = endpointGeometry(measurementPoints, ground.plane, result.bottom, result.top);
+      ruler = endpoints.ruler;
       rulerKind = "extent";
       details = {
         bottomM: result.bottom,
@@ -520,7 +426,12 @@ export const measureHeightSpec: NodeSpec = {
       internalSpreadM = result.uncertainty;
       bottomHeight = 0;
       topHeight = result.height;
-      rulerAnchor = pointBandCentroid(selection.points, ground.plane, result.height);
+      ruler = verticalRuler(
+        pointBandCentroid(selection.points, ground.plane, result.height),
+        ground.plane,
+        bottomHeight,
+        topHeight,
+      );
       rulerKind = "floor_height";
       details = { topRoughnessM: result.topRoughness, floorRmseM: ground.fit.rmse, maxHeightM: result.maxHeight };
     }
@@ -530,7 +441,7 @@ export const measureHeightSpec: NodeSpec = {
       rawM,
       internalSpreadM,
       pointCount: selection.diagnostics.pointCount,
-      ruler: verticalRuler(rulerAnchor, ground.plane, bottomHeight, topHeight),
+      ruler,
       rulerKind,
       details,
     };

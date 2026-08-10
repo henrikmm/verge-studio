@@ -10,6 +10,7 @@ import { arrayFrame, closestFrame, type DepthFieldValue } from "../measurement/d
 import {
   acceptActiveModelMask,
   activeMeasurementObject,
+  activeMeasurementSubject,
   automaticMaskReviewIssue,
   beginMaskCorrection,
   clearActiveMask,
@@ -22,6 +23,7 @@ import {
   setConfidencePercentile,
   setErasing,
   setMeasurementFrame,
+  setFreeMeasurementMode,
   setMeasurementZoom,
   setOverlayOpacity,
   setMaskData,
@@ -127,10 +129,11 @@ export function Depth2D() {
   const incoming = resolveInput(graph, VIEWER_2D_ID, "depth");
   const field = incoming?.value as DepthFieldValue | undefined;
   const descriptor = field ? closestFrame(field, ui.canonicalFrame) : undefined;
-  const object = activeMeasurementObject();
+  const namedObject = activeMeasurementObject();
+  const object = activeMeasurementSubject();
   const mask = getMask();
   const reviewIssue = automaticMaskReviewIssue(mask);
-  const automaticFixtureValidated = object?.id === "door-leaf";
+  const automaticFixtureValidated = namedObject?.id === "door-leaf";
   const segmentBusy = segmentProgress?.phase === "loading" || segmentProgress?.phase === "encoding" || segmentProgress?.phase === "decoding";
   const segmentationTotalMs = mask?.segmentation
     ? (mask.segmentation.selectionDurationMs ?? 0) > 0
@@ -141,10 +144,7 @@ export function Depth2D() {
     : undefined;
 
   const syncMeasurementGraph = useCallback(() => {
-    const active = activeMeasurementObject();
-    // A clip with no targets yet has nothing to measure; syncing zeros into the graph would
-    // put the measurement branch into a confidently wrong state instead of an empty one.
-    if (!active) return;
+    const active = activeMeasurementSubject();
     const currentMask = getMask();
     setNodeParams(BRUSH_SELECTION_ID, {
       objectId: active.id,
@@ -207,7 +207,13 @@ export function Depth2D() {
     setSegmentationElapsedMs(current?.segmentation?.selectionDurationMs ?? 0);
     setSegmentProgress(undefined);
     setSegmentError(undefined);
-  }, [descriptor?.rgbUrl, object?.id]);
+  }, [descriptor?.rgbUrl, object.id]);
+
+  useEffect(() => {
+    if (namedObject || tool !== "segment") return;
+    setTool("brush");
+    setErasing(false);
+  }, [namedObject, tool]);
 
   useEffect(() => {
     if (descriptor && descriptor.canonicalIndex !== ui.canonicalFrame) {
@@ -325,7 +331,7 @@ export function Depth2D() {
 
   useEffect(() => {
     if (field) syncMeasurementGraph();
-  }, [field, object?.id, object?.mode, object?.truthM, syncMeasurementGraph]);
+  }, [field, object.id, object.mode, object.truthM, syncMeasurementGraph]);
 
   // Show both brush time and complete automatic-selection time. The latter starts before model
   // setup/frame encoding and stops only on acceptance, so a fast decoder cannot hide cold-start
@@ -356,7 +362,7 @@ export function Depth2D() {
   ) => {
     recordSegmentationAttempt({
       id: evidence?.attemptId ?? attemptId(),
-      objectId: object?.id ?? "",
+      objectId: namedObject?.id ?? "",
       canonicalFrame: ui.canonicalFrame,
       outcome,
       reason,
@@ -434,12 +440,12 @@ export function Depth2D() {
         correctionStrokes: 0,
         accepted: false,
       };
-      if (!object) return;
-      setMaskData(object.id, ui.canonicalFrame, result.width, result.height, best.data, {
+      if (!namedObject) return;
+      setMaskData(namedObject.id, ui.canonicalFrame, result.width, result.height, best.data, {
         source: "model",
         segmentation,
       });
-      const issue = automaticMaskReviewIssue(getMask(object.id, ui.canonicalFrame));
+      const issue = automaticMaskReviewIssue(getMask(namedObject.id, ui.canonicalFrame));
       recordAttempt(issue ? "abstained" : "proposed", segmentation, issue);
       setSegmentProgress({ phase: "ready" });
       syncMeasurementGraph();
@@ -529,32 +535,6 @@ export function Depth2D() {
     [],
   );
 
-  /**
-   * A clip with no measurement targets yet.
-   *
-   * This became reachable when targets stopped being a hardcoded list of five door objects.
-   * Rendering the brush UI here would invite painting a mask that belongs to nothing, so the
-   * pane says what is missing and where to fix it instead. Every hook above has already run,
-   * so this early return cannot change hook order.
-   */
-  if (!object) {
-    return (
-      <div className="pane measurement-canvas-pane">
-        <PaneControls
-          status="Idle"
-          elapsedMs={0}
-          paused={paused}
-          paneId="depth"
-          onPause={() => setPaused((value) => !value)}
-        />
-        <div className="pane-empty">
-          This clip has no measurement targets yet. Add one in the Objects pane — truths from
-          another clip do not transfer, so nothing is inherited by default.
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="pane measurement-canvas-pane">
       <PaneControls
@@ -579,14 +559,24 @@ export function Depth2D() {
       />
       <div className="brush-toolbar">
         <span className="tool-context"><b>{object.code}</b> {object.name}</span>
-        <button
+        {namedObject && <button
           className={`chip-toggle${tool === "segment" ? " on" : ""}`}
           disabled={segmentBusy}
           title="Load SlimSAM locally, then left-click the object and right-click exclusions"
           onClick={() => void chooseSegmentation()}
         >
           {segmentBusy ? "Working…" : "Segment"}
-        </button>
+        </button>}
+        {!namedObject && <span className="free-mode-choices" aria-label="Free measurement definition">
+          <button
+            className={`chip-toggle${object.mode === "vertical_extent" ? " on" : ""}`}
+            onClick={() => setFreeMeasurementMode("vertical_extent")}
+          >Extent</button>
+          <button
+            className={`chip-toggle${object.mode === "top_above_floor" ? " on" : ""}`}
+            onClick={() => setFreeMeasurementMode("top_above_floor")}
+          >Above floor</button>
+        </span>}
         <button className={`chip-toggle${tool === "brush" ? " on" : ""}`} onClick={() => { setTool("brush"); setErasing(false); }}>Brush</button>
         <button className={`chip-toggle${tool === "erase" ? " on" : ""}`} onClick={() => { setTool("erase"); setErasing(true); }}>Erase</button>
         <label>Size <input aria-label="Brush size" type="range" min="2" max="120" value={ui.brushSize} disabled={tool === "segment"} onChange={(event) => setBrushSize(Number(event.target.value))} /></label>
@@ -636,7 +626,7 @@ export function Depth2D() {
                 {acceptanceLabel(
                   mask.segmentation.accepted,
                   automaticFixtureValidated,
-                  !!object.availabilityNote,
+                  !!namedObject?.availabilityNote,
                 )}
               </button>
               <button className="pane-btn" disabled={segmentBusy || prompts.length === 0} onClick={undoSegmentationPrompt}>Undo click</button>
@@ -649,10 +639,10 @@ export function Depth2D() {
             </span>
           )}
           {(segmentError || reviewIssue) && <span className="segment-warning">{segmentError ?? reviewIssue}</span>}
-          {mask?.segmentation && object.availabilityNote && (
-            <span className="segment-warning">Mask selection is available, but automatic height is withheld: {object.availabilityNote}</span>
+          {mask?.segmentation && namedObject?.availabilityNote && (
+            <span className="segment-warning">Mask selection is available, but automatic height is withheld: {namedObject.availabilityNote}</span>
           )}
-          {mask?.segmentation && !automaticFixtureValidated && !object.availabilityNote && (
+          {mask?.segmentation && !automaticFixtureValidated && !namedObject?.availabilityNote && (
             <span className="segment-warning">Experimental on {object.code}: inspect the RGB mask and 3D highlight carefully; only B1 has fixture-validated automatic evidence.</span>
           )}
         </div>

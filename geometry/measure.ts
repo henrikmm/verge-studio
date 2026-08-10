@@ -71,6 +71,23 @@ export interface VerticalExtentOptions {
   endBand?: number;
 }
 
+export interface EndpointGeometry {
+  bottomCentroid: Vec3;
+  topCentroid: Vec3;
+  ruler: { bottom: Vec3; top: Vec3 };
+  /** Endpoint separation perpendicular to the fitted up axis. */
+  lateralOffset: number;
+  /** Straight-line distance between the two endpoint centroids. */
+  centroidDistance: number;
+}
+
+export interface VoxelConnectivity {
+  componentCount: number;
+  largestPointCount: number;
+  largestPointFraction: number;
+  voxelCount: number;
+}
+
 export interface EndpointEvidenceOptions {
   /** Fraction retained at each end of the full-object height distribution. */
   tailFraction?: number;
@@ -273,6 +290,153 @@ export function measureVerticalExtent(
     upperPercentile,
     minHeight: sorted[0],
     maxHeight: sorted[sorted.length - 1],
+  };
+}
+
+function pointNearestHeight(points: ArrayLike<number>, plane: Plane, wanted: number): Vec3 {
+  let best: Vec3 = [points[0] ?? 0, points[1] ?? 0, points[2] ?? 0];
+  let bestDistance = Infinity;
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    const point: Vec3 = [points[i], points[i + 1], points[i + 2]];
+    const distance = Math.abs(signedHeight(plane, point) - wanted);
+    if (distance < bestDistance) {
+      best = point;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}
+
+/** Centre of the reconstructed surface close to one measured endpoint. */
+export function pointBandCentroid(
+  points: ArrayLike<number>,
+  plane: Plane,
+  wanted: number,
+  band = 0.05,
+): Vec3 {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  let count = 0;
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    const point: Vec3 = [points[i], points[i + 1], points[i + 2]];
+    if (Math.abs(signedHeight(plane, point) - wanted) > band) continue;
+    x += point[0];
+    y += point[1];
+    z += point[2];
+    count += 1;
+  }
+  return count > 0 ? [x / count, y / count, z / count] : pointNearestHeight(points, plane, wanted);
+}
+
+/** Draw a vertical ruler through an endpoint anchor, regardless of the object's lean. */
+export function verticalRuler(
+  tangentAnchor: Vec3,
+  plane: Plane,
+  bottomHeight: number,
+  topHeight: number,
+): { bottom: Vec3; top: Vec3 } {
+  const anchorHeight = signedHeight(plane, tangentAnchor);
+  const base: Vec3 = [
+    tangentAnchor[0] - plane.normal[0] * anchorHeight,
+    tangentAnchor[1] - plane.normal[1] * anchorHeight,
+    tangentAnchor[2] - plane.normal[2] * anchorHeight,
+  ];
+  return {
+    bottom: [
+      base[0] + plane.normal[0] * bottomHeight,
+      base[1] + plane.normal[1] * bottomHeight,
+      base[2] + plane.normal[2] * bottomHeight,
+    ],
+    top: [
+      base[0] + plane.normal[0] * topHeight,
+      base[1] + plane.normal[1] * topHeight,
+      base[2] + plane.normal[2] * topHeight,
+    ],
+  };
+}
+
+/** Shared geometry behind the app ruler and the recorded-evidence inspector. */
+export function endpointGeometry(
+  points: ArrayLike<number>,
+  plane: Plane,
+  bottomHeight: number,
+  topHeight: number,
+  band = 0.05,
+): EndpointGeometry {
+  const bottomCentroid = pointBandCentroid(points, plane, bottomHeight, band);
+  const topCentroid = pointBandCentroid(points, plane, topHeight, band);
+  const delta: Vec3 = [
+    topCentroid[0] - bottomCentroid[0],
+    topCentroid[1] - bottomCentroid[1],
+    topCentroid[2] - bottomCentroid[2],
+  ];
+  const vertical = delta[0] * plane.normal[0] + delta[1] * plane.normal[1] + delta[2] * plane.normal[2];
+  const centroidDistance = Math.hypot(...delta);
+  const lateralOffset = Math.sqrt(Math.max(0, centroidDistance ** 2 - vertical ** 2));
+  const anchor: Vec3 = [
+    (bottomCentroid[0] + topCentroid[0]) / 2,
+    (bottomCentroid[1] + topCentroid[1]) / 2,
+    (bottomCentroid[2] + topCentroid[2]) / 2,
+  ];
+  return {
+    bottomCentroid,
+    topCentroid,
+    ruler: verticalRuler(anchor, plane, bottomHeight, topHeight),
+    lateralOffset,
+    centroidDistance,
+  };
+}
+
+/** A compact 3D coherence diagnostic for an endpoint patch, not a segmentation algorithm. */
+export function voxelConnectivity(
+  points: ArrayLike<number>,
+  voxelSize = 0.05,
+): VoxelConnectivity {
+  if (!(voxelSize > 0)) throw new Error("voxelConnectivity: voxelSize must be positive");
+  const voxels = new Map<string, { xyz: [number, number, number]; points: number }>();
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    const x = Math.floor(points[i] / voxelSize);
+    const y = Math.floor(points[i + 1] / voxelSize);
+    const z = Math.floor(points[i + 2] / voxelSize);
+    if (![x, y, z].every(Number.isFinite)) continue;
+    const key = `${x},${y},${z}`;
+    const existing = voxels.get(key);
+    if (existing) existing.points += 1;
+    else voxels.set(key, { xyz: [x, y, z], points: 1 });
+  }
+  const unseen = new Set(voxels.keys());
+  let componentCount = 0;
+  let largestPointCount = 0;
+  while (unseen.size) {
+    const first = unseen.values().next().value as string;
+    unseen.delete(first);
+    const queue = [first];
+    let componentPoints = 0;
+    for (let at = 0; at < queue.length; at++) {
+      const current = voxels.get(queue[at]);
+      if (!current) continue;
+      componentPoints += current.points;
+      const [cx, cy, cz] = current.xyz;
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            if (dx === 0 && dy === 0 && dz === 0) continue;
+            const neighbour = `${cx + dx},${cy + dy},${cz + dz}`;
+            if (unseen.delete(neighbour)) queue.push(neighbour);
+          }
+        }
+      }
+    }
+    componentCount += 1;
+    largestPointCount = Math.max(largestPointCount, componentPoints);
+  }
+  const pointCount = Math.floor(points.length / 3);
+  return {
+    componentCount,
+    largestPointCount,
+    largestPointFraction: pointCount > 0 ? largestPointCount / pointCount : 0,
+    voxelCount: voxels.size,
   };
 }
 

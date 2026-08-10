@@ -95,7 +95,7 @@ describe("describeResult", () => {
 
   it("asks for the missing step when nothing is painted", () => {
     expect(describeResult({ floor: OK, target: TARGET, blind: false }).note).toContain("paint");
-    expect(describeResult({ floor: OK, blind: false }).note).toContain("select a target");
+    expect(describeResult({ floor: OK, blind: false }).note).toContain("free measurement");
   });
 
   it("does not quote a non-finite measurement", () => {

@@ -32,6 +32,59 @@ written. Unticked boxes are allowed in this file and nowhere else in the reposit
 
 ## Now
 
+### 1. Make free measurement the default and named measurements durable
+
+**Why.** Painting is useful in two different ways and the interface currently treats them as one.
+An ad-hoc check should need no target setup and should leave no permanent evidence. A named object
+is different: pressing Record is a promise that the exact frame, brush, reading and 3D placement
+can be reviewed later. Today that promise ends at one browser profile. The outdoor run now has a
+tape truth on a large tree-like target and reads more than 30 cm wrong, so we also need to separate
+a misleading overlay from a bad measurement before changing the brush algorithm.
+
+**Gate.** A fresh app opens in **Free** mode. Free mode allows frame changes, brush, erase, clear
+and a live extent or floor-height reading, but exposes no Record action. Selecting a named target
+in Objects enters **Object** mode and Record writes one atomic evidence file beside the already
+saved run. Starting with only that run directory, `inspect measurements <run>` lists the trial and
+`inspect measurement <trial>` reproduces its value within 0.1 mm, shows the source frame and frozen
+mask, and draws its selected 3D points and ruler. Non-occluded selected points project back within
+one source pixel. Fixed view keeps that selection at the recording camera for the brushed frame.
+Missing or changed artifacts report the trial as unverifiable. The outdoor endpoint markers no
+longer grow with the 29.64 m scene diagonal.
+
+**Regression.** The frozen door trials still reproduce their recorded values. The 504 px door and
+`da3Test` selections still align in 2D and 3D. Free work is never stored unless the operator first
+selects a named object and presses Record. The outdoor target stays on the existing endpoint
+measurement path; H50/H90/H95, semantic vegetation masks and local ground rasters remain task 4.
+
+**Approval.** `none` — the user approved this interaction and implementation on 2026-08-09. No
+cloud work is part of it; all three runs are already on disk.
+
+**Start.** `measurement-store.ts` owns mode, masks and frozen observations; `objects.tsx` owns
+target selection and Record; `depth-2d.tsx` owns frame and brush controls; `vite-plugins/runs.mjs`
+owns saved-run disk access; `scripts/inspect.mjs` is the local evidence reader; `viewport-3d.tsx`
+draws selected points and the ruler.
+
+- [x] Add Free and Object measurement contexts. Free is the startup context and target selection
+      happens only in Objects.
+- [x] Keep free masks live and temporary. A named-object Record freezes the mask and stores the
+      full trial beside its persisted run with an atomic write.
+- [x] Import older browser-local recorded trials into the run evidence store without duplicating
+      trial IDs, because they were already explicitly recorded.
+- [x] Make the inspector list and replay exact saved trials, including the 2D mask, rejection
+      counts, 3D selection, ruler and round-trip error.
+- [x] Compare the door fixture, `da3Test` and the outdoor target with the same report. Test frame
+      mapping, depth layers, connected 3D components, endpoint-centroid separation and ruler
+      offset before changing measurement geometry.
+- [x] Fix the scene-scale marker defect. Add an incoherent-selection warning or refusal only if
+      the comparison establishes a numerical gate that passes the rigid controls.
+- [ ] Reload the original Safari page once. Its browser-local copy must repopulate the one door
+      packet overwritten while the old trial-number collision was being reproduced, under the
+      new sitting-and-capture identity. Confirm it from the inspector before calling evidence
+      recovery complete.
+- [x] Run `scripts/verify.sh`, the inspector regressions and the complete design-review workflow.
+- [x] Record the outdoor verdict as visual-only, measurement-limiting, or both. Move verified
+      results to REGISTRY and remove this task when every gate above has passed.
+
 ### 2. Let the app say "I cannot find the ground"
 
 **Why.** When the evidence for a floor is weak, the app picks a winner anyway and draws it exactly
@@ -65,37 +118,6 @@ between the best two. REGISTRY section 3 has four measured cases. The display ha
 - [ ] Make refusal travel: a height measured against a refused floor must refuse as well.
 - [ ] Agree the wording with the user before it ships.
 
-### 3. Take the system outdoors, with something rigid to measure
-
-**Why.** Everything we know about this system's accuracy comes from one room, one operator and one
-camera path. Outdoors the ground is not a flat indoor floor, and we do not know whether the fit
-survives it. Either it works and we can say so with numbers, or it fails and we know exactly how.
-
-**Gate.** One outdoor clip captured, run and measured, recording: support for the fitted ground,
-its tilt, how much of the cloud sits below it, the fit error, agreement with the camera-derived
-vertical, the gap to the runner-up, the measured dimensions and the tape truth. The result is
-stated plainly as a pass or as a named limitation.
-
-**Regression.** None — this adds evidence rather than changing code. If it forces a change, that
-change is a new task with its own gate.
-
-**Approval.** `cloud spend + user confirmation`. The floor is reproducible as of 2026-08-08, so an
-outdoor verdict is now worth computing; before that it was a coin toss with a number attached.
-Bring something rigid, because the clip already on disk has none — see the third step.
-
-**Start.** REGISTRY decision 3 (the ground rule) and section 7 (its weak spots). Targets are keyed
-by the clip's content digest, so a new clip starts with an empty set.
-
-- [ ] Write the capture checklist before asking for anything: the camera must move through the
-      scene, not turn on the spot.
-- [ ] Ask the user for **rigid** targets in the same clip — a doorway, a step or kerb, a post, a
-      window reveal. Anything with two hard edges a tape can span. The clip we already have
-      (`~/verge-runs/20260806-193346-26d16e`, 99 frames, a 29 m walk) is unusable for this because
-      everything measured on that trip was vegetation, and a plant has no single height to be
-      right or wrong about.
-- [ ] Run the pipeline, save the run before deleting the service, and do the analysis.
-- [ ] Record the verdict as a pass or a named limitation. Both are results.
-
 ---
 
 ## Later
@@ -117,8 +139,9 @@ measure, and must not disturb the one that is already graded against tape.
 code. This is a definition problem before it is an engineering one.
 
 **Start.** `donor/` has a worked version of the cell-and-percentile approach and is the template.
-The outdoor clip on disk (`20260806-193346-26d16e`) has vegetation tape truth taken on the day, so
-this task already has a subject waiting.
+The outdoor clip on disk (`20260806-193346-26d16e`) is useful scene evidence, but its current
+1.150 m truth belongs to a large tree-like endpoint target. It is not grass truth and must not be
+relabelled as one.
 
 - [ ] Agree with the user what number we are claiming and how a person could check it.
 - [ ] Lay a grid on the local ground; take a robust height statistic per cell.

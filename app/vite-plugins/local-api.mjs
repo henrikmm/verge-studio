@@ -14,10 +14,13 @@ import { getJob, getRunningJob, killAllJobs, startJob, subscribeJob } from "./jo
 import {
   RUNS_ROOT,
   deleteRun,
+  listMeasurementEvidence,
   listRuns,
+  removeMeasurementEvidence,
   registerRun,
   resolveRunArtifact,
   saveRun,
+  writeMeasurementEvidence,
 } from "./runs.mjs";
 import {
   FRAME_ROOT,
@@ -213,6 +216,24 @@ export function localApi() {
             if (req.method === "DELETE" && !runRoute[2]) {
               await deleteRun(id);
               return json(res, 200, { deleted: id });
+            }
+          }
+
+          const measurementRoute = /^\/api\/runs\/([^/]+)\/measurements(?:\/([^/]+))?$/.exec(url.pathname);
+          if (measurementRoute) {
+            const id = decodeURIComponent(measurementRoute[1]);
+            const evidenceId = measurementRoute[2]
+              ? decodeURIComponent(measurementRoute[2])
+              : null;
+            if (req.method === "GET" && !evidenceId) {
+              return json(res, 200, { measurements: await listMeasurementEvidence(id) });
+            }
+            if (req.method === "POST" && !evidenceId) {
+              return json(res, 200, await writeMeasurementEvidence(id, await readJsonBody(req)));
+            }
+            if (req.method === "DELETE" && evidenceId) {
+              await removeMeasurementEvidence(id, evidenceId);
+              return json(res, 200, { deleted: evidenceId });
             }
           }
 

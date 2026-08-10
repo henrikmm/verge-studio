@@ -32,6 +32,7 @@ import {
   readArrays,
   readCloud,
   readManifest,
+  readMeasurementEvidence,
   resolveRun,
 } from "./inspect/source.mjs";
 import {
@@ -65,6 +66,8 @@ COMMANDS
   depth <id>                 draw one frame's depth, colour-mapped as Depth 2D maps it
   coverage <id>              what of the picture never reached the cloud, and why
   select <id>                choose points and SEE them: in the cloud and on the photograph
+  measurements <id>          every recorded named-object trial for one run
+  measurement <id> <trial>   replay one exact frozen mask and draw its 2D and 3D evidence
   explain <id>               the whole chain, numbers and pictures, in one go
 
 RUN IDS
@@ -84,6 +87,7 @@ OPTIONS
   --near <x,y,z> --radius <m>  select points within a sphere, display-space metres
   --columns <n> --max <n>    contact sheet shape (default 8 columns, 48 frames)
   --confidence               shade the depth image by DA3's confidence
+  --mask-erode <px>         measurement replay: shrink the saved brush before back-projection
   --voxel <m>                coverage: how close a cloud point must be to count (default 0.08)
   --cloud <glb|npz>          which cloud to work on. npz rebuilds it from the depth maps,
                              taking the confidence floor PER FRAME the way DA3 takes it once
@@ -125,6 +129,8 @@ const COMMANDS = {
   depth: cmdDepth,
   coverage: cmdCoverage,
   select: cmdSelect,
+  measurements: cmdMeasurements,
+  measurement: cmdMeasurement,
   explain: cmdExplain,
 };
 
@@ -851,6 +857,292 @@ async function cmdSelect(positional, flags) {
   if (flags.json) {
     return json({ id: run.id, selected: chosen, fraction: chosen / cloud.count, images: { cloud: cloudImage, frame: overlay?.path ?? null } });
   }
+  out(pairs(facts));
+}
+
+async function cmdMeasurements(positional, flags) {
+  const run = resolveRun(positional[0]);
+  const packets = readMeasurementEvidence(run);
+  const rows = packets.map((packet) => {
+    const observation = packet.observation;
+    const truth = packet.target?.truthM;
+    const error = Number.isFinite(truth) ? observation.rawM - truth : null;
+    return {
+      evidenceId: packet.evidenceId,
+      id: observation.id,
+      target: packet.target ? `${packet.target.code} ${packet.target.name}` : observation.objectId,
+      frame: observation.canonicalFrame,
+      value: observation.rawM,
+      truth: Number.isFinite(truth) ? truth : null,
+      error,
+      mask: observation.mask?.digest ?? null,
+      pixels: observation.mask?.paintedPixels ?? 0,
+    };
+  });
+  if (flags.json) return json({ run: run.id, measurements: rows });
+  if (!rows.length) return out(`no recorded measurements for ${run.id}`);
+  out(table(
+    ["TRIAL", "TARGET", "FRAME", "VALUE", "TRUTH", "ERROR", "MASK", "PIXELS"],
+    rows.map((row) => [
+      row.id,
+      row.target,
+      row.frame,
+      `${row.value.toFixed(3)}m`,
+      row.truth === null ? "—" : `${row.truth.toFixed(3)}m`,
+      row.error === null ? "ungraded" : `${row.error >= 0 ? "+" : ""}${row.error.toFixed(3)}m`,
+      row.mask?.slice(0, 8) ?? "missing",
+      row.pixels.toLocaleString("en-GB"),
+    ]),
+  ));
+}
+
+function decodeRecordedMask(snapshot) {
+  if (!snapshot?.width || !snapshot?.height || !Array.isArray(snapshot.runs)) {
+    throw new Error("trial has no frozen mask");
+  }
+  const data = new Uint8Array(snapshot.width * snapshot.height);
+  for (let i = 0; i < snapshot.runs.length; i += 2) {
+    data.fill(1, snapshot.runs[i], snapshot.runs[i] + snapshot.runs[i + 1]);
+  }
+  return { width: snapshot.width, height: snapshot.height, data };
+}
+
+function resolveMeasurementPacket(run, wanted) {
+  const packets = readMeasurementEvidence(run);
+  if (!wanted && packets.length === 1) return packets[0];
+  const exact = packets.find((packet) => packet.evidenceId === wanted);
+  if (exact) return exact;
+  const matches = packets.filter((packet) =>
+    packet.evidenceId?.includes(wanted ?? "") || packet.observation?.id?.includes(wanted ?? ""),
+  );
+  if (matches.length === 1) return matches[0];
+  if (!matches.length) throw new Error(`no trial "${wanted ?? ""}" for ${run.id}`);
+  throw new Error(`"${wanted}" matches ${matches.map((packet) => packet.observation.id).join(", ")}`);
+}
+
+function sourceFrameFor(run, canonicalFrame, npzIndex) {
+  const files = frameFiles(run.frames);
+  return files.find((path) => Number(basename(path).match(/(\d+)/)?.[1]) === canonicalFrame)
+    ?? files[npzIndex]
+    ?? null;
+}
+
+async function cmdMeasurement(positional, flags) {
+  const run = resolveRun(positional[0]);
+  const packet = resolveMeasurementPacket(run, positional[1]);
+  const observation = packet.observation;
+  const mask = decodeRecordedMask(observation.mask);
+  let s = await scene(run, {
+    ...flags,
+    ...(packet.live?.cloudSource ? { cloud: packet.live.cloudSource, points: 1_000_000 } : {}),
+  }, { fitFloor: true });
+  if (
+    !flags.cloud &&
+    !packet.live?.cloudSource &&
+    run.npz &&
+    Number.isFinite(observation.floorSupportFraction)
+  ) {
+    const alternate = await scene(run, { ...flags, cloud: "npz", points: 1_000_000 }, { fitFloor: true });
+    const currentGap = Math.abs((s.floor?.inlierFraction ?? Infinity) - observation.floorSupportFraction);
+    const alternateGap = Math.abs((alternate.floor?.inlierFraction ?? Infinity) - observation.floorSupportFraction);
+    if (alternateGap < currentGap) s = alternate;
+  }
+  if (!s.arrays || !s.floor) throw new Error(s.floorError ?? "trial needs an NPZ and a fitted floor");
+
+  const npzIndex = Math.max(0, Number(observation.npzFrame) - 1);
+  const [, frameHeight, frameWidth] = s.arrays.depth.shape;
+  const frameSize = frameWidth * frameHeight;
+  const frame = {
+    depth: s.arrays.depth.data.subarray(npzIndex * frameSize, (npzIndex + 1) * frameSize),
+    confidence: s.arrays.confidence?.data.subarray(npzIndex * frameSize, (npzIndex + 1) * frameSize),
+    width: frameWidth,
+    height: frameHeight,
+    intrinsics: s.arrays.intrinsics.data.subarray(npzIndex * 9, npzIndex * 9 + 9),
+    extrinsics: s.arrays.extrinsics.data.subarray(npzIndex * 12, npzIndex * 12 + 12),
+  };
+  const sampledMask = s.T.resampleMaskNearest(mask.data, mask.width, mask.height, frame.width, frame.height);
+  const projected = s.T.backprojectMask(frame, sampledMask, {
+    erodeRadius: Math.max(0, Math.floor(Number(flags["mask-erode"] ?? 2))),
+    minConfidence: observation.confidenceThreshold,
+    maxRelativeDepthStep: 0.08,
+  });
+  const rawPoints = projected.points;
+  const points = s.cloud.alignment
+    ? s.T.transformPoints(rawPoints, s.cloud.alignment)
+    : rawPoints;
+  const replayPlane = packet.live?.ground?.plane ?? s.floor.plane;
+  const replayPlaneRmse = packet.live?.ground?.rmseM ?? s.floor.rmse;
+  const mode = packet.live?.measurement?.mode ?? packet.target?.mode ?? "vertical_extent";
+  const replay = mode === "top_above_floor"
+    ? s.T.measureHeight(points, replayPlane, { percentile: 98, minPoints: 80, planeRmse: replayPlaneRmse })
+    : s.T.measureVerticalExtent(points, replayPlane, { lowerPercentile: 2, upperPercentile: 98, minPoints: 80 });
+  const replayValue = replay.height;
+  const gravityControl = mode === "vertical_extent" && s.gravity
+    ? s.T.measureVerticalExtent(points, { normal: s.gravity.up, offset: 0 }, {
+        lowerPercentile: 2,
+        upperPercentile: 98,
+        minPoints: 80,
+      }).height
+    : null;
+  const bottomHeight = mode === "top_above_floor" ? 0 : replay.bottom;
+  const topHeight = mode === "top_above_floor" ? replay.height : replay.top;
+  const endpoints = s.T.endpointGeometry(points, replayPlane, bottomHeight, topHeight);
+  const selectedHeights = s.T.heightsAbovePlane(points, replayPlane);
+  const bottomDepths = [];
+  const topDepths = [];
+  const bottomBandPoints = [];
+  const topBandPoints = [];
+  for (let i = 0; i < rawPoints.length; i += 3) {
+    const projectedPixel = projectToPixel(
+      [rawPoints[i], rawPoints[i + 1], rawPoints[i + 2]],
+      frame.extrinsics,
+      frame.intrinsics,
+      0,
+    );
+    if (!projectedPixel) continue;
+    const height = selectedHeights[i / 3];
+    if (Math.abs(height - bottomHeight) <= 0.05) {
+      bottomDepths.push(projectedPixel[2]);
+      bottomBandPoints.push(points[i], points[i + 1], points[i + 2]);
+    }
+    if (Math.abs(height - topHeight) <= 0.05) {
+      topDepths.push(projectedPixel[2]);
+      topBandPoints.push(points[i], points[i + 1], points[i + 2]);
+    }
+  }
+  const bottomDepth = s.T.median(bottomDepths);
+  const topDepth = s.T.median(topDepths);
+  const bottomDepthSpread = s.T.percentile(bottomDepths, 90) - s.T.percentile(bottomDepths, 10);
+  const topDepthSpread = s.T.percentile(topDepths, 90) - s.T.percentile(topDepths, 10);
+  const bottomConnectivity = s.T.voxelConnectivity(bottomBandPoints, 0.05);
+  const topConnectivity = s.T.voxelConnectivity(topBandPoints, 0.05);
+  const bottomRulerOffset = Math.hypot(
+    endpoints.bottomCentroid[0] - endpoints.ruler.bottom[0],
+    endpoints.bottomCentroid[1] - endpoints.ruler.bottom[1],
+    endpoints.bottomCentroid[2] - endpoints.ruler.bottom[2],
+  );
+  const topRulerOffset = Math.hypot(
+    endpoints.topCentroid[0] - endpoints.ruler.top[0],
+    endpoints.topCentroid[1] - endpoints.ruler.top[1],
+    endpoints.topCentroid[2] - endpoints.ruler.top[2],
+  );
+
+  let roundTripHits = 0;
+  let roundTripMisses = 0;
+  for (let i = 0; i < rawPoints.length; i += 3) {
+    const pixel = projectToPixel(
+      [rawPoints[i], rawPoints[i + 1], rawPoints[i + 2]],
+      frame.extrinsics,
+      frame.intrinsics,
+      0,
+    );
+    if (!pixel) {
+      roundTripMisses += 1;
+      continue;
+    }
+    const x = Math.round(pixel[0]);
+    const y = Math.round(pixel[1]);
+    let hit = false;
+    for (let dy = -1; dy <= 1 && !hit; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const px = x + dx;
+        const py = y + dy;
+        if (px >= 0 && py >= 0 && px < frame.width && py < frame.height && sampledMask[py * frame.width + px]) {
+          hit = true;
+          break;
+        }
+      }
+    }
+    if (hit) roundTripHits += 1;
+    else roundTripMisses += 1;
+  }
+
+  const photoPath = sourceFrameFor(run, observation.canonicalFrame, npzIndex);
+  let maskPath = null;
+  if (photoPath) {
+    const photo = await readImage(photoPath, Math.max(560, mask.width));
+    maskPath = await writePng(
+      maskOverlay(photo, [{ mask: mask.data, rgb: [251, 113, 133], label: "RECORDED MASK" }], {
+        width: mask.width,
+        height: mask.height,
+        title: `${run.id}  ${observation.id}  FRAME ${observation.canonicalFrame}`,
+        subtitle: `${observation.mask.paintedPixels.toLocaleString("en-GB")} PAINTED PIXELS  ${observation.mask.digest}`,
+      }),
+      outPath(flags, run, `measurement-${observation.trialIndex}-mask`),
+    );
+  }
+
+  const combined = new Float32Array(s.cloud.points.length + points.length);
+  combined.set(s.cloud.points);
+  combined.set(points, s.cloud.points.length);
+  const selection = new Uint8Array(combined.length / 3);
+  selection.fill(1, s.cloud.points.length / 3);
+  const basis = viewBasis(flags.view ?? "iso", s.up.up, s.T.basisFromUp, s.T.normalize, s.T.cross);
+  const replayRuler = packet.live?.measurement?.ruler ?? endpoints.ruler;
+  const overlays = [{ from: replayRuler.bottom, to: replayRuler.top, rgb: [232, 169, 91] }];
+  const { image } = renderCloud({
+    points: combined,
+    selection,
+    view: basis,
+    colour: "flat",
+    width: Number(flags.size ?? 900),
+    height: Number(flags.size ?? 900),
+    turbo: s.T.turbo,
+    overlays,
+    title: `${run.id}  ${observation.id}  RECORDED 3D SELECTION`,
+    subtitle: `${points.length / 3} POINTS  REPLAY ${replayValue.toFixed(3)} M  STORED ${observation.rawM.toFixed(3)} M`,
+  });
+  const cloudPath = await writePng(image, outPath(flags, run, `measurement-${observation.trialIndex}-3d`));
+
+  const facts = {
+    run: run.id,
+    trial: observation.id,
+    target: packet.target ? `${packet.target.code} ${packet.target.name}` : observation.objectId,
+    frame: `${observation.canonicalFrame} canonical / ${npzIndex + 1} npz`,
+    stored: `${observation.rawM.toFixed(6)} m`,
+    replay: `${replayValue.toFixed(6)} m`,
+    difference: `${((replayValue - observation.rawM) * 1000).toFixed(3)} mm`,
+    ...(gravityControl === null
+      ? {}
+      : { "gravity control": `${gravityControl.toFixed(3)} m · ${(gravityControl - replayValue >= 0 ? "+" : "")}${((gravityControl - replayValue) * 100).toFixed(1)} cm vs floor normal` }),
+    provenance: packet.live ? "exact recorded plane and cloud source" : "legacy mask; plane reconstructed from the run",
+    mask: `${observation.mask.paintedPixels.toLocaleString("en-GB")} px · ${observation.mask.digest}`,
+    selected: `${projected.pointCount.toLocaleString("en-GB")} of ${projected.maskedPixels.toLocaleString("en-GB")} masked`,
+    rejected: `eroded ${projected.rejected.eroded}, depth ${projected.rejected.depth}, confidence ${projected.rejected.confidence}, edge ${projected.rejected.discontinuity}`,
+    "round trip": `${roundTripHits.toLocaleString("en-GB")} within 1 px, ${roundTripMisses.toLocaleString("en-GB")} outside`,
+    heights: `p2 ${s.T.percentile(selectedHeights, 2).toFixed(3)}, p50 ${s.T.percentile(selectedHeights, 50).toFixed(3)}, p98 ${s.T.percentile(selectedHeights, 98).toFixed(3)} m`,
+    endpoints: `${endpoints.centroidDistance.toFixed(3)} m apart · ${endpoints.lateralOffset.toFixed(3)} m sideways`,
+    "endpoint components": `bottom ${bottomConnectivity.componentCount} (${(bottomConnectivity.largestPointFraction * 100).toFixed(0)}% largest) · top ${topConnectivity.componentCount} (${(topConnectivity.largestPointFraction * 100).toFixed(0)}% largest) at 5 cm`,
+    "ruler offset": `bottom ${bottomRulerOffset.toFixed(3)} m · top ${topRulerOffset.toFixed(3)} m from endpoint centroids`,
+    "camera depth": `bottom ${bottomDepth.toFixed(3)} m (p10-p90 ${bottomDepthSpread.toFixed(3)}) · top ${topDepth.toFixed(3)} m (p10-p90 ${topDepthSpread.toFixed(3)}) · delta ${(topDepth - bottomDepth).toFixed(3)} m`,
+    photograph: maskPath ?? "source frame unavailable",
+    cloud: cloudPath,
+  };
+  if (flags.json) return json({
+    ...facts,
+    replayM: replayValue,
+    storedM: observation.rawM,
+    roundTripHits,
+    roundTripMisses,
+    diagnostics: {
+      endpointCentroidDistanceM: endpoints.centroidDistance,
+      endpointLateralOffsetM: endpoints.lateralOffset,
+      bottomCameraDepthM: bottomDepth,
+      topCameraDepthM: topDepth,
+      cameraDepthDeltaM: topDepth - bottomDepth,
+      bottomCameraDepthSpreadM: bottomDepthSpread,
+      topCameraDepthSpreadM: topDepthSpread,
+      bottomEndpointPoints: bottomDepths.length,
+      topEndpointPoints: topDepths.length,
+      bottomComponents: bottomConnectivity.componentCount,
+      topComponents: topConnectivity.componentCount,
+      bottomLargestComponentFraction: bottomConnectivity.largestPointFraction,
+      topLargestComponentFraction: topConnectivity.largestPointFraction,
+      bottomRulerOffsetM: bottomRulerOffset,
+      topRulerOffsetM: topRulerOffset,
+      gravityControlM: gravityControl,
+    },
+  });
   out(pairs(facts));
 }
 

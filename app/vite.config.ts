@@ -16,5 +16,9 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts", "../geometry/**/*.test.ts", "../scripts/**/*.test.mjs"],
+    // Several real-data fixture suites each reconstruct the same million-point cloud.
+    // Running them together makes their wall-clock time depend on worker contention and
+    // can trip their correctness timeouts even when every assertion passes.
+    fileParallelism: false,
   },
 });

@@ -1329,6 +1329,11 @@ canvas {
   min-width: 0;
 }
 
+.free-mode-choices {
+  display: inline-flex;
+  gap: 4px;
+}
+
 .frame-toolbar > input[type="range"] {
   flex: 1;
   min-width: 90px;
@@ -1554,7 +1559,7 @@ canvas {
   /* Trailing auto track holds the n/3 trial-count flag; it collapses when there is none.
      The reading track carries value + error + trial count + spread, so it is wider than the
      90px the single frozen number needed. */
-  grid-template-columns: 28px minmax(0, 1fr) 118px auto;
+  grid-template-columns: 38px minmax(0, 1fr) 118px auto;
   align-items: center;
   gap: 5px;
   padding: 5px 7px;

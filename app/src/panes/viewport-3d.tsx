@@ -907,8 +907,8 @@ export function Viewport3D() {
         geometry,
         new THREE.PointsMaterial({
           color: "#fb7185",
-          size: Math.max(0.005, (cloud?.extent ?? 5) / 450),
-          sizeAttenuation: true,
+          size: 4,
+          sizeAttenuation: false,
           depthTest: false,
         }),
       );
@@ -927,20 +927,26 @@ export function Viewport3D() {
       ruler.name = "measurement-ruler";
       evidence.add(ruler);
 
-      const markerRadius = Math.max(0.008, (cloud?.extent ?? 5) / 180);
-      for (const [name, position] of [
-        ["ruler-bottom", measurement.ruler.bottom],
-        ["ruler-top", measurement.ruler.top],
-      ] as const) {
-        const marker = new THREE.Mesh(
-          new THREE.SphereGeometry(markerRadius, 12, 8),
-          new THREE.MeshBasicMaterial({ color: "#e8a95b", depthTest: false }),
-        );
-        marker.position.set(...position);
-        marker.renderOrder = 6;
-        marker.name = name;
-        evidence.add(marker);
-      }
+      const markerGeometry = new THREE.BufferGeometry();
+      markerGeometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(
+          new Float32Array([...measurement.ruler.bottom, ...measurement.ruler.top]),
+          3,
+        ),
+      );
+      const markers = new THREE.Points(
+        markerGeometry,
+        new THREE.PointsMaterial({
+          color: "#e8a95b",
+          size: 10,
+          sizeAttenuation: false,
+          depthTest: false,
+        }),
+      );
+      markers.renderOrder = 6;
+      markers.name = "ruler-endpoints";
+      evidence.add(markers);
     }
   }, [
     cloud,

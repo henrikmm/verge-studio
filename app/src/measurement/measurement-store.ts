@@ -4,7 +4,21 @@ import { sha256Hex } from "../graph/cache-key";
 import type { RunId } from "../lib/runs";
 
 export type MeasurementMode = "top_above_floor" | "vertical_extent";
+export type MeasurementContext = "free" | "object";
 export type MaskSource = "brush" | "model" | "model+brush";
+
+export const FREE_MEASUREMENT_ID = "__free__";
+export const FREE_MEASUREMENT: MeasurementObject = {
+  id: FREE_MEASUREMENT_ID,
+  code: "FREE",
+  name: "Ad hoc",
+  definition: "temporary measurement that is not recorded",
+  truthM: null,
+  mode: "vertical_extent",
+  suggestedFrame: 1,
+  maskInstruction: "Paint any two endpoints or a continuous subject. This mask stays temporary.",
+  builtin: true,
+};
 
 export interface SegmentationPromptRecord {
   x: number;
@@ -259,6 +273,10 @@ export interface MeasurementUiState {
    * operator converges on it. This is the mechanism that makes a second sitting worth taking.
    */
   blind: boolean;
+  /** Free is the startup context. Only an explicit target click enters object evidence. */
+  measurementContext: MeasurementContext;
+  /** The operator may choose either existing measurement definition for an ad-hoc check. */
+  freeMeasurementMode: MeasurementMode;
   activeObjectId: string;
   /** Clip whose target set is active. */
   clipKey: string;
@@ -325,6 +343,10 @@ export function measurementObjects(clip = activeClip): readonly MeasurementObjec
   return targetSets[clip] ?? [];
 }
 
+export function measurementObjectForClip(clip: string, objectId: string): MeasurementObject | undefined {
+  return measurementObjects(clip).find((item) => item.id === objectId);
+}
+
 /** Kept for the built-in door set, which several tests and the resolution table refer to. */
 export const MEASUREMENT_OBJECTS = DOOR_TARGETS;
 
@@ -342,6 +364,7 @@ export function setActiveClip(clip: string): void {
   if (activeClip === key) return;
   activeClip = key;
   state.clipKey = key;
+  state.measurementContext = "free";
   if (!targetSets[key]) targetSets[key] = [];
   const targets = targetSets[key];
   if (!targets.some((item) => item.id === state.activeObjectId)) {
@@ -366,7 +389,10 @@ export function removeTarget(id: string, clip = activeClip): void {
   const target = targets.find((item) => item.id === id);
   if (!target || target.builtin) return;
   targetSets[clip] = targets.filter((item) => item.id !== id);
-  if (state.activeObjectId === id) state.activeObjectId = targetSets[clip][0]?.id ?? "";
+  if (state.activeObjectId === id) {
+    state.activeObjectId = "";
+    state.measurementContext = "free";
+  }
   commit();
 }
 
@@ -480,7 +506,9 @@ function restoreSession(): Partial<MeasurementUiState> {
       canonicalFrame: saved.canonicalFrame,
       confidencePercentile: saved.confidencePercentile,
       masks: Object.fromEntries(
-        Object.entries(saved.masks ?? {}).map(([key, mask]) => [key, decodeMask(mask)]),
+        Object.entries(saved.masks ?? {})
+          .filter(([key]) => !key.startsWith(`${FREE_MEASUREMENT_ID}:`))
+          .map(([key, mask]) => [key, decodeMask(mask)]),
       ),
       observations: migrateObservations(saved.observations ?? []),
       segmentationAttempts: saved.segmentationAttempts ?? [],
@@ -493,6 +521,8 @@ function restoreSession(): Partial<MeasurementUiState> {
 const restored = restoreSession();
 const state: MeasurementUiState = {
   blind: false,
+  measurementContext: "free",
+  freeMeasurementMode: "vertical_extent",
   activeObjectId: first.id,
   clipKey: activeClip,
   canonicalFrame: first.suggestedFrame,
@@ -536,7 +566,7 @@ export function paintElapsedMs(objectId?: string, frame?: number): number | unde
 function persistSession(): void {
   if (typeof window === "undefined" || !window.localStorage) return;
   const masks = Object.fromEntries(
-    Object.entries(state.masks).map(([key, mask]) => [
+    Object.entries(state.masks).filter(([key]) => !key.startsWith(`${FREE_MEASUREMENT_ID}:`)).map(([key, mask]) => [
       key,
       {
         width: mask.width,
@@ -596,13 +626,31 @@ export function getMeasurementUi(): MeasurementUiState {
  * falling back to the door's B1.
  */
 export function activeMeasurementObject(): MeasurementObject | undefined {
+  if (state.measurementContext !== "object") return undefined;
   const targets = measurementObjects();
-  return targets.find((item) => item.id === state.activeObjectId) ?? targets[0];
+  return targets.find((item) => item.id === state.activeObjectId);
+}
+
+/** The graph always has a subject. Free uses a temporary pseudo-target with no truth. */
+export function activeMeasurementSubject(): MeasurementObject {
+  const object = activeMeasurementObject();
+  return object ?? { ...FREE_MEASUREMENT, mode: state.freeMeasurementMode };
+}
+
+export function setFreeMeasurement(): void {
+  state.measurementContext = "free";
+  commit();
+}
+
+export function setFreeMeasurementMode(mode: MeasurementMode): void {
+  state.freeMeasurementMode = mode;
+  commit();
 }
 
 export function setActiveMeasurementObject(objectId: string): void {
   const object = measurementObjects().find((item) => item.id === objectId);
   if (!object) return;
+  state.measurementContext = "object";
   state.activeObjectId = object.id;
   state.canonicalFrame = object.suggestedFrame;
   commit();
@@ -643,12 +691,12 @@ export function setMeasurementZoom(value: number): void {
   commit();
 }
 
-function maskKey(objectId = state.activeObjectId, frame = state.canonicalFrame): string {
+function maskKey(objectId = activeMeasurementSubject().id, frame = state.canonicalFrame): string {
   const object = measurementObjects().find((item) => item.id === objectId);
   return `${object?.maskOwnerId ?? objectId}:${frame}`;
 }
 
-export function getMask(objectId = state.activeObjectId, frame = state.canonicalFrame): MaskRecord | undefined {
+export function getMask(objectId = activeMeasurementSubject().id, frame = state.canonicalFrame): MaskRecord | undefined {
   return state.masks[maskKey(objectId, frame)];
 }
 
@@ -1041,7 +1089,7 @@ export function trialStats(
 
 export function exportMeasurementSession(): string {
   const workingMasks = Object.fromEntries(
-    Object.entries(state.masks).map(([key, mask]) => [
+    Object.entries(state.masks).filter(([key]) => !key.startsWith(`${FREE_MEASUREMENT_ID}:`)).map(([key, mask]) => [
       key,
       {
         width: mask.width,

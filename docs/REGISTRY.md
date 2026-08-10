@@ -132,10 +132,19 @@ Around that spine:
   3D get the height back. Both entry points write `frame-source` through `lib/load-clip.ts`, so the
   node card still works and the two cannot disagree. One click on the view bar reopens the Graph
   with its wiring intact.
+- **Measurement starts in Free mode.** The frame slider, brush, eraser, clear action and both
+  extent definitions work without choosing an object. Free masks are deliberately absent from
+  browser persistence and evidence exports. Choosing a named row in Objects enters Object mode;
+  that is the only place Record exists.
 - **Measurement targets belong to a clip**, keyed by the video's content digest. A clip nobody has
   measured before starts with an empty set, never another clip's objects.
-- **Repeat measurements accumulate.** Each recorded trial freezes the exact mask it was measured
-  from, so any number in this project can be traced back to the evidence that produced it.
+- **Repeat measurements accumulate on disk.** Record freezes the frame, mask, confidence cut,
+  rejected-pixel counts, selected-point count, fitted plane, ruler and reading into one atomic
+  packet beside the saved run. Its identity includes the sitting, capture time and mask digest;
+  the human label `trial #1` is not unique across browser sessions. `inspect measurements <run>`
+  lists them, and `inspect measurement <run> <trial-or-mask-digest>` replays one packet and writes
+  its 2D mask and 3D selection/ruler images. A newly recorded door trial replayed to **0.000 mm**,
+  with **775 of 775** points projecting back inside the brush by one pixel.
 - **The whole app runs offline.** The dev server answers the inference request from a stored
   fixture, so the interface can be built and reviewed at zero cost. Anything produced that way is
   labelled as a mock on screen.
@@ -756,6 +765,49 @@ none survived; the new one is 8.5° and recovers the table to within 2.9 cm — 
 reconstruction here. This is the practical gain, and it is larger than "the number stopped
 wobbling": a floor that is level with the room is what makes anything else measurable.
 
+### The outdoor brush is aligned; its 31–36 cm error is real — 2026-08-09
+
+Saved run `20260806-193346-26d16e` contains three independent endpoint brushes on frame 30 for a
+large tree-like target with **1.150 m** tape truth. It is an object-extent test. It is not a grass
+height definition and no H50/H90/H95 or vegetation raster is involved.
+
+| Trial | Reading | Error | Selected points | 3D endpoint centroids |
+|---|---:|---:|---:|---:|
+| 1 | 1.462 m | +0.312 m | 634 | 1.432 m apart, 0.196 m sideways |
+| 2 | 1.508 m | +0.358 m | 588 | 1.480 m apart, 0.135 m sideways |
+| 3 | 1.509 m | +0.359 m | 526 | 1.472 m apart, 0.097 m sideways |
+
+The 2D-to-3D transform is not dropping or moving the brush. Every replayed point from all three
+trials returned inside its recorded mask within one source pixel: **1,748 hits, zero misses**.
+At a 5 cm voxel size, each top patch and each bottom patch is one connected 3D component. The
+same round trip passes on the 2.100 m door and the 0.760 m `da3Test` table.
+
+The fitted floor is not large enough to explain the error. Replacing its normal with the vertical
+derived from the camera path lowers the three answers by only **1.7–3.7 cm**. The outdoor floor
+itself has 20.7% support, 0.8% of the cloud below it, 1.63 cm RMSE and 9.11° tilt. Eight reseeds
+move it by 0.23 cm and 0.04°. The runner-up score is 0.0346 behind the winner.
+
+Shrinking the saved brush does not rescue the number either. On trial 2, eroding the mask from
+2 to 4 to 6 depth pixels cut the selection from **588 to 343 to 163 points**, while the answer
+stayed at **1.5085, 1.5116 and 1.5060 m** — a 5.6 mm range around a 35.8 cm error. The rigid
+`da3Test` control moved 3.0 mm under the same test. A smaller brush therefore cannot account for
+the outdoor bias.
+
+One difference is visible in the evidence: the outdoor top patches span 17.3–34.7 cm from their
+nearer to farther depth deciles, against 4.9 cm on the door and 7.9 cm on `da3Test`. Foliage has
+depth, but this is not yet a safe refusal threshold: trial 2 is at the low end of that outdoor
+range and is still 35.8 cm high. The rigid controls and foliage cases do not establish a boundary
+that can be shipped honestly.
+
+**Verdict:** there were two defects, not one. The giant endpoint discs were a display bug: their
+world-space radius grew with the outdoor scene's 29.64 m diagonal. Selected points now render at
+4 screen pixels and ruler endpoints at 10, so Fixed view shows the brush at the recording camera
+without scene-scale inflation. The 31–36 cm measurement error remains. The recorded mask maps to
+coherent reconstructed geometry that is 1.43–1.48 m tall; with only one outdoor truth, that leaves
+local reconstruction scale/shape and target-endpoint identity as the two live explanations. A
+second rigid tape truth visible in this same saved run can distinguish them without another cloud
+run. No endpoint estimator or vegetation statistic was changed on this evidence.
+
 ### Other measured numbers
 
 - Building the 12 GB service image takes **19 min 30 s**. One stored image is 9.8 GB and costs
@@ -1060,8 +1112,10 @@ These are stated, not scheduled. Anything being actively worked on is in `TASK.m
   abstains, the reconstruction has no flat surface sharp enough to measure and the reason is
   usually resolution: nothing at 252 px yields one. It measures surfaces, never objects, so it
   cannot check the door leaf, the tower or the monitor — the three graded objects it cannot reach.
-- **Accuracy across scenes is unverified.** One room, one operator, one camera path. A second
-  capture with different orientation and motion remains the largest untested risk.
+- **Accuracy does not transfer across scenes.** `da3Test` measures its 0.760 m table within 5–6 mm,
+  while the saved outdoor run measures a 1.150 m tree-like target 31–36 cm high. The brush mapping,
+  floor direction and brush width have been ruled out as the main cause; one outdoor truth cannot
+  separate local reconstruction scale/shape from target-endpoint identity.
 - **DA3's exported cloud remains a biased 7% sample of the reconstruction.** Its pooled confidence
   floor can remove whole frames. The app keeps that cloud as a named comparison, while the rebuilt
   display now uses every finite, non-edge depth candidate. Measurements deliberately use a fixed
@@ -1083,9 +1137,6 @@ These are stated, not scheduled. Anything being actively worked on is in `TASK.m
 - **The dependency audit is not clean and must not be described as such.** Two high-severity
   advisories arrive through the segmentation library's Node-only image dependency. The browser
   build neither runs nor ships it, but the repository audit is non-zero.
-- **The depth image pane requires a measurement target before it shows anything**, including the
-  plain picture and depth view. The operator flagged this on a fresh clip and deferred the fix on
-  2026-08-05. It is a live design question, not a settled decision.
 
 ---
 
@@ -1093,6 +1144,11 @@ These are stated, not scheduled. Anything being actively worked on is in `TASK.m
 
 Kept because each one was paid for once.
 
+- **A display trial number is not a storage identity.** Every browser sitting starts at trial #1.
+  Keying disk packets by that label let a new sitting replace an older packet, and a background
+  mask migration could race the richer Record write. Disk identity now includes sitting, capture
+  time and mask digest, and Record marks its packet before the migration effect can run. The
+  regression test creates two trial #1 rows and requires different evidence identities.
 - **A box ticked for code that was written but never run has cost real money twice.** Saving a run
   failed on the first live attempt because every previous save had been a built-in fixture that
   never reached the script. Exercise the seam, or say it is unexercised.

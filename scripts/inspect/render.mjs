@@ -101,6 +101,7 @@ export function renderCloud(options) {
     cameraTrack = null,
     floorBand = null,
     stride = 1,
+    overlays = [],
   } = options;
 
   const image = canvas(width, height);
@@ -208,6 +209,19 @@ export function renderCloud(options) {
       // rounding error on screen — and "is my selection actually on the thing" is the question.
       setPixel(image, px + 1, py, SELECT_RGB);
       setPixel(image, px, py + 1, SELECT_RGB);
+    }
+  }
+
+  const projectWorld = (point) => ({
+    x: toX(point[0] * right[0] + point[1] * right[1] + point[2] * right[2]),
+    y: toY(point[0] * screenUp[0] + point[1] * screenUp[1] + point[2] * screenUp[2]),
+  });
+  for (const overlay of overlays) {
+    const from = projectWorld(overlay.from);
+    const to = projectWorld(overlay.to);
+    line(image, from.x, from.y, to.x, to.y, overlay.rgb ?? [232, 169, 91]);
+    for (const point of [from, to]) {
+      fillRect(image, point.x - 3, point.y - 3, 7, 7, overlay.rgb ?? [232, 169, 91]);
     }
   }
 

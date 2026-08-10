@@ -11,7 +11,8 @@
 // built-in runs so the recorded evidence M3 was graded on stays selectable and undeletable.
 
 import { execFile } from "node:child_process";
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -24,6 +25,7 @@ export const RUNS_ROOT = resolve(
 );
 
 const INDEX_PATH = join(RUNS_ROOT, "index.json");
+const BUILTIN_MEASUREMENTS_ROOT = join(RUNS_ROOT, ".measurements");
 
 /**
  * The recorded door fixtures, as read-only runs.
@@ -321,6 +323,112 @@ export async function deleteRun(id) {
   const runs = await readIndex();
   await rm(join(RUNS_ROOT, id), { recursive: true, force: true });
   await writeIndex(runs.filter((run) => run.id !== id));
+}
+
+function measurementDirectory(id, builtin) {
+  return builtin
+    ? join(BUILTIN_MEASUREMENTS_ROOT, id)
+    : join(RUNS_ROOT, id, "measurements");
+}
+
+function measurementFileName(evidenceId) {
+  const digest = createHash("sha256").update(String(evidenceId)).digest("hex").slice(0, 20);
+  return `measurement-${digest}.json`;
+}
+
+function measurementEvidenceId(packet) {
+  const observation = packet?.observation ?? {};
+  return [
+    observation.id,
+    observation.sittingId,
+    observation.capturedAt,
+    observation.mask?.digest ?? "no-mask",
+  ].join("@");
+}
+
+async function recordedRun(id) {
+  const run = [...builtinRuns(), ...(await readIndex())].find((item) => item.id === id);
+  if (!run) throw new Error(`no such run: ${id}`);
+  if (!run.persisted) throw new Error(`run ${id} is transient — save it before recording evidence`);
+  if (!run.builtin && !existsSync(join(RUNS_ROOT, id))) {
+    throw new Error(`run ${id} is recorded but its artifacts are missing`);
+  }
+  return run;
+}
+
+/** Write one explicitly recorded trial atomically. Human trial numbers may repeat across sittings. */
+export async function writeMeasurementEvidence(id, packet) {
+  const run = await recordedRun(id);
+  if (packet?.runId !== id || packet?.observation?.runId !== id) {
+    throw new Error("measurement evidence run id does not match its route");
+  }
+  const observationId = String(packet?.observation?.id ?? "");
+  if (!observationId) throw new Error("measurement evidence has no observation id");
+  if (!packet?.observation?.mask?.runs) throw new Error("measurement evidence has no frozen mask");
+  const evidenceId = measurementEvidenceId(packet);
+  if (packet.evidenceId && packet.evidenceId !== evidenceId) {
+    throw new Error("measurement evidence identity does not match its recorded trial");
+  }
+
+  const directory = measurementDirectory(id, run.builtin);
+  await mkdir(directory, { recursive: true });
+  const path = join(directory, measurementFileName(evidenceId));
+  const temp = join(directory, `.${measurementFileName(evidenceId)}.${randomUUID()}.tmp`);
+  const envelope = {
+    ...packet,
+    evidenceId,
+    storedAt: new Date().toISOString(),
+    storage: {
+      runId: run.id,
+      clipName: run.clipName,
+      clipSha256: run.clipSha256,
+      builtin: run.builtin,
+    },
+  };
+  await writeFile(temp, JSON.stringify(envelope, null, 2));
+  await rename(temp, path);
+  return envelope;
+}
+
+export async function listMeasurementEvidence(id) {
+  const run = await recordedRun(id);
+  const directory = measurementDirectory(id, run.builtin);
+  let names;
+  try {
+    names = (await readdir(directory)).filter((name) => name.endsWith(".json")).sort();
+  } catch {
+    return [];
+  }
+  const rows = [];
+  for (const name of names) {
+    try {
+      const packet = JSON.parse(await readFile(join(directory, name), "utf8"));
+      rows.push({ ...packet, evidenceId: measurementEvidenceId(packet) });
+    } catch {
+      // One broken packet must not hide the other recorded trials.
+    }
+  }
+  return rows.sort((a, b) => String(a.observation?.capturedAt).localeCompare(String(b.observation?.capturedAt)));
+}
+
+export async function removeMeasurementEvidence(id, evidenceId) {
+  const run = await recordedRun(id);
+  const directory = measurementDirectory(id, run.builtin);
+  let names = [];
+  try {
+    names = (await readdir(directory)).filter((name) => name.endsWith(".json"));
+  } catch {
+    return;
+  }
+  await Promise.all(names.map(async (name) => {
+    const path = join(directory, name);
+    try {
+      const packet = JSON.parse(await readFile(path, "utf8"));
+      if (measurementEvidenceId(packet) === evidenceId) await rm(path, { force: true });
+    } catch {
+      // A corrupt packet is not the requested evidence and is left for explicit repair.
+    }
+  }));
 }
 
 /**

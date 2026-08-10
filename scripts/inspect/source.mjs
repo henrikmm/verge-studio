@@ -156,6 +156,65 @@ export function readManifest(run) {
   return JSON.parse(readFileSync(run.manifestPath, "utf8"));
 }
 
+/** Recorded measurement packets beside a run, plus the tracked door benchmark on old checkouts. */
+export function readMeasurementEvidence(run) {
+  const rows = [];
+  const seen = new Set();
+  const directories = [
+    join(run.path, "measurements"),
+    join(RUNS_ROOT, ".measurements", run.id),
+  ];
+  for (const directory of directories) {
+    if (!existsSync(directory)) continue;
+    for (const name of readdirSync(directory).filter((item) => item.endsWith(".json")).sort()) {
+      try {
+        const packet = JSON.parse(readFileSync(join(directory, name), "utf8"));
+        const id = measurementEvidenceId(packet);
+        if (packet.observation?.id && !seen.has(id)) {
+          rows.push({ ...packet, evidenceId: id });
+          seen.add(id);
+        }
+      } catch {
+        // A broken packet is reported by its absence; it cannot hide sound neighbours.
+      }
+    }
+  }
+
+  if (run.id.startsWith("door-")) {
+    const legacyPath = join(REPO, "docs", "measurement-trials-2026-08-04.json");
+    if (existsSync(legacyPath)) {
+      const session = JSON.parse(readFileSync(legacyPath, "utf8"));
+      for (const observation of session.observations ?? []) {
+        const legacyRunId = observation.runId ?? `door-${observation.setting}`;
+        if (legacyRunId !== run.id) continue;
+        const packet = {
+          schemaVersion: session.schemaVersion,
+          runId: run.id,
+          target: (session.definitions ?? []).find((item) => item.id === observation.objectId) ?? null,
+          observation: { ...observation, runId: legacyRunId },
+          storedAt: session.exportedAt,
+          storage: { source: "tracked benchmark" },
+        };
+        const id = measurementEvidenceId(packet);
+        if (seen.has(id)) continue;
+        rows.push({ ...packet, evidenceId: id });
+        seen.add(id);
+      }
+    }
+  }
+  return rows.sort((a, b) => String(a.observation?.capturedAt).localeCompare(String(b.observation?.capturedAt)));
+}
+
+function measurementEvidenceId(packet) {
+  const observation = packet?.observation ?? {};
+  return [
+    observation.id,
+    observation.sittingId,
+    observation.capturedAt,
+    observation.mask?.digest ?? "no-mask",
+  ].join("@");
+}
+
 /** First present of several spellings. Manifests on disk are snake_case, in the app camelCase. */
 export function pick(object, ...names) {
   for (const name of names) {

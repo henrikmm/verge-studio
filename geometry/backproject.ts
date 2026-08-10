@@ -24,6 +24,40 @@
 
 import type { Vec3 } from "./types";
 
+/** Apply a row-major 4x4 affine transform to flat xyz positions. */
+export function transformPoints(points: ArrayLike<number>, transform: ArrayLike<number>): Float32Array {
+  if (transform.length !== 16) throw new Error(`expected a 4x4 transform, got ${transform.length} values`);
+  const out = new Float32Array(points.length);
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    const x = points[i];
+    const y = points[i + 1];
+    const z = points[i + 2];
+    out[i] = transform[0] * x + transform[1] * y + transform[2] * z + transform[3];
+    out[i + 1] = transform[4] * x + transform[5] * y + transform[6] * z + transform[7];
+    out[i + 2] = transform[8] * x + transform[9] * y + transform[10] * z + transform[11];
+  }
+  return out;
+}
+
+/** Resize a binary source-image mask onto the depth map without inventing partial pixels. */
+export function resampleMaskNearest(
+  source: ArrayLike<number>,
+  sourceWidth: number,
+  sourceHeight: number,
+  targetWidth: number,
+  targetHeight: number,
+): Uint8Array {
+  const out = new Uint8Array(targetWidth * targetHeight);
+  for (let y = 0; y < targetHeight; y++) {
+    const sy = Math.min(sourceHeight - 1, Math.floor(((y + 0.5) * sourceHeight) / targetHeight));
+    for (let x = 0; x < targetWidth; x++) {
+      const sx = Math.min(sourceWidth - 1, Math.floor(((x + 0.5) * sourceWidth) / targetWidth));
+      out[y * targetWidth + x] = source[sy * sourceWidth + sx] ? 1 : 0;
+    }
+  }
+  return out;
+}
+
 export interface Frame {
   /** Row-major depth, `width * height` metres. */
   depth: ArrayLike<number>;

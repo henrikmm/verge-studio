@@ -6,6 +6,61 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
+## 2026-08-09 — Free/Object measurement and fixed-size 3D evidence, 1280×800 (commit pending)
+
+Full checklist pass on the recorded 504 px · 112f door fixture, in Standard and Advanced. The
+visible changes are Free as the default measurement context, a temporary Free row/card in Objects,
+named-only Record, and screen-sized selection/ruler marks. The user's requested brush check was
+run in **Fixed**: two pink endpoint patches stayed on the same door pixels shown in Depth 2D, while
+the orange ruler remained a line with small endpoint marks rather than scene-sized discs.
+
+1. Dark surfaces — **PASS**. `body` computed `rgb(13,13,15)`; no light application surface.
+2. Status without hue alone — **PASS**. Free/Evidence, running, idle and errors retain text plus
+   `●`, `○` or `▲`; the pink brush remains the photograph-overlay exception.
+3. Default panes and Graph — **PASS**. Depth 2D, Viewport 3D, Inspector, Objects and Runs opened;
+   Graph returned from the view bar with 8 nodes and 13 wires intact.
+4. Density — **PASS**. The 26 px tab treatment and 11–12 px labels are unchanged; Free adds one
+   compact target row, not a new control section.
+5. Viewport — **PASS**. It rendered 1,000,000 points and the gizmo. A horizontal drag visibly
+   changed the view. Fixed showed the active brush from its source camera.
+6. Depth — **PASS**. Turbo depth rendered with a 0.52–2.66 m metric legend.
+7. Numeric status — **PASS**. Observed Depth 2D 2903.6 ms; Viewport 26.5 ms and 1,000,000 points;
+   Graph 8/13/2; Objects 5 targets and 0 trials; Runs 6 runs and 303 MB.
+8. Window bounds — **PASS**. `scrollWidth === innerWidth === 1280` and `scrollHeight ===
+   innerHeight === 800`; dock groups meet without a gap over 4 px.
+9. Type — **PASS**. No new type size or family; readings remain mono and pane copy remains at the
+   existing 12 px ceiling.
+10. Squint test — **PASS**. Against both Sentinel references, the app retains the same near-black
+    field, one-pixel boundaries, dense rows and bright data against quiet chrome.
+11. Inspector controls — **PASS**. The mixed checkbox/select/value rows remain present; this
+    change adds no inference parameter and hides none.
+12. Memory — **PASS for presence, N/A for movement**. Inspector/status bar both read
+    `0 B / 22.03 GiB`; no paid run was started.
+13. Memory provenance — **N/A**. No frame-plan prediction was presented in this saved-run pass.
+14. Capped-plan arithmetic — **N/A**. No new clip was loaded or capped.
+15. Mock labels — **PASS**. `NVIDIA L4 (mock)`, `GPU: cold` and `cloud: local fixture` stayed
+    visible in Standard.
+16. Focus, hide and restore — **PASS**. All six panes were focused in turn; Escape restored the
+    layout. Graph hide/show and Reset reflowed the workspace without losing its nodes.
+17. Automatic refresh — **PASS**. Toggling Run Source auto mode changed the state immediately and
+    restored it without starting a costly node.
+18. Wire selection/delete — **PASS by the current graph interaction regression**. The visible
+    graph retained 13 wires; the tested Backspace path removes only the selected edge.
+19. Narrow pane — **PASS**. Depth 2D was dragged to 185 px; Output, Free/brush, frame and
+    confidence rows wrapped inside it and every control remained reachable.
+20. Both modes — **PASS**. Advanced survived a reload; Standard restored correctly. Free remains
+    the measurement default in both, and Advanced remains a strict superset.
+21. Explanation placement — **PASS after one fix**. The first capture found a paragraph explaining
+    Free inside the Objects card. It duplicated `temporary brush · never recorded` and `STORAGE
+    temporary`, so it was removed. The focused recheck has no explanatory paragraph.
+22. Measurement headline — **PASS**. Free says `free measurement — paint anything in Depth 2D`.
+    Named Fixed-view painting moved the strip to the target, extent, tape, error and percentage,
+    all in reserved chrome above the canvas.
+
+Fixed during the pass: the redundant Free explanation. No other checklist defect was found.
+The browser logged one React dependency-array warning only during hot replacement of the changed
+effect; a full reload produced the new default state and no product error.
+
 ## 2026-08-09 — the 2D frame fits its pane, and a 40/40/20 window, 1280×800 (commit pending, on d4a91d3)
 
 Partial pass. The change is a containment fix in Depth 2D and a new default split, so this grades

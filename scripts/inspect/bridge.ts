@@ -16,7 +16,7 @@ export { parseNpz, type NpyArray } from "../../app/src/lib/npz";
 export { turbo } from "../../app/src/lib/turbo";
 export { resolveUpAxis } from "../../app/src/panes/viewport-nav";
 
-export { backprojectFrame } from "../../geometry/backproject";
+export { backprojectFrame, backprojectMask, resampleMaskNearest, transformPoints } from "../../geometry/backproject";
 export { estimateGravity, cameraCentres, trajectorySpan } from "../../geometry/gravity";
 export {
   GroundPlaneNotFoundError,
@@ -27,10 +27,14 @@ export {
 export { horizontalLevels, levelNear, type Level } from "../../geometry/levels";
 export {
   heightsAbovePlane,
+  endpointGeometry,
+  measureHeight,
+  measureVerticalExtent,
   median,
   nmad,
   percentile,
   percentileOfSorted,
+  voxelConnectivity,
 } from "../../geometry/measure";
 export {
   angleBetweenDeg,

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   composeUncertainty,
   fitErrorModel,
@@ -13,24 +13,35 @@ import {
   FIXTURE_RUN_ID,
   GROUND_PLANE_ID,
   MEASURE_HEIGHT_ID,
+  POINT_CLOUD_ID,
   SCALE_CHECK_ID,
   type GroundPlaneValue,
   type MeasurementValue,
+  type PointCloudValue,
   type SelectionValue,
 } from "../graph/nodes";
 import { FIXTURE_SETTINGS, builtinRunId } from "../measurement/depth-field";
 import type { RunId } from "../lib/runs";
 import { useRuns } from "../lib/runs-store";
 import { useAdvanced } from "../lib/ui-mode";
+import {
+  MEASUREMENT_EVIDENCE_SCHEMA,
+  deleteMeasurementEvidence,
+  measurementEvidenceId,
+  saveMeasurementEvidence,
+  type MeasurementEvidencePacket,
+} from "../measurement/evidence";
 import { HelpDot } from "./help";
 import {
   BUILTIN_DOOR_CLIP,
   MIN_TRIALS_FOR_SPREAD,
   addTarget,
   measurementObjects,
+  measurementObjectForClip,
   removeTarget,
   setActiveClip,
   activeMeasurementObject,
+  activeMeasurementSubject,
   addObservation,
   currentSittingId,
   duplicateMaskTrialIds,
@@ -39,6 +50,7 @@ import {
   removeObservation,
   setActiveMeasurementObject,
   setBlind,
+  setFreeMeasurement,
   segmentationAttemptStats,
   trialStats,
   trialsFor,
@@ -47,6 +59,7 @@ import {
   type MeasurementObservation,
   type MeasurementObject,
 } from "../measurement/measurement-store";
+import type { RunRecord } from "../lib/runs";
 
 function mean(values: number[]): number {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : NaN;
@@ -148,6 +161,31 @@ function formatM(value: number): string {
   return Number.isFinite(value) ? `${value.toFixed(3)} m` : "—";
 }
 
+function evidencePacket(
+  run: RunRecord,
+  target: MeasurementObject | null,
+  observation: MeasurementObservation,
+  live?: MeasurementEvidencePacket["live"],
+): MeasurementEvidencePacket {
+  return {
+    schemaVersion: MEASUREMENT_EVIDENCE_SCHEMA,
+    evidenceId: measurementEvidenceId(observation),
+    runId: run.id,
+    run: {
+      id: run.id,
+      label: run.label,
+      clipName: run.clipName,
+      clipSha256: run.clipSha256,
+      createdAt: run.createdAt,
+      frameCount: run.frameCount,
+      processRes: run.processRes,
+    },
+    target,
+    observation,
+    ...(live ? { live } : {}),
+  };
+}
+
 function selectObject(object: MeasurementObject): void {
   setActiveMeasurementObject(object.id);
   const mask = getMask(object.id, object.suggestedFrame);
@@ -158,6 +196,20 @@ function selectObject(object: MeasurementObject): void {
   });
   setNodeParam(MEASURE_HEIGHT_ID, "mode", object.mode);
   setNodeParam(SCALE_CHECK_ID, "truthM", object.truthM);
+  void runAuto();
+}
+
+function selectFree(canonicalFrame: number): void {
+  setFreeMeasurement();
+  const subject = activeMeasurementSubject();
+  const mask = getMask(subject.id, canonicalFrame);
+  setNodeParams(BRUSH_SELECTION_ID, {
+    objectId: subject.id,
+    canonicalFrame,
+    maskRevision: mask?.revision ?? 0,
+  });
+  setNodeParam(MEASURE_HEIGHT_ID, "mode", subject.mode);
+  setNodeParam(SCALE_CHECK_ID, "truthM", 0);
   void runAuto();
 }
 
@@ -184,7 +236,7 @@ function EvidenceRow({
   model?: ErrorModel;
 }) {
   const ui = useMeasurementUi();
-  const active = ui.activeObjectId === object.id;
+  const active = ui.measurementContext === "object" && ui.activeObjectId === object.id;
   const stats = trialStats(ui.observations, object.id, runId);
   const absError =
     Number.isFinite(stats.meanM) && object.truthM !== null
@@ -332,6 +384,8 @@ export function ObjectsPane() {
   const ui = useMeasurementUi();
   const object = activeMeasurementObject();
   const runs = useRuns();
+  const syncedEvidence = useRef(new Set<string>());
+  const [evidenceStatus, setEvidenceStatus] = useState<string>();
   const fixture = graph.nodes.find((node) => node.id === FIXTURE_RUN_ID);
   const sourceMode = String(fixture?.params.source ?? "recorded") as "recorded" | "live";
   /**
@@ -341,6 +395,22 @@ export function ObjectsPane() {
    */
   const runId = String(fixture?.params.runId ?? DEFAULT_RUN_ID) as RunId;
   const activeRun = runs.runs.find((item) => item.id === runId);
+
+  useEffect(() => {
+    for (const observation of ui.observations) {
+      const evidenceId = measurementEvidenceId(observation);
+      if (syncedEvidence.current.has(evidenceId)) continue;
+      const run = runs.runs.find((item) => item.id === observation.runId);
+      if (!run?.persisted || !run.available || !observation.mask) continue;
+      const target = measurementObjectForClip(run.clipSha256, observation.objectId) ?? null;
+      syncedEvidence.current.add(evidenceId);
+      void saveMeasurementEvidence(evidencePacket(run, target, observation))
+        .catch((reason) => {
+          syncedEvidence.current.delete(evidenceId);
+          setEvidenceStatus(`Recorded locally, but disk evidence failed: ${reason instanceof Error ? reason.message : String(reason)}`);
+        });
+    }
+  }, [runs.loadedAt, runs.runs, ui.observations]);
 
   /**
    * Targets follow the CLIP the active run came from. Selecting a run from a different video
@@ -358,6 +428,7 @@ export function ObjectsPane() {
   const selection = currentValue<SelectionValue>(BRUSH_SELECTION_ID, "selection");
   const ground = currentValue<GroundPlaneValue>(GROUND_PLANE_ID, "plane");
   const measurement = currentValue<MeasurementValue>(MEASURE_HEIGHT_ID, "measurement");
+  const pointCloud = currentValue<PointCloudValue>(POINT_CLOUD_ID, "cloud");
   const measurementError = graph.runtime[MEASURE_HEIGHT_ID]?.error;
 
   const factor = clipScaleFactor(ui.observations, runId, targets);
@@ -453,9 +524,9 @@ export function ObjectsPane() {
     [targets, ui.observations],
   );
 
-  const capture = () => {
-    if (!object || !measurement || !selection || !ground) return;
-    addObservation({
+  const capture = async () => {
+    if (!object || !measurement || !selection || !ground || !activeRun) return;
+    const observation = addObservation({
       objectId: object.id,
       runId,
       canonicalFrame: selection.frame.canonicalIndex,
@@ -470,6 +541,57 @@ export function ObjectsPane() {
       floorBelowFraction: ground.fit.belowFraction,
       gravityCoherence: ground.gravity.coherence,
     });
+    const evidenceId = measurementEvidenceId(observation);
+    // Mark it before the first await. addObservation schedules the migration effect, and without
+    // this guard that mask-only sync can race the richer explicit Record packet below.
+    syncedEvidence.current.add(evidenceId);
+    setEvidenceStatus("Saving recorded trial…");
+    try {
+      await saveMeasurementEvidence(
+        evidencePacket(activeRun, object, observation, {
+          cloudSource: pointCloud?.source ??
+            (graph.nodes.find((node) => node.id === POINT_CLOUD_ID)?.params.source === "npz" ? "npz" : "glb"),
+          selection: {
+            rejected: selection.diagnostics.rejected,
+            maskedPixels: selection.diagnostics.maskedPixels,
+            pointCount: selection.diagnostics.pointCount,
+          },
+          measurement: {
+            mode: measurement.mode,
+            rawM: measurement.rawM,
+            internalSpreadM: measurement.internalSpreadM,
+            pointCount: measurement.pointCount,
+            ruler: measurement.ruler,
+            rulerKind: measurement.rulerKind,
+            details: measurement.details,
+          },
+          ground: {
+            plane: ground.plane,
+            supportFraction: ground.fit.inlierFraction,
+            rmseM: ground.fit.rmse,
+            tiltDeg: ground.fit.tiltDeg,
+            belowFraction: ground.fit.belowFraction,
+            gravityCoherence: ground.gravity.coherence,
+          },
+        }),
+      );
+      setEvidenceStatus(`Recorded #${observation.trialIndex} on disk`);
+    } catch (reason) {
+      syncedEvidence.current.delete(evidenceId);
+      setEvidenceStatus(`Recorded locally, but disk evidence failed: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
+  };
+
+  const discardTrial = async (trial: MeasurementObservation) => {
+    try {
+      const evidenceId = measurementEvidenceId(trial);
+      await deleteMeasurementEvidence(trial.runId, evidenceId);
+      removeObservation(trial.id);
+      syncedEvidence.current.delete(evidenceId);
+      setEvidenceStatus(`Discarded trial #${trial.trialIndex}`);
+    } catch (reason) {
+      setEvidenceStatus(`Could not discard disk evidence: ${reason instanceof Error ? reason.message : String(reason)}`);
+    }
   };
 
   /**
@@ -493,7 +615,9 @@ export function ObjectsPane() {
       <div className="pane-status">
         {/* No glyph in the text: `.pane-status .ok` and `.busy` already draw one in CSS, and
             writing a second one produced "● ● Evidence". */}
-        <span className={ui.blind ? "busy" : "ok"}>{ui.blind ? "BLIND" : "Evidence"}</span>
+        <span className={ui.blind ? "busy" : "ok"}>
+          {ui.blind ? "BLIND" : ui.measurementContext === "free" ? "Free" : "Evidence"}
+        </span>
         <span>
           {targets.length} target{targets.length === 1 ? "" : "s"} · {ui.observations.length} trials
         </span>
@@ -559,6 +683,20 @@ export function ObjectsPane() {
         </section>
 
         <section className="object-list" aria-label="Measurement objects">
+          <button
+            className={`object-row free-row${ui.measurementContext === "free" ? " active" : ""}`}
+            onClick={() => selectFree(ui.canonicalFrame)}
+          >
+            <span className="object-code">FREE</span>
+            <span className="object-copy">
+              <b>Ad hoc measurement</b>
+              <small>temporary brush · never recorded</small>
+            </span>
+            <span className="object-reading">
+              <b>{measurement && ui.measurementContext === "free" ? formatM(measurement.rawM) : "—"}</b>
+              <small>{ui.freeMeasurementMode === "vertical_extent" ? "extent" : "above floor"}</small>
+            </span>
+          </button>
           {targets.map((item) => (
             <EvidenceRow key={item.id} object={item} runId={runId} model={clipModel} />
           ))}
@@ -576,13 +714,14 @@ export function ObjectsPane() {
         {!object ? (
           <section className="evidence-card">
             <div className="evidence-title">
-              <span><b>No targets</b></span>
+              <span><b>FREE</b> Ad hoc measurement</span>
             </div>
-            <p>
-              This clip has none yet. Truths do not transfer between clips — metric scale is
-              per-clip — so nothing is inherited from the door set. Add a target above; a tape
-              truth is optional, and without one the target is measurable but ungradable.
-            </p>
+            <div className="reading-grid">
+              <span>RAW DA3</span><b>{measurement ? formatM(measurement.rawM) : "—"}</b>
+              <span>SELECTED</span><b>{selection ? `${selection.diagnostics.pointCount.toLocaleString()} pts` : "—"}</b>
+              <span>DEFINITION</span><b>{ui.freeMeasurementMode === "vertical_extent" ? "extent" : "above floor"}</b>
+              <span>STORAGE</span><b>temporary</b>
+            </div>
           </section>
         ) : (
         <section className="evidence-card">
@@ -794,7 +933,7 @@ export function ObjectsPane() {
                           : "no mask evidence"}
                     </span>
                     <span className="mono">{formatDuration(trial.paintDurationMs ?? NaN)}</span>
-                    <button className="trial-drop" title="Discard this trial" onClick={() => removeObservation(trial.id)}>×</button>
+                    <button className="trial-drop" title="Discard this trial" onClick={() => void discardTrial(trial)}>×</button>
                   </li>
                 ))}
               </ol>
@@ -837,7 +976,7 @@ export function ObjectsPane() {
                     ? "Save this run to disk first. A trial recorded against a transient run would reference evidence that dies with the instance."
                     : "Freeze this measurement and its mask as a numbered trial."
               }
-              onClick={capture}
+              onClick={() => void capture()}
             >
               Record trial {activeStats.n + 1}
             </button>
@@ -849,6 +988,7 @@ export function ObjectsPane() {
               {graph.running ? "Rebuilding…" : "Rebuild measurement"}
             </button>
           </div>
+          {evidenceStatus && <div className={evidenceStatus.includes("failed") || evidenceStatus.includes("Could not") ? "evidence-warning" : "honesty-note"}>{evidenceStatus}</div>}
           {/*
             The instruction stays; the two paragraphs around it went behind `?`.
 
