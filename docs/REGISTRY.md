@@ -144,7 +144,13 @@ Around that spine:
   the human label `trial #1` is not unique across browser sessions. `inspect measurements <run>`
   lists them, and `inspect measurement <run> <trial-or-mask-digest>` replays one packet and writes
   its 2D mask and 3D selection/ruler images. A newly recorded door trial replayed to **0.000 mm**,
-  with **775 of 775** points projecting back inside the brush by one pixel.
+  with **775 of 775** points projecting back inside the brush by one pixel. The older door packet
+  displaced while reproducing the former trial-number collision returned from the original Safari
+  profile after one reload. Its recovered identity is
+  `door-leaf:door-504px-112f#1@sitting-msmd3iex-i6wswj@2026-08-09T22:20:07.102Z@987957e9e0732a02`.
+  The inspector replayed its stored **2.021077 m** to **0.000 mm**, and all **561 of 561** usable
+  points returned inside the recorded mask within one pixel. Recovery therefore depends on neither
+  the display trial number nor one still-open page.
 - **The whole app runs offline.** The dev server answers the inference request from a stored
   fixture, so the interface can be built and reviewed at zero cost. Anything produced that way is
   labelled as a mock on screen.
