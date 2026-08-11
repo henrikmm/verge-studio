@@ -481,6 +481,47 @@ matches, so the paint path allocates nothing. Five more ways in: adding a target
 frame is the frame on screen, so it was always dead on arrival), deleting the active target,
 loading a run whose clip has no targets, and clicking during a frame change.
 
+### Recorded evidence is read back, and a trial's brush can be looked at — 2026-08-11
+
+The app wrote trials to disk and never read them. `localStorage` was the only source of the trial
+list, so a cleared cache or a different browser profile hid every recorded measurement while its
+packets sat on disk untouched.
+
+Selecting a run now reads its evidence directory and merges it. Measured on the door archive: a
+browser with an empty measurement session opened `door-504px-112f` and recovered **17 trials** —
+B1 ×5, B2/B3/B4/B5 ×3 each — restoring the whole 2026-08-04 study, its 2.119 m ± 0.024 calibrated
+door, its 0.006 m in-sitting range, the resolution table (3/3 holdouts, 0.050 m raw MAE, 0.020 m
+scaled) and the clip's error model (slope 0.967, ×1.049 scale factor, 5.6% mean absrel).
+
+**A trial already in the browser wins.** The two copies are the same recording, and the local row
+is the live one — it can be discarded, and a discard deletes the disk packet with it. Letting the
+file win would make the stale copy authoritative in exactly the window where they differ.
+
+**The archive holds each trial more than once.** 33 packets are 17 trials: 16 of them were written
+under evidence schema 0.1.0 and again under 0.2.0, which names its files differently, so both
+survive. Same trial id, same instant, same mask digest. Merging de-duplicates on identity — the
+trial id plus the instant it was frozen — and so does restoring a saved session, because the first
+load of this feature had already persisted all 33. A row with no `capturedAt` is never collapsed:
+0.1.0 rows share ids and carry no instant, so nothing can prove two of them are the same
+measurement. The 16 stale 0.1.0 files are still on disk, ignored rather than deleted.
+
+**A trial id does not identify a row.** Ids were reissued by position until earlier the same day,
+so the archive holds two recordings under one id. Rows are keyed by identity now — React keys,
+the brush toggle, the duplicate-mask warning, and `removeObservation`, which previously filtered
+by id and so would have discarded every row sharing one.
+
+**Reading comes before writing.** The catch-up effect that pushes local trials to disk now waits
+for that run's evidence to have been read. Without the wait, a restored session was written
+straight back: 17 files rewritten on every page load for no change. An explicit Record is
+unaffected — it writes its own richer packet directly.
+
+A trial's frozen brush can now be opened from its row: the mask is drawn from its run-length pairs
+over the RGB frame it was measured on, read-only. Verified against the stored pairs for digest
+`987957e9` — the drawn canvas is 113×200 for a 576×1024 frame, with painted bands at 10–15% and
+82–88% of its height, against 102–157 and 844–899 of 1024 in the packet. Two endpoints, where the
+data says they are. It is deliberately not loadable back into the working mask: repainting from a
+frozen mask produces a trial that repeats the code rather than the measuring.
+
 ### A trial's brush is now recoverable, and four ways it was not — fixed 2026-08-11
 
 A recorded trial is meant to be re-openable forever, brush strokes included. Auditing the record
@@ -519,10 +560,9 @@ reloaded — the trial, its digest and the working brush all came back; discarde
 the file went (34 → 33), the six saved runs untouched; cleared the brush — 0 px, and still 0 after
 another reload. No console errors throughout.
 
-**What this did not fix: the app never reads disk evidence back.** `listMeasurementEvidence` has no
-caller. Trials come only from `localStorage`, so the 33 evidence files under
-`~/verge-runs/.measurements/door-504px-112f` are invisible to the app — this session's browser
-profile showed `0 trials` beside 33 stored files. The evidence survives; nothing displays it.
+**What this did not fix, and the entry above did:** the app never read disk evidence back, so the
+33 files under `~/verge-runs/.measurements/door-504px-112f` were invisible to it — this session's
+browser profile showed `0 trials` beside 33 stored packets.
 
 ### Masks carry the clip they were painted on — fixed 2026-08-11
 

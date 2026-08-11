@@ -458,7 +458,7 @@ function decodeMask(value: EncodedMask): MaskRecord {
  */
 export function migrateObservations(rows: readonly MeasurementObservation[]): MeasurementObservation[] {
   const counters = new Map<string, number>();
-  return rows.map((raw) => {
+  return dedupeTrials(rows.map((raw) => {
     // 0.5.0 re-keyed trials from a three-value fixture `setting` to a run id, so a saved run
     // can hold measurements at all. The three old settings ARE the built-in door runs, so the
     // mapping is exact and no trial loses its group.
@@ -483,7 +483,34 @@ export function migrateObservations(rows: readonly MeasurementObservation[]): Me
         ? { ...row.mask, source: row.mask.source ?? "brush", segmentation: row.mask.segmentation }
         : undefined,
     };
-  });
+  }));
+}
+
+/**
+ * Collapse rows that are one recording stored twice.
+ *
+ * The evidence directory holds a trial once per evidence schema it has been written under —
+ * the door archive is 33 packets for 17 trials, each early one written again when the packet
+ * format changed its file naming. Same id, same instant, same mask digest.
+ *
+ * A row with no `capturedAt` is never collapsed. Those are 0.1.0 rows, which share ids with each
+ * other and carry no instant, so nothing here can prove two of them are the same measurement —
+ * and dropping a real trial is far worse than showing one twice.
+ */
+function dedupeTrials(rows: readonly MeasurementObservation[]): MeasurementObservation[] {
+  const seen = new Set<string>();
+  const kept: MeasurementObservation[] = [];
+  for (const row of rows) {
+    if (!row.capturedAt) {
+      kept.push(row);
+      continue;
+    }
+    const identity = trialIdentity(row);
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+    kept.push(row);
+  }
+  return kept;
 }
 
 /**
@@ -1055,9 +1082,61 @@ export function addObservation(
   return record;
 }
 
-/** Drop one trial by id — a misclick or an abandoned attempt, not a whole study. */
-export function removeObservation(id: string): void {
-  state.observations = state.observations.filter((item) => item.id !== id);
+/**
+ * One trial's identity, for telling the disk copy from a different trial.
+ *
+ * `id` alone is not enough: it carries the trial number, and two sittings of the same object on
+ * the same run legitimately both hold a trial 1. `capturedAt` is the instant it was frozen.
+ */
+export function trialIdentity(row: MeasurementObservation): string {
+  return `${row.id}@${row.capturedAt}`;
+}
+
+/**
+ * Take in trials recorded on disk, without disturbing the ones already here.
+ *
+ * Evidence was written to disk and never read back: `localStorage` was the only source of the
+ * trial list, so clearing site data or opening the app in another profile hid every recorded
+ * trial while its packets sat on disk. Measured 2026-08-11 — the Objects pane reported 0 trials
+ * for `door-504px-112f` beside 33 stored packets.
+ *
+ * **A trial already held here wins.** The two copies are the same recording, and the local one is
+ * the live row the operator is working with — it can be discarded, and a discard deletes the disk
+ * packet with it. Letting the file overwrite the row would make the stale copy authoritative
+ * during the window between the two, which is the one moment they ever disagree.
+ *
+ * The batch is de-duplicated against itself as well, because one trial can occupy more than one
+ * file. Measured on the door archive: 33 packets, 17 trials — 16 of them written once under
+ * evidence schema 0.1.0 and again under 0.2.0, which named its files differently. Same trial id,
+ * same instant, same mask digest, two files.
+ */
+export function mergeObservations(
+  rows: readonly MeasurementObservation[],
+): MeasurementObservation[] {
+  const known = new Set(state.observations.map(trialIdentity));
+  const added: MeasurementObservation[] = [];
+  for (const row of migrateObservations(rows)) {
+    const identity = trialIdentity(row);
+    if (known.has(identity)) continue;
+    known.add(identity);
+    added.push(row);
+  }
+  if (!added.length) return [];
+  state.observations = [...state.observations, ...added];
+  commit();
+  return added;
+}
+
+/**
+ * Drop ONE trial — a misclick or an abandoned attempt, not a whole study.
+ *
+ * Matched on identity rather than on `id` alone. Trial ids were reissued by position until
+ * 2026-08-11, so an archive can hold two different recordings under one id, and filtering by id
+ * would discard both when the operator asked to discard one.
+ */
+export function removeObservation(trial: MeasurementObservation): void {
+  const identity = trialIdentity(trial);
+  state.observations = state.observations.filter((item) => trialIdentity(item) !== identity);
   commit();
 }
 
@@ -1083,8 +1162,11 @@ export function trialsFor(
  *
  * Pressing Record twice without repainting yields two rows, zero spread, and the appearance
  * of perfect repeatability — when it is one measurement counted twice. An independent trial
- * means clearing the mask and placing the endpoints again. These ids are surfaced rather than
+ * means clearing the mask and placing the endpoints again. These are surfaced rather than
  * dropped, because the operator may have meant to record a deliberate control.
+ *
+ * Returns trial IDENTITIES, not ids: an id alone does not pick out one row in an archive
+ * recorded before trial numbering became stable.
  */
 export function duplicateMaskTrialIds(
   observations: readonly MeasurementObservation[],
@@ -1096,7 +1178,7 @@ export function duplicateMaskTrialIds(
   for (const trial of trialsFor(observations, objectId, runId)) {
     const digest = trial.mask?.digest;
     if (!digest) continue;
-    if (seen.has(digest)) duplicates.add(trial.id);
+    if (seen.has(digest)) duplicates.add(trialIdentity(trial));
     else seen.add(digest);
   }
   return duplicates;

@@ -4,6 +4,7 @@ import {
   DOOR_TARGETS,
   acceptActiveModelMask,
   addTarget,
+  mergeObservations,
   migrateMaskKeys,
   setActiveClip,
   activeMeasurementObject,
@@ -33,6 +34,7 @@ import {
   setFreeMeasurementMode,
   setMaskData,
   setMeasurementFrame,
+  trialIdentity,
   trialStats,
   type MeasurementObservation,
 } from "./measurement-store";
@@ -234,6 +236,52 @@ describe("measurement store", () => {
   });
 
   /**
+   * Evidence written to disk was never read back, so a cleared cache hid every recorded trial
+   * while its packets survived on disk. Merging has to add what is missing and touch nothing else.
+   */
+  it("takes in trials from disk without duplicating or overwriting the local ones", () => {
+    const local = addObservation({ ...BASE, rawM: 1.4 });
+    const fromDisk: MeasurementObservation[] = [
+      // The same trial, as the disk copy of it: same id, same instant.
+      { ...local, rawM: 9.99 },
+      // A trial this browser has never seen.
+      {
+        ...BASE,
+        id: "door-leaf:door-356px-256f#7",
+        trialIndex: 7,
+        rawM: 2.01,
+        sittingId: "sitting-elsewhere",
+        capturedAt: "2026-08-04T10:00:00.000Z",
+        mask: { width: 4, height: 4, revision: 2, paintedPixels: 4, digest: "abcd", runs: [5, 4], source: "brush" },
+      },
+    ];
+
+    // The same packet twice, as the door archive really holds it: one file per evidence schema
+    // it was written under. Two files, one trial.
+    const recovered = mergeObservations([...fromDisk, { ...fromDisk[1] }]);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0].id).toBe("door-leaf:door-356px-256f#7");
+
+    const rows = getMeasurementUi().observations;
+    expect(rows).toHaveLength(2);
+    // The local row is untouched: the disk copy must not overwrite the row being worked on.
+    expect(rows.find((item) => item.id === local.id)?.rawM).toBe(1.4);
+    // Its number and sitting survive, so a recovered trial still says which sitting it came from.
+    expect(rows.find((item) => item.id === "door-leaf:door-356px-256f#7")).toMatchObject({
+      trialIndex: 7,
+      sittingId: "sitting-elsewhere",
+    });
+    expect(trialStats(rows, "door-leaf", "door-356px-256f").n).toBe(2);
+
+    // Reading the same run twice adds nothing.
+    expect(mergeObservations(fromDisk)).toHaveLength(0);
+    expect(getMeasurementUi().observations).toHaveLength(2);
+
+    // A recovered trial keeps its number, so the next recording cannot collide with it.
+    expect(addObservation({ ...BASE, rawM: 1.5 }).trialIndex).toBe(8);
+  });
+
+  /**
    * Trial numbers are part of a trial's identity: the evidence file on disk is named after the
    * id, so reusing or renaming one loses the link to it.
    */
@@ -243,7 +291,7 @@ describe("measurement store", () => {
     const third = addObservation({ ...BASE, rawM: 1.42 });
     expect([first, second, third].map((item) => item.trialIndex)).toEqual([1, 2, 3]);
 
-    removeObservation(second.id);
+    removeObservation(second);
     const fourth = addObservation({ ...BASE, rawM: 1.43 });
     // Counting the survivors would have numbered this 3 and collided with the trial above.
     expect(fourth.trialIndex).toBe(4);
@@ -395,9 +443,10 @@ describe("measurement store", () => {
     const repainted = addObservation({ ...BASE, rawM: 1.96 });
 
     const flagged = duplicateMaskTrialIds(getMeasurementUi().observations, "door-leaf", "door-356px-256f");
-    expect(flagged.has(unrepainted.id)).toBe(true);
-    expect(flagged.has(first.id)).toBe(false);
-    expect(flagged.has(repainted.id)).toBe(false);
+    // Identities, not ids: an id does not pick out one row in a pre-2026-08-11 archive.
+    expect(flagged.has(trialIdentity(unrepainted))).toBe(true);
+    expect(flagged.has(trialIdentity(first))).toBe(false);
+    expect(flagged.has(trialIdentity(repainted))).toBe(false);
   });
 
   it("withholds model evidence until review and preserves corrections in provenance", () => {
@@ -541,7 +590,7 @@ describe("measurement store", () => {
     const mistake = addObservation({ ...BASE, rawM: 0.02 });
     addObservation({ ...BASE, rawM: 1.95 });
 
-    removeObservation(mistake.id);
+    removeObservation(mistake);
     const remaining = getMeasurementUi().observations;
     expect(remaining.map((item) => item.rawM)).toEqual([1.9, 1.95]);
     expect(trialStats(remaining, "door-leaf", "door-356px-256f").n).toBe(2);

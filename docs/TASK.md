@@ -65,34 +65,6 @@ between the best two. REGISTRY section 3 has four measured cases. The display ha
 - [ ] Make refusal travel: a height measured against a refused floor must refuse as well.
 - [ ] Agree the wording with the user before it ships.
 
-### 8. Read the recorded evidence back into the app
-
-**Why.** Trials are written to disk and never read from it. `listMeasurementEvidence` in
-`app/src/measurement/evidence.ts` has no caller: the app builds its trial list only from
-`localStorage`. Measured 2026-08-11 — the Objects pane reported `0 trials` for
-`door-504px-112f` while 33 evidence packets sat in `~/verge-runs/.measurements/door-504px-112f`,
-each holding a frozen mask. Clearing site data, a new browser profile or a different machine
-therefore hides every recorded trial, and the on-disk copy — the one that survives — is the copy
-nothing displays. A measurement you cannot consult later is not evidence yet.
-
-**Gate.** With `localStorage` empty, opening a run lists its recorded trials from disk with their
-numbers, readings and mask digests, and a trial's frozen brush can be shown on its frame. The 33
-existing packets appear without being rewritten.
-
-**Regression.** Local trials must not be duplicated by the ones loaded from disk, and loading must
-never overwrite a trial that only exists locally. `measurementEvidenceId` is the identity to match
-on; the sync effect in `ObjectsPane` already uses it, so both sides can agree.
-
-**Approval.** `none`.
-
-**Start.** `evidence.ts`, the sync effect in `app/src/panes/objects.tsx`, and
-`writeMeasurementEvidence`/`listMeasurementEvidence` in `app/vite-plugins/runs.mjs`.
-
-- [ ] Load a run's evidence on selection and merge it with the local trials by evidence id.
-- [ ] Decide what wins when a trial exists in both and its fields disagree. Say why in the Registry.
-- [ ] Draw a frozen mask from its RLE runs, so a past trial's brush can be looked at, not just
-      counted.
-
 ### 7. Watch a real cold start, once
 
 **Why.** `waking` is the one phase never seen against hardware. Two attempts have failed for two

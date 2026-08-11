@@ -20,13 +20,14 @@ import {
   type PointCloudValue,
   type SelectionValue,
 } from "../graph/nodes";
-import { FIXTURE_SETTINGS, builtinRunId } from "../measurement/depth-field";
+import { FIXTURE_SETTINGS, builtinRunId, closestFrame, type DepthFieldValue } from "../measurement/depth-field";
 import type { RunId } from "../lib/runs";
 import { useRuns } from "../lib/runs-store";
 import { useAdvanced } from "../lib/ui-mode";
 import {
   MEASUREMENT_EVIDENCE_SCHEMA,
   deleteMeasurementEvidence,
+  listMeasurementEvidence,
   measurementEvidenceId,
   saveMeasurementEvidence,
   type MeasurementEvidencePacket,
@@ -47,16 +48,19 @@ import {
   duplicateMaskTrialIds,
   exportMeasurementSession,
   getMask,
+  mergeObservations,
   removeObservation,
   sessionPersistError,
   setActiveMeasurementObject,
   setBlind,
   setFreeMeasurement,
   segmentationAttemptStats,
+  trialIdentity,
   trialStats,
   trialsFor,
   useMeasurementUi,
   type MeasurementMode,
+  type MaskSnapshot,
   type MeasurementObservation,
   type MeasurementObject,
 } from "../measurement/measurement-store";
@@ -186,6 +190,91 @@ function evidencePacket(
     observation,
     ...(live ? { live } : {}),
   };
+}
+
+/**
+ * The preview fits inside this box, in CSS pixels — a portrait frame is 576×1024, so sizing by
+ * width alone gave a 391 px tall thumbnail that ran off the bottom of the pane.
+ */
+const FROZEN_MASK_BOX = 200;
+
+/**
+ * A recorded trial's brush, drawn from the run-length pairs frozen with it.
+ *
+ * Read-only on purpose. A frozen mask is evidence of a measurement that already happened, so it
+ * must never become the working mask: painting from it would produce a repeat trial that repeats
+ * the code rather than the measuring, which is the thing `duplicateMaskTrialIds` exists to catch.
+ */
+function FrozenMask({ mask, frameUrl }: { mask: MaskSnapshot; frameUrl?: string }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas?.getContext("2d");
+    if (!canvas || !ctx) return;
+    // Same colours as the live overlay in Depth 2D, so a trial's brush looks like the brush.
+    const colour = mask.segmentation
+      ? mask.segmentation.accepted
+        ? [45, 212, 191]
+        : [251, 191, 36]
+      : [251, 113, 133];
+    const scratch = document.createElement("canvas");
+    scratch.width = mask.width;
+    scratch.height = mask.height;
+    const scratchCtx = scratch.getContext("2d");
+    if (!scratchCtx) return;
+    const painted = scratchCtx.createImageData(mask.width, mask.height);
+    for (let i = 0; i + 1 < mask.runs.length; i += 2) {
+      const end = mask.runs[i] + mask.runs[i + 1];
+      for (let pixel = mask.runs[i]; pixel < end; pixel++) {
+        painted.data[pixel * 4] = colour[0];
+        painted.data[pixel * 4 + 1] = colour[1];
+        painted.data[pixel * 4 + 2] = colour[2];
+        painted.data[pixel * 4 + 3] = 210;
+      }
+    }
+    scratchCtx.putImageData(painted, 0, 0);
+
+    let cancelled = false;
+    const draw = (frame?: HTMLImageElement) => {
+      if (cancelled) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (frame) ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+      else {
+        ctx.fillStyle = "#17171a";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+      ctx.drawImage(scratch, 0, 0, canvas.width, canvas.height);
+    };
+
+    if (!frameUrl) {
+      draw();
+      return;
+    }
+    const frame = new Image();
+    // The frame is a nicety: without it the brush still reads as a silhouette, which is enough
+    // to tell two trials apart.
+    frame.onload = () => draw(frame);
+    frame.onerror = () => draw();
+    frame.src = frameUrl;
+    return () => {
+      cancelled = true;
+    };
+  }, [mask, frameUrl]);
+
+  const fit = Math.min(FROZEN_MASK_BOX / mask.width, FROZEN_MASK_BOX / mask.height);
+  return (
+    <figure className="trial-mask">
+      <canvas
+        ref={canvasRef}
+        width={Math.round(mask.width * fit)}
+        height={Math.round(mask.height * fit)}
+      />
+      <figcaption className="mono">
+        {mask.paintedPixels.toLocaleString()} px · {mask.width}×{mask.height} · {mask.digest}
+      </figcaption>
+    </figure>
+  );
 }
 
 function selectObject(object: MeasurementObject): void {
@@ -387,7 +476,12 @@ export function ObjectsPane() {
   const object = activeMeasurementObject();
   const runs = useRuns();
   const syncedEvidence = useRef(new Set<string>());
+  /** Runs whose disk evidence has been read this page load. Ref guards the fetch, state gates the write. */
+  const loadedEvidence = useRef(new Set<string>());
+  const [evidenceRead, setEvidenceRead] = useState<ReadonlySet<string>>(new Set());
   const [evidenceStatus, setEvidenceStatus] = useState<string>();
+  /** Trial whose frozen brush is open. One at a time — these are full-resolution masks. */
+  const [shownBrush, setShownBrush] = useState<string>();
   // Read on every store change, which is when a save has just been attempted.
   const persistError = ui && sessionPersistError();
   const fixture = graph.nodes.find((node) => node.id === FIXTURE_RUN_ID);
@@ -400,8 +494,61 @@ export function ObjectsPane() {
   const runId = String(fixture?.params.runId ?? DEFAULT_RUN_ID) as RunId;
   const activeRun = runs.runs.find((item) => item.id === runId);
 
+  /**
+   * Read a run's recorded trials off disk when it is selected.
+   *
+   * The packets on disk are the copy that survives a cleared cache or a different machine, and
+   * until now nothing read them: a fresh profile showed 0 trials beside 33 stored packets.
+   *
+   * Every packet is marked synced BEFORE the merge, whether or not it turns out to be new. The
+   * effect below writes any trial it has not seen, so without this, opening a run would post all
+   * of its own evidence straight back at it.
+   */
+  useEffect(() => {
+    if (!activeRun?.persisted || !activeRun.available) return;
+    if (loadedEvidence.current.has(activeRun.id)) return;
+    loadedEvidence.current.add(activeRun.id);
+    const runIdentifier = activeRun.id;
+    let cancelled = false;
+    void listMeasurementEvidence(runIdentifier)
+      .then((packets) => {
+        if (cancelled) return;
+        for (const packet of packets) {
+          syncedEvidence.current.add(packet.evidenceId ?? measurementEvidenceId(packet.observation));
+        }
+        const recovered = mergeObservations(packets.map((packet) => packet.observation));
+        setEvidenceRead((read) => new Set([...read, runIdentifier]));
+        if (recovered.length) {
+          setEvidenceStatus(
+            `Recovered ${recovered.length} recorded trial${recovered.length === 1 ? "" : "s"} from disk`,
+          );
+        }
+      })
+      .catch((reason) => {
+        if (cancelled) return;
+        // Retryable: dropping the mark lets a later selection of this run try again.
+        loadedEvidence.current.delete(runIdentifier);
+        setEvidenceStatus(
+          `Could not read recorded evidence: ${reason instanceof Error ? reason.message : String(reason)}`,
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRun?.id, activeRun?.persisted, activeRun?.available]);
+
+  /**
+   * Catch up any trial disk does not have yet.
+   *
+   * It waits for that run's evidence to have been READ first. Without the wait, a session
+   * restored from `localStorage` was written straight back before the listing returned:
+   * 17 of the door archive's files were rewritten on every page load, for no change. An
+   * explicit Record does not come through here — `capture` writes its own richer packet — so
+   * gating this costs nothing when the listing is unavailable.
+   */
   useEffect(() => {
     for (const observation of ui.observations) {
+      if (!evidenceRead.has(observation.runId)) continue;
       const evidenceId = measurementEvidenceId(observation);
       if (syncedEvidence.current.has(evidenceId)) continue;
       const run = runs.runs.find((item) => item.id === observation.runId);
@@ -414,7 +561,7 @@ export function ObjectsPane() {
           setEvidenceStatus(`Recorded locally, but disk evidence failed: ${reason instanceof Error ? reason.message : String(reason)}`);
         });
     }
-  }, [runs.loadedAt, runs.runs, ui.observations]);
+  }, [evidenceRead, runs.loadedAt, runs.runs, ui.observations]);
 
   /**
    * Targets follow the CLIP the active run came from. Selecting a run from a different video
@@ -434,6 +581,14 @@ export function ObjectsPane() {
   const measurement = currentValue<MeasurementValue>(MEASURE_HEIGHT_ID, "measurement");
   const pointCloud = currentValue<PointCloudValue>(POINT_CLOUD_ID, "cloud");
   const measurementError = graph.runtime[MEASURE_HEIGHT_ID]?.error;
+
+  /**
+   * The RGB frame a trial was measured on, when the active run is loaded. A trial's frame is
+   * canonical, and a run holds only some of the 256, so it snaps the same way the measurement did.
+   */
+  const depthField = currentValue<DepthFieldValue>(FIXTURE_RUN_ID, "depth");
+  const frameUrl = (canonicalFrame: number): string | undefined =>
+    depthField ? closestFrame(depthField, canonicalFrame)?.rgbUrl : undefined;
 
   const factor = clipScaleFactor(ui.observations, runId, targets);
   const corrected = measurement ? correctedValue(measurement.rawM, factor) : NaN;
@@ -590,7 +745,7 @@ export function ObjectsPane() {
     try {
       const evidenceId = measurementEvidenceId(trial);
       await deleteMeasurementEvidence(trial.runId, evidenceId);
-      removeObservation(trial.id);
+      removeObservation(trial);
       syncedEvidence.current.delete(evidenceId);
       setEvidenceStatus(`Discarded trial #${trial.trialIndex}`);
     } catch (reason) {
@@ -918,7 +1073,10 @@ export function ObjectsPane() {
             {advanced && activeTrials.length > 0 && (
               <ol className="trial-list">
                 {activeTrials.map((trial) => (
-                  <li key={trial.id} className={repeatedMasks.has(trial.id) ? "repeated-mask" : ""}>
+                  <li
+                    key={trialIdentity(trial)}
+                    className={repeatedMasks.has(trialIdentity(trial)) ? "repeated-mask" : ""}
+                  >
                     <span className="mono">#{trial.trialIndex}</span>
                     <b>{veil(ui.blind, `${trial.rawM.toFixed(3)} m`)}</b>
                     <span className="mono">
@@ -930,15 +1088,27 @@ export function ObjectsPane() {
                             (trial.rawM - object.truthM).toFixed(3),
                       )}
                     </span>
-                    <span className="mono">
-                      {repeatedMasks.has(trial.id)
-                        ? "same mask as an earlier trial"
-                        : trial.mask
-                          ? `${trial.mask.source ?? "brush"} · ${trial.mask.paintedPixels.toLocaleString()} px · ${trial.mask.digest.slice(0, 8)}${trial.mask.segmentation ? ` · ${trial.mask.segmentation.prompts.length} clicks/${trial.mask.segmentation.correctionStrokes} edits · ${((trial.mask.segmentation.selectionDurationMs ?? 0) / 1000).toFixed(1)}s` : ""}`
-                          : "no mask evidence"}
-                    </span>
+                    {trial.mask && !repeatedMasks.has(trialIdentity(trial)) ? (
+                      <button
+                        className="trial-brush"
+                        title={shownBrush === trialIdentity(trial) ? "Hide this trial's brush" : "Show the brush this trial was measured from"}
+                        aria-expanded={shownBrush === trialIdentity(trial)}
+                        onClick={() =>
+                          setShownBrush(shownBrush === trialIdentity(trial) ? undefined : trialIdentity(trial))
+                        }
+                      >
+                        {`${trial.mask.source ?? "brush"} · ${trial.mask.paintedPixels.toLocaleString()} px · ${trial.mask.digest.slice(0, 8)}${trial.mask.segmentation ? ` · ${trial.mask.segmentation.prompts.length} clicks/${trial.mask.segmentation.correctionStrokes} edits · ${((trial.mask.segmentation.selectionDurationMs ?? 0) / 1000).toFixed(1)}s` : ""}`}
+                      </button>
+                    ) : (
+                      <span className="mono">
+                        {repeatedMasks.has(trialIdentity(trial)) ? "same mask as an earlier trial" : "no mask evidence"}
+                      </span>
+                    )}
                     <span className="mono">{formatDuration(trial.paintDurationMs ?? NaN)}</span>
                     <button className="trial-drop" title="Discard this trial" onClick={() => void discardTrial(trial)}>×</button>
+                    {shownBrush === trialIdentity(trial) && trial.mask && (
+                      <FrozenMask mask={trial.mask} frameUrl={frameUrl(trial.canonicalFrame)} />
+                    )}
                   </li>
                 ))}
               </ol>

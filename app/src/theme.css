@@ -2244,6 +2244,54 @@ canvas {
   color: var(--accent-busy);
 }
 
+/*
+  The mask cell is a button now, so it has to sit on the same baseline as the `.mono` cells it
+  replaces — same font, same truncation, no chrome until it is pointed at.
+*/
+.trial-brush {
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--font-mono);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trial-brush:hover,
+.trial-brush[aria-expanded="true"] {
+  color: var(--text);
+}
+
+/* Spans every column: the preview belongs to the row, not to one of its cells. */
+.trial-mask {
+  grid-column: 1 / -1;
+  margin: 4px 0 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/*
+  `align-self` matters: the figure is a flex column, so a stretched canvas is scaled by CSS to
+  the pane's width and stops matching the pixels it was drawn with.
+*/
+.trial-mask canvas {
+  align-self: flex-start;
+  max-width: 100%;
+  border: 1px solid #242428;
+  border-radius: 2px;
+}
+
+.trial-mask figcaption {
+  color: var(--text-dim);
+  font-size: 9px;
+}
+
 .trial-drop {
   border: 0;
   background: transparent;
