@@ -65,10 +65,15 @@ export function PreconditionList({
             {step.ok ? (step.mock ? "◐" : "●") : "○"}
           </span>
           <span className="k">{step.label}</span>
-          <span className="v" title={step.detail}>
+          {/*
+            The state, and nothing else. An unmet step used to spell out its own instruction in
+            amber beside it — "Drop a video above, or press Browse" — which is a tutorial in the
+            place a status belongs, and amber is this app's colour for a warning rather than for
+            a hint. The row now says what is true; what to do about it is in the section's `?`.
+          */}
+          <span className="v" title={step.fix ? `${step.detail} — ${step.fix}` : step.detail}>
             {step.detail}
           </span>
-          {!step.ok && step.fix && <span className="precondition-fix">{step.fix}</span>}
           {onFix?.(step)}
         </div>
       ))}

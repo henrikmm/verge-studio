@@ -517,6 +517,31 @@ services list` returned nothing and one image was left in the repository. **One 
 observed on hardware**: `waking` never appeared, because connecting had already woken the
 container, so only the rehearsal has exercised it against a 503.
 
+**Reviewed with the user on 2026-08-11, and four conventions came out of it.**
+
+- **Amber is a warning, never a hint.** Three lines of instruction were written in
+  `--accent-busy` — "Drop a video above, or press Browse", "Press Extract frames", and a
+  paragraph about the mock. Amber in this app means something is wrong or being spent; spending
+  it on a tutorial teaches the reader to ignore the colour. A row now states what is true and the
+  section's `?` says what to do.
+- **A `?` per row is the clutter the `?` was introduced to remove.** Five of them had appeared in
+  one pane. A control is now explained by hovering **its own label**, which carries a dotted
+  underline and opens the same panel on hover, on click and on keyboard focus. `?` is reserved for
+  a section, one or two at most.
+- **Every pane states its share of the window.** The split was in fact exactly 40/40/20
+  (512/512/256 at 1280 px), but Dockview persists whatever you drag it to and nothing on screen
+  said so, which made a correct layout indistinguishable from a drifted one.
+- **The mock is no longer a run target by default.** It answers with the roadside fixture whatever
+  it receives, so its only honest job is as a development fixture. With no service deployed Run is
+  now disabled and says "not deployed" rather than producing a scene the operator never filmed —
+  the 2026-08-05 misdiagnosis, closed at the source. An Advanced switch restores it for building
+  the interface without a GPU, which is what it is genuinely for.
+
+The Source control moved with them. It was a dropdown offering "recorded evidence" beside "live
+DA3 output", which put "which past run am I looking at?" inside the panel for configuring the next
+one. It is a readout now; the Runs pane owns that choice, and gained a **This session's run** row
+so live is reachable from the same place.
+
 **Smaller things fixed in the same pass.** The pane header rendered the mock's device string
 `NVIDIA L4 (mock)` in its most prominent slot; it now states `MODE · DA3`, and the device name
 moved onto **Current run** (was "Last run", which described the subject as history). Every
@@ -524,6 +549,28 @@ parameter control gained a `?`, including the Source control whose two options w
 explained. Pressing Run twice with nothing changed reported a failure — it is a cache hit, not a
 run, and now says so. `app/vite.config.ts` honours `PORT`, because `strictPort` meant the app could
 not start at all beside another Vite project holding 5173.
+
+### Drag cannot be automated in the browser pane — 2026-08-11
+
+**Every drag interaction in this app relies on `setPointerCapture`, and pointer capture refuses
+untrusted events.** So no synthetic pointer event, no synthetic mouse event, and not the browser
+tool's own `left_click_drag` can drive one. Ordinary `onClick` buttons in the same app work
+normally, which is what makes this look like a pane defect when it is not.
+
+Three interactions were tried and all three failed identically:
+
+| Interaction | Owner | Result |
+|---|---|---|
+| Viewport 3D orbit | our code | no camera change |
+| Dockview resize sash | third-party | no width change (measured 512/512/256 before and after) |
+| Dockview tab strip | third-party | no tab change |
+
+Dockview ships working drag in every application that uses it. A failure in **its** sash is
+therefore the harness's, and that is what rules our own canvas out as the cause.
+
+**Consequence for the design review.** Acceptance item 5 (orbit) cannot be graded automatically.
+It needs the human-gateway protocol in AGENTS.md: prepare the state, ask for the one drag, record
+the answer. Do not re-derive this — it cost a pass through three separate theories.
 
 ### Inference settings, and why each one
 

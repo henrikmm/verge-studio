@@ -34,6 +34,7 @@ import { canConnect, connectEdges, portTypeOf } from "../graph/connect";
 import { NodeCard } from "../graph/node-card";
 import { REGISTRY } from "../graph/nodes";
 import { portColor } from "../graph/types";
+import { PaneShare } from "./pane-chrome";
 
 const nodeTypes = { card: NodeCard };
 const LIVE_ONLY_NODES = new Set(["frame-source", "da3-depth"]);
@@ -246,6 +247,7 @@ function GraphCanvas() {
             ? "Measurement view · open Full graph for live DA3"
             : "Full pipeline · drag a port to rewire · click a wire, Backspace to cut it"}
         </span>
+        <PaneShare />
       </div>
       <div className="pane-body graph-canvas" ref={hostRef}>
         <div className="graph-banner">

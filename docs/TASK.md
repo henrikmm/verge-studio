@@ -88,26 +88,31 @@ not pay for a startup to watch a startup.
       that wakes the instance.
 - [ ] Record the real cold-start duration against the quoted 64 s.
 
-### 8. Verify the 3D orbit by hand
+### 8. Confirm the 3D orbit with one drag
 
-**Why.** The 2026-08-11 design review could not confirm acceptance item 5. The point cloud renders
-and the axis gizmo is visible, but two automated `left_click_drag` passes over the canvas produced
-no camera change and the first selected page text instead. Nothing in that session touched orbit, so
-this is a gap in the check rather than a known regression — and an unverified checklist item is
-exactly the kind of tick AGENTS.md says has cost this project money twice.
+**Why.** Acceptance item 5 has been unverified since 2026-08-11. The cause is now known and it is
+**not** the pane. Three separate drag interactions were tried in the browser pane and all three
+failed identically: Viewport 3D's orbit, Dockview's own resize sash, and Dockview's tab strip.
+Dockview ships working drag, so a failure there is the automation's. All three rely on
+`setPointerCapture`, which refuses events that are not trusted — so synthetic pointer events,
+synthetic mouse events and the tool's own `left_click_drag` all produce nothing, while ordinary
+`onClick` buttons in the same app work normally.
 
-**Gate.** A drag inside Viewport 3D visibly changes the view, confirmed by comparing two captures.
-Either the automation is made to work, or the human-gateway protocol is used and the result recorded.
+That closes the investigation and leaves one observation that needs a human hand. It is one drag.
+
+**Gate.** With the door fixture loaded in Viewport 3D, a drag inside the canvas visibly rotates
+the scene. Recorded in `docs/design-review-log.md` against acceptance item 5.
 
 **Regression.** None — this is a check, not a change.
 
-**Approval.** `none` to investigate; `user confirmation` only if it needs their hand on the mouse.
+**Approval.** `user confirmation`: the one drag. Everything up to it is the agent's to prepare.
 
-**Start.** `app/src/panes/viewport-3d.tsx` pointer handling; the 2026-08-11 entry in
-`docs/design-review-log.md` has what was tried.
+**Start.** The 2026-08-11 entry in `docs/design-review-log.md`.
 
-- [ ] Find out whether the drag fails because of the automation or the pane.
-- [ ] If it is the pane, that is a real defect and this task becomes a fix.
+- [x] Establish whether the failure is the automation or the pane. **The automation** — pointer
+      capture rejects untrusted events, and Dockview's own sash and tabs fail the same way.
+- [ ] Load the door fixture, put Viewport 3D in Free view, ask for one drag, record the answer.
+- [ ] Write the pointer-capture finding into the Registry so nobody re-runs this investigation.
 
 ---
 

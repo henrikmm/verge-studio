@@ -131,7 +131,7 @@ const LAYOUT_KEY = "verge.dock-layout/5";
  * each against a container of width 0, and Dockview restored that as three equal thirds. So the
  * share is applied only once the host reports a real width — see `applyDefaultSplit`.
  */
-const SIDE_PANEL_SHARE = 0.2;
+export const SIDE_PANEL_SHARE = 0.2;
 
 export interface DockState {
   /** Panel ids currently mounted in the dock. */
@@ -235,6 +235,16 @@ function addPane(pane: PaneDef): void {
  * after it and helped itself to 85 of its pixels. So the two viewers are set first, in order,
  * and the Inspector is whatever is left.
  */
+/**
+ * The three column widths for a given dock width, exported so a test can pin the arithmetic
+ * without a browser. `PaneShare` renders the same shares back on screen at runtime, so a drift
+ * between the intended split and the drawn one is visible rather than inferred.
+ */
+export function defaultColumnWidths(width: number): { depth: number; viewport: number; side: number } {
+  const viewer = Math.round((width * (1 - SIDE_PANEL_SHARE)) / 2);
+  return { depth: viewer, viewport: viewer, side: width - viewer * 2 };
+}
+
 function applyDefaultSplit(): boolean {
   if (!api) return false;
   // The GRID's width, not the host element's. The host is sized by CSS straight away while the
@@ -242,9 +252,9 @@ function applyDefaultSplit(): boolean {
   // 0 wide is normalised back to equal columns without complaint.
   const width = api.width;
   if (width <= 0) return false;
-  const viewer = Math.round((width * (1 - SIDE_PANEL_SHARE)) / 2);
-  api.getPanel("depth")?.api.setSize({ width: viewer });
-  api.getPanel("viewport")?.api.setSize({ width: viewer });
+  const { depth, viewport } = defaultColumnWidths(width);
+  api.getPanel("depth")?.api.setSize({ width: depth });
+  api.getPanel("viewport")?.api.setSize({ width: viewport });
   return true;
 }
 

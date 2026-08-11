@@ -7,8 +7,84 @@
  * second, because a hidden Viewport 3D pays to rebuild its point cloud when it returns.
  */
 
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { hidePane, toggleFocus, useDock } from "../lib/dock-store";
+
+/**
+ * How much of the window this pane is taking, live.
+ *
+ * The layout is meant to be 40/40/20 and Dockview persists whatever you drag it to, so after any
+ * session of resizing there is no way to tell what the split actually is short of measuring it in
+ * a console. This is that measurement, on screen, in every pane: you drag a sash and both numbers
+ * move, so "is it still 40/40/20?" stops being a question anybody has to take on trust.
+ *
+ * It measures its own `.pane` ancestor against the Dockview root rather than `window.innerWidth`,
+ * because the dock is not the whole window — the status bar has 25 px of it — and a height share
+ * computed against the window would never reach 100%.
+ *
+ * The second figure only appears when the pane is not full height. In the default arrangement all
+ * three columns are, so a lone `40%` is the honest reading; open the Graph below and the panes
+ * above it start reporting `40 × 62%`.
+ */
+export function PaneShare() {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [share, setShare] = useState<{ w: number; h: number } | null>(null);
+  const [moving, setMoving] = useState(false);
+  const settle = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    const pane = ref.current?.closest(".pane") as HTMLElement | null;
+    const dock = document.querySelector(".dv-dockview") as HTMLElement | null;
+    if (!pane || !dock) return;
+
+    const measure = () => {
+      const p = pane.getBoundingClientRect();
+      const d = dock.getBoundingClientRect();
+      if (d.width === 0 || d.height === 0) return;
+      setShare((prior) => {
+        const next = { w: (p.width / d.width) * 100, h: (p.height / d.height) * 100 };
+        // Round to the same place it is displayed, so a sub-0.1% reflow does not flash the
+        // "moving" highlight while nobody is touching anything.
+        const same =
+          prior !== null && Math.round(prior.w * 10) === Math.round(next.w * 10) &&
+          Math.round(prior.h * 10) === Math.round(next.h * 10);
+        if (!same) {
+          setMoving(true);
+          window.clearTimeout(settle.current);
+          settle.current = window.setTimeout(() => setMoving(false), 600);
+        }
+        return same ? prior : next;
+      });
+    };
+
+    // Both boxes: the pane changes when a sash moves, the dock when the window does.
+    const observer = new ResizeObserver(measure);
+    observer.observe(pane);
+    observer.observe(dock);
+    measure();
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(settle.current);
+    };
+  }, []);
+
+  const text =
+    share === null
+      ? "—"
+      : share.h > 95
+        ? `${share.w.toFixed(0)}%`
+        : `${share.w.toFixed(0)} × ${share.h.toFixed(0)}%`;
+
+  return (
+    <span
+      ref={ref}
+      className={`pane-share${moving ? " moving" : ""}`}
+      title="Share of the dock area this pane occupies, width first. The default arrangement is 40/40/20 across the three columns; drag a sash and this follows."
+    >
+      {text}
+    </span>
+  );
+}
 
 export interface OutputChoice {
   id: string;
@@ -49,6 +125,7 @@ export function PaneControls({
       <span className="ms">{elapsedMs.toFixed(1)} ms</span>
       {extra}
       <span className="spacer" />
+      <PaneShare />
       {paneId !== undefined && (
         <>
           <button

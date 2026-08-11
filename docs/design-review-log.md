@@ -6,6 +6,31 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
+## 2026-08-11 — Amber removed, help on labels, pane shares, 1280×800 (commit pending, on a311aa7)
+
+A second pass the same day, from the user's review of the first. Four conventions changed; graded
+on the items they touch rather than the full checklist, which the entry below covers.
+
+- **The split really is 40/40/20** — measured 512 / 512 / 256 px of a 1280 px dock, and each pane
+  now prints its own share in its status row, so this stops being something to take on trust.
+  `dock-split.test.ts` pins the arithmetic from 1024 px up; the worst rounding error is 0.08
+  points, at 1024 px, where the side column reads 19.92%.
+- **Item 26, no amber instruction text** — **PASS**. Zero `.inspector-note` elements in the Setup
+  pane body on a fresh load; the three that existed were two precondition hints and the mock
+  paragraph.
+- **Item 27, `?` parsimony** — **PASS**. Counted per section: Clip 1, Run 1, Parameters 1, Run
+  Source 0, Current run 0. Five parameter rows lost theirs and gained a dotted-underline label
+  that opens the same panel; verified opening on `pointerover`, on click (`aria-expanded=true`)
+  and closing on Escape.
+- **Item 28, pane shares** — **PASS**. `40%`, `40%`, `20%` read straight off the three panes.
+- **Item 19 at a narrow pane** — **PASS**, re-measured with the new rows: zero overflowing
+  children at 180 px and at 256 px.
+- **Item 5, orbit** — still **NOT VERIFIED**, but no longer a mystery. Dockview's own sash and tab
+  strip fail to drag under exactly the same conditions, and Dockview ships working drag; all three
+  interactions use `setPointerCapture`, which rejects untrusted events. The harness cannot do it.
+  Registry section 3 records this so it is not investigated a fourth time; TASK 8 now asks for the
+  one human drag.
+
 ## 2026-08-11 — Setup pane, deploy control and run phases, 1280×800 (commit pending, on 7408ad8)
 
 Full pass after the upload/deploy/inference work. Graded on `da3Test.mp4` (13.5 s, 1920×1080)

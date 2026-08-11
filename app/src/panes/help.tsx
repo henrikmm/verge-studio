@@ -12,12 +12,22 @@
  * figure, a mock-backed readout, an instance that is still billing — those are warnings, not
  * explanations, and hiding one behind a hover would be a lie of omission.
  *
+ * ## Two handles, and how to choose
+ *
+ * `HelpDot` is the `?`. It belongs to a **section** — the thing with no label of its own to hang
+ * an explanation on. **At most one or two per section**, because a dot per row is the clutter the
+ * dot was introduced to remove.
+ *
+ * `HelpTerm` wraps a **control's own label**, so hovering the name explains the control. Same
+ * panel, no extra glyph, just a dotted underline. This is the default for a parameter row; reach
+ * for a `?` only when there is nothing to underline.
+ *
  * ## Why not `title`
  *
  * The native tooltip is used all over this app for short chip labels and it stays there. It is the
  * wrong tool for a paragraph: about a second of delay, an OS-styled light box that fights a dark
  * interface, no control over wrapping width, and — the one that matters — it never appears for a
- * keyboard user. This opens instantly, on hover *and* on focus, in the app's own palette.
+ * keyboard user. Both handles above open instantly, on hover *and* on focus, in the app's palette.
  *
  * ## Why a portal
  *
@@ -27,18 +37,171 @@
  * inside the window instead — measured against the viewport, not guessed from the side it is on.
  */
 
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type ReactElement,
+} from "react";
 import { createPortal } from "react-dom";
 
-/** Gap between the `?` and its panel, and the margin it keeps from the window edge. */
+/** Gap between the trigger and its panel, and the margin it keeps from the window edge. */
 const OFFSET_PX = 6;
 const MARGIN_PX = 8;
-/** Grace period so the pointer can travel from the `?` to the panel without it closing. */
+/** Grace period so the pointer can travel from the trigger to the panel without it closing. */
 const CLOSE_DELAY_MS = 120;
 
 interface Placement {
   left: number;
   top: number;
+}
+
+/**
+ * The popover itself, without opinions about what opens it.
+ *
+ * Two things open one: a `?` for a whole section, and a control's own label for that control. The
+ * placement, the flip, the portal, the Escape handling and the travel grace period are identical
+ * either way, so they live here once and the two triggers below are thin.
+ */
+function useHelpPopover(): {
+  open: boolean;
+  id: string;
+  anchorRef: React.RefObject<HTMLElement | null>;
+  show: () => void;
+  hide: () => void;
+  toggle: () => void;
+  panel: (children: ReactNode) => ReactElement | null;
+} {
+  const id = useId();
+  const anchorRef = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<number | undefined>(undefined);
+  const [open, setOpen] = useState(false);
+  const [placement, setPlacement] = useState<Placement | null>(null);
+
+  const show = () => {
+    window.clearTimeout(closeTimer.current);
+    setOpen(true);
+  };
+  const hide = () => {
+    window.clearTimeout(closeTimer.current);
+    closeTimer.current = window.setTimeout(() => setOpen(false), CLOSE_DELAY_MS);
+  };
+  const toggle = () => {
+    window.clearTimeout(closeTimer.current);
+    setOpen((value) => !value);
+  };
+
+  useEffect(() => () => window.clearTimeout(closeTimer.current), []);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setPlacement(null);
+      return;
+    }
+    const anchor = anchorRef.current?.getBoundingClientRect();
+    const panel = panelRef.current?.getBoundingClientRect();
+    if (!anchor || !panel) return;
+
+    let left = anchor.left;
+    if (left + panel.width > window.innerWidth - MARGIN_PX) left = anchor.right - panel.width;
+    left = Math.max(MARGIN_PX, Math.min(left, window.innerWidth - panel.width - MARGIN_PX));
+
+    let top = anchor.bottom + OFFSET_PX;
+    if (top + panel.height > window.innerHeight - MARGIN_PX) {
+      top = anchor.top - panel.height - OFFSET_PX;
+    }
+    top = Math.max(MARGIN_PX, Math.min(top, window.innerHeight - panel.height - MARGIN_PX));
+
+    setPlacement({ left, top });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      window.clearTimeout(closeTimer.current);
+      setOpen(false);
+      anchorRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [open]);
+
+  const panel = (children: ReactNode) =>
+    open
+      ? createPortal(
+          <div
+            ref={panelRef}
+            id={id}
+            role="tooltip"
+            className="help-panel"
+            style={{
+              left: placement?.left ?? 0,
+              top: placement?.top ?? 0,
+              visibility: placement ? "visible" : "hidden",
+            }}
+            onPointerEnter={show}
+            onPointerLeave={hide}
+          >
+            {children}
+          </div>,
+          document.body,
+        )
+      : null;
+
+  return { open, id, anchorRef, show, hide, toggle, panel };
+}
+
+/**
+ * A control's own label, explaining itself on hover.
+ *
+ * The `?` was applied to every row and the result was a column of them — one per parameter, plus
+ * one per section, which is the visual noise the dot was introduced to remove. So a control's
+ * explanation now hangs off the thing it explains: hover or focus the label and the same panel
+ * opens. A dotted underline is the only mark it leaves, which is enough to say "there is more
+ * here" without competing with the value beside it.
+ *
+ * Deliberately NOT a native `title`. That would be about a second of delay, an OS-styled light box
+ * against a dark interface, and nothing at all for a keyboard — the reasons DESIGN.md gives for
+ * banning `title` on a paragraph. This is the same popover the `?` opens, with a different handle.
+ */
+export function HelpTerm({ children, help }: { children: ReactNode; help: ReactNode }) {
+  const pop = useHelpPopover();
+  return (
+    <>
+      <span
+        ref={pop.anchorRef as React.RefObject<HTMLSpanElement>}
+        className="help-term nodrag"
+        // Focusable so the explanation is reachable without a pointer. `role="button"` because it
+        // does something on activation rather than merely describing the row.
+        tabIndex={0}
+        role="button"
+        aria-expanded={pop.open}
+        aria-describedby={pop.open ? pop.id : undefined}
+        onPointerEnter={pop.show}
+        onPointerLeave={pop.hide}
+        onFocus={pop.show}
+        onBlur={pop.hide}
+        onClick={(event) => {
+          event.stopPropagation();
+          pop.toggle();
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          pop.toggle();
+        }}
+      >
+        {children}
+      </span>
+      {pop.panel(help)}
+    </>
+  );
 }
 
 export function HelpDot({

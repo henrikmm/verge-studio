@@ -56,6 +56,11 @@ Layout otherwise persists across reloads, with a Reset control.
 **Pane chrome.** Tab strip 28 px or shorter, labels 11–12 px. Directly beneath it a status row
 carrying live numbers, not just words — point counts, elapsed time, stale counts, selected pixels.
 
+**Every pane states its share of the window**, in mono at the right of that row: `40%`, or
+`40 × 62%` when it is not full height. Dockview persists whatever you drag it to, so without this
+the only way to know whether the layout is still 40/40/20 is to measure it in a console. It
+brightens for a moment while a sash is moving, so it is findable mid-drag.
+
 **Every control row wraps.** Since 2026-08-08 `.output-row`, `.pane-controls`, `.brush-toolbar`,
 `.frame-toolbar` and `.segment-toolbar` all wrap onto a second line rather than clipping, and a
 labelled slider may shrink below its own caption width. A taller row costs canvas; a clipped row
@@ -91,6 +96,25 @@ hover, opens on keyboard focus too, Escape closes, dark palette, wrapped to abou
 line, portalled so no pane's hidden overflow can clip it. The native `title` tooltip stays for
 short chip labels and is not acceptable for a paragraph: a second of delay, an OS-styled light box
 and nothing at all for a keyboard.
+
+**A control's own label is the handle, not a `?` beside it.** A parameter explains itself when you
+hover its name — a dotted underline is the only mark it leaves, and it opens the same panel the
+`?` does. **At most one or two `?` per section**, reserved for the section itself, which has no
+label to hang an explanation on. A dot per row rebuilds exactly the clutter the dot was introduced
+to remove; that happened once, on 2026-08-11, across Mode, Source, Recorded run, Sampling FPS and
+Max frames at the same time.
+
+### Amber is a warning, never a hint
+
+⚠️ **Do not write instructions in `--accent-busy` in a pane body.** Amber means *something is wrong
+or costing you money right now*: a capped frame plan, an extrapolated VRAM figure, an instance
+still billing. Spending it on "Drop a video above, or press Browse" teaches the reader to ignore
+the colour, and it puts a tutorial where a status belongs.
+
+A row says **what is true**. What to do about it belongs behind the section's `?`, or in a
+tutorial surface if one is ever built. Three such lines were removed on 2026-08-11 — two
+precondition hints and a paragraph about the mock — and the rule is here so they do not come back
+one at a time.
 
 ## Colour
 
@@ -251,7 +275,10 @@ Design constraints, not copy guidelines.
 2. **Never silently change the user's settings.** When the frame limit forces a lower sampling
    rate, say so, show the arithmetic, and state that the frames still span the whole clip.
 3. **Distinguish mock from real.** Anything backed by a fixture or the offline mock is labelled,
-   so a screenshot can never be mistaken for a real run.
+   so a screenshot can never be mistaken for a real run. Since 2026-08-11 the mock is not a run
+   target at all unless an Advanced switch says so: it answers with the roadside fixture whatever
+   it receives, so by default Run refuses rather than producing a scene the operator never filmed.
+   It remains the development fixture that lets this interface be built without a GPU.
 4. **No invented currency figures.** The app has no billing data and the machine's lifetime starts
    before our first contact, so it reports elapsed instance time rather than a made-up cost.
 5. **A progress bar must be fed by something counted.** The only proportion drawn during a run is
@@ -316,3 +343,9 @@ Design constraints, not copy guidelines.
 25. **The service lifecycle is one control with four states, and only `Live` glows.** Deploy and
     delete each confirm. A service left alive by an earlier session reads as `Deployed` on load,
     from a status call that cannot wake anything.
+26. **No amber instruction text.** Nothing in `--accent-busy` in a pane body is a hint about what
+    to press; every amber line names something wrong or something being spent right now.
+27. **At most two `?` per section, and none on a parameter row.** A control is explained by
+    hovering its own label, which carries a dotted underline and opens on keyboard focus too.
+28. **Every pane shows its share of the window**, and the three columns read 40/40/20 on a fresh
+    layout at 1280×800.

@@ -42,31 +42,34 @@ export const fixtureRunSpec: NodeSpec = {
   defaults: { source: "live", runId: DEFAULT_RUN_ID },
   activeInputs: (params) => (String(params.source) === "live" ? ["live"] : []),
   controls: [
+    /**
+     * A readout, not a dropdown, since 2026-08-11.
+     *
+     * Offering the choice here was wrong twice over. It put "which past run am I looking at?" in
+     * the panel for configuring the next one, and it made recorded evidence something you could
+     * fall into by touching a control rather than something you deliberately went and chose. The
+     * Runs pane owns that decision — it is the surface that knows what is on this disk and how
+     * big it is — and picking a run there sets this. Live is where a fresh session starts.
+     */
     {
-      kind: "select",
+      kind: "readout",
       key: "source",
       label: "Source",
       help:
-        "Which reconstruction everything downstream measures. **Live DA3 output** is the run " +
-        "made in this session — it costs GPU time and is discarded on reload unless you save " +
-        "it in the Runs pane. **Recorded evidence** is a run already on this disk: a built-in " +
-        "fixture or one you saved. Recorded runs are free, repeatable, and are what the " +
-        "measurements in MEASUREMENTS.md are graded against. Pick one from the Runs pane.",
-      options: [
-        { value: "live", label: "live DA3 output" },
-        { value: "recorded", label: "recorded evidence" },
-      ],
+        "Which reconstruction everything downstream measures. **live** is the run made in this " +
+        "session: it costs GPU time and is discarded on reload unless you save it in the Runs " +
+        "pane. **recorded** is a run already on this disk, and it is what the measurements in " +
+        "MEASUREMENTS.md are graded against. Choose one in the Runs pane; this row reports " +
+        "which is feeding the measurement branch right now.",
     },
-    // The recorded run is chosen in the Runs pane, which knows what is on disk and how big
-    // it is. A static option list here could only ever describe the three built-ins.
     {
       kind: "readout",
       key: "runId",
       label: "Recorded run",
       help:
-        "The saved run feeding the measurement branch, when Source is recorded evidence. " +
-        "Change it in the Runs pane — it lists what is actually on this disk, with each run's " +
-        "size, which a fixed list here never could.",
+        "The saved run feeding the measurement branch, when Source is recorded. Change it in " +
+        "the Runs pane — it lists what is actually on this disk, with each run's size, which a " +
+        "fixed list here never could.",
     },
   ],
   execute: async ({ inputs, params }) => {

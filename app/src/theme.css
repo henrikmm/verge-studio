@@ -797,6 +797,98 @@ body {
   cursor: default;
 }
 
+/*
+ * A control's label that explains itself on hover. The dotted underline is the whole affordance
+ * — enough to say "there is more here", and quiet enough that a column of them does not become
+ * the noise a `?` per row was.
+ */
+.help-term {
+  text-decoration: underline dotted var(--text-dim);
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+.help-term:hover,
+.help-term:focus-visible {
+  color: var(--text);
+  text-decoration-color: var(--text);
+  outline: none;
+}
+
+/*
+ * Share of the dock this pane holds. The layout is meant to be 40/40/20 and Dockview persists
+ * whatever you drag it to, so this is the only thing that answers "is it still?" without a
+ * console.
+ */
+.pane-share {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 0 4px;
+  border-radius: 2px;
+  transition: color 160ms linear, background 160ms linear;
+}
+
+/* Brief highlight while a sash is moving, so the number is findable mid-drag. */
+.pane-share.moving {
+  color: var(--emph-hi);
+  background: var(--bg-node);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-share {
+    transition: none;
+  }
+}
+
+/* The way back to this session's run, at the top of the Runs list. */
+.run-live-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: calc(100% - 16px);
+  margin: 4px 8px;
+  padding: 4px 6px;
+  background: var(--bg-node);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.run-live-row:hover:not(:disabled) {
+  border-color: var(--text-dim);
+}
+
+.run-live-row:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.run-live-row.active {
+  border-color: var(--emph-hi);
+}
+
+.run-live-glyph {
+  flex: none;
+  font-family: var(--font-mono);
+}
+
+.run-live-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.run-live-note {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
 /* A `?` that has no heading to sit in — it ends a block of rows instead. */
 .section-help,
 .budget-help {

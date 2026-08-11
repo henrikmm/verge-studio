@@ -66,8 +66,9 @@ import { update, useSession } from "../lib/session-store";
 import { useAdvanced } from "../lib/ui-mode";
 import { FRAME_SOURCE_ID, extractClipFrames, loadClip } from "../lib/load-clip";
 import { isRunActive, useRunPhase } from "../lib/run-phase";
+import { setMockTargetAllowed, useMockTargetAllowed } from "../lib/dev-target";
 import { clearRunReadout, preconditions, runInference } from "../lib/run-inference";
-import { HelpDot } from "./help";
+import { HelpDot, HelpTerm } from "./help";
 import { ContactSheet } from "./contact-sheet";
 import { PhaseReadout, PreconditionList } from "./run-readout";
 import {
@@ -82,6 +83,7 @@ import { REGISTRY } from "../graph/nodes";
 import type { ControlSpec } from "../graph/types";
 import type { FramesValue } from "../graph/nodes/frame-source";
 import type { DepthFieldValue } from "../measurement/depth-field";
+import { PaneShare } from "./pane-chrome";
 
 /** How long an idle instance may sit before the pane says so. Cloud Run bills its whole
  *  lifetime, so ten quiet minutes cost the same as ten busy ones. */
@@ -139,15 +141,15 @@ function HelpText({ text }: { text: string }) {
   );
 }
 
+/**
+ * The label explains its own control. No `?` per row — hovering the name is the affordance, and
+ * the dotted underline is the only mark it leaves. See `help.tsx` for why not a native `title`.
+ */
 function ControlLabel({ spec }: { spec: ControlSpec }) {
+  if (!spec.help) return <span className="k">{spec.label}</span>;
   return (
     <span className="k">
-      {spec.label}
-      {spec.help && (
-        <HelpDot label={`What ${spec.label} does`}>
-          <HelpText text={spec.help} />
-        </HelpDot>
-      )}
+      <HelpTerm help={<HelpText text={spec.help} />}>{spec.label}</HelpTerm>
     </span>
   );
 }
@@ -354,14 +356,17 @@ function ClipSection() {
         <>
           <div className="inspector-row control">
             <span className="k">
-              Sampling FPS
-              <HelpDot label="What Sampling FPS does">
-                <p>
-                  How many frames a second to take. Frames are spread across the <b>whole</b> clip
-                  at this rate — the video is never trimmed to a window, because accuracy here
-                  comes from comparing many views of one scene.
-                </p>
-              </HelpDot>
+              <HelpTerm
+                help={
+                  <p>
+                    How many frames a second to take. Frames are spread across the <b>whole</b>{" "}
+                    clip at this rate — the video is never trimmed to a window, because accuracy
+                    here comes from comparing many views of one scene.
+                  </p>
+                }
+              >
+                Sampling FPS
+              </HelpTerm>
             </span>
             <input
               type="range"
@@ -382,14 +387,17 @@ function ClipSection() {
           </div>
           <div className="inspector-row control">
             <span className="k">
-              Max frames
-              <HelpDot label="What Max frames does">
-                <p>
-                  The ceiling on frames sent to the GPU. 112 is deliberately below the measured
-                  ceiling: 144 frames ran at 21.88 GiB of the card's 22.03, and 160 ran out of
-                  memory. 112 measured 17.23 GiB — about 15% headroom.
-                </p>
-              </HelpDot>
+              <HelpTerm
+                help={
+                  <p>
+                    The ceiling on frames sent to the GPU. 112 is deliberately below the measured
+                    ceiling: 144 frames ran at 21.88 GiB of the card's 22.03, and 160 ran out of
+                    memory. 112 measured 17.23 GiB — about 15% headroom.
+                  </p>
+                }
+              >
+                Max frames
+              </HelpTerm>
             </span>
             <input
               type="range"
@@ -525,7 +533,6 @@ function RunSection({ onDeploy }: { onDeploy: () => void }) {
   const steps = preconditions();
   const ready = steps.every((step) => step.ok);
   const busy = isRunActive();
-  const mockTarget = steps.some((step) => step.id === "target" && step.mock);
 
   return (
     <div className="inspector-section">
@@ -536,6 +543,11 @@ function RunSection({ onDeploy }: { onDeploy: () => void }) {
             The extracted frames are sent to the depth model, which returns a depth value for
             every pixel of every frame plus where the camera was for each one. This is the only
             control in the app that spends GPU time.
+          </p>
+          <p>
+            Three things have to be true first, and the list above says which are. <b>Clip</b> —
+            drop a video at the top of this pane, or press Browse. <b>Frames</b> — press Extract
+            frames. <b>GPU service</b> — press Deploy in the status bar.
           </p>
           <p>
             Cloud Run bills an instance's <b>whole lifetime</b> once it wakes — cold start and
@@ -556,12 +568,11 @@ function RunSection({ onDeploy }: { onDeploy: () => void }) {
         }
       />
 
-      {mockTarget && (
-        <div className="inspector-note">
-          The mock returns the roadside fixture whatever you send it — labelled MOCK, and not a
-          reconstruction of this clip. Deploy a service for a real run.
-        </div>
-      )}
+      {/*
+        Not a paragraph in the pane body. The step above already reads "local mock · fixture
+        geometry", the result carries MOCK on the run, on the card and across both viewers, and
+        this state now requires a deliberate Advanced switch to reach at all.
+      */}
 
       <div className="inspector-actions">
         <button
@@ -597,9 +608,10 @@ function RunSection({ onDeploy }: { onDeploy: () => void }) {
  *
  * Off by default, and only ever offered against the mock. It cannot make a real service slower.
  */
-function MockLatencySwitch() {
+function MockDevSwitches() {
   const [enabled, setEnabled] = useState(false);
   const [known, setKnown] = useState(false);
+  const asTarget = useMockTargetAllowed();
 
   useEffect(() => {
     void fetch("/api/mock/latency")
@@ -618,19 +630,53 @@ function MockLatencySwitch() {
     <>
       <div className="inspector-row control">
         <span className="k">
-          Rehearse cold start
-          <HelpDot label="What this does">
-            <p>
-              Makes the offline mock pretend to be a cold Cloud Run service: 6 s with nothing
-              answering, then 4 s of model load, before the usual run. About a tenth of the
-              measured 64 s and 40 s — long enough to watch each phase arrive, short enough to
-              iterate on.
-            </p>
-            <p>
-              It exists so the run readout can be built and reviewed without a GPU. It affects
-              the local mock only and can never slow a real service.
-            </p>
-          </HelpDot>
+          <HelpTerm
+            help={
+              <>
+                <p>
+                  Lets the offline mock satisfy the GPU-service step, so a run can be exercised
+                  with no service deployed. <b>Off by default, and it should stay off.</b>
+                </p>
+                <p>
+                  The mock answers with the roadside fixture whatever you send it, so the result
+                  is a different scene wearing your clip's frames. That was mistaken for a real
+                  run once already. It exists so this interface can be built without a GPU, not
+                  so anything can be measured.
+                </p>
+              </>
+            }
+          >
+            Mock as run target
+          </HelpTerm>
+        </span>
+        <input
+          type="checkbox"
+          aria-label="Allow the local mock to satisfy the GPU service step"
+          checked={asTarget}
+          onChange={(event) => setMockTargetAllowed(event.target.checked)}
+        />
+        <span className="v num">{asTarget ? "on" : "off"}</span>
+      </div>
+      <div className="inspector-row control">
+        <span className="k">
+          <HelpTerm
+            help={
+              <>
+                <p>
+                  Makes the offline mock pretend to be a cold Cloud Run service: 6 s with nothing
+                  answering, then 4 s of model load, before the usual run. About a tenth of the
+                  measured 64 s and 40 s — long enough to watch each phase arrive, short enough to
+                  iterate on.
+                </p>
+                <p>
+                  It exists so the run readout can be built and reviewed without a GPU. It affects
+                  the local mock only and can never slow a real service.
+                </p>
+              </>
+            }
+          >
+            Rehearse cold start
+          </HelpTerm>
         </span>
         <input
           type="checkbox"
@@ -648,12 +694,6 @@ function MockLatencySwitch() {
         />
         <span className="v num">{enabled ? "on" : "off"}</span>
       </div>
-      {enabled && (
-        <div className="inspector-note">
-          The mock is pretending to be cold. This is a rehearsal of the readout, not a
-          measurement of anything.
-        </div>
-      )}
     </>
   );
 }
@@ -786,6 +826,7 @@ export function SetupPane() {
           MODE · DA3
         </span>
         <span className="hint">{selected ? spec?.label : "no selection"}</span>
+        <PaneShare />
       </div>
       <div className="pane-body inspector">
         <ClipSection />
@@ -826,18 +867,23 @@ export function SetupPane() {
               />
               <div className="inspector-row control">
                 <span className="k">
-                  Mode
-                  <HelpDot label="What auto and paused mean">
-                    <p>
-                      <b>auto</b> re-runs this node whenever its inputs change. <b>paused</b>
-                      leaves it stale until you press Run.
-                    </p>
-                    <p>
-                      DA3 Depth and Frame Source ship paused, for the same reason in two
-                      currencies: one spends GPU money, the other spends up to 11.7 s of this
-                      Mac decoding a 4K clip. Neither should start because a slider moved.
-                    </p>
-                  </HelpDot>
+                  <HelpTerm
+                    help={
+                      <>
+                        <p>
+                          <b>auto</b> re-runs this node whenever its inputs change.{" "}
+                          <b>paused</b> leaves it stale until you press Run.
+                        </p>
+                        <p>
+                          DA3 Depth and Frame Source ship paused, for the same reason in two
+                          currencies: one spends GPU money, the other spends up to 11.7 s of this
+                          Mac decoding a 4K clip. Neither should start because a slider moved.
+                        </p>
+                      </>
+                    }
+                  >
+                    Mode
+                  </HelpTerm>
                 </span>
                 <input
                   type="checkbox"
@@ -861,7 +907,7 @@ export function SetupPane() {
                       The settings of the selected node — {spec.label} right now. Click a
                       different node in the Graph and these change with it.
                     </p>
-                    <p>Each row's own `?` says what that setting does.</p>
+                    <p>Hover any underlined label to see what that setting does.</p>
                   </HelpDot>
                 </h3>
                 {spec.controls.map((control) => (
@@ -1167,7 +1213,7 @@ export function SetupPane() {
             ) : (
               <Row k="State" v={remote ? "not polled — press Refresh" : "unreachable"} />
             )}
-            {!remote && <MockLatencySwitch />}
+            {!remote && <MockDevSwitches />}
           </div>
         )}
 

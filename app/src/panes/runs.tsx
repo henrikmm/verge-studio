@@ -120,6 +120,10 @@ export function RunsPane() {
 
   const fixture = graph.nodes.find((node) => node.id === FIXTURE_RUN_ID);
   const activeId = String(fixture?.params.runId ?? DEFAULT_RUN_ID);
+  const liveSelected = String(fixture?.params.source ?? "live") === "live";
+  // A live run exists once DA3 holds an output. Its manifest is not a run record until saved,
+  // so the graph runtime — not the registry — is what knows whether there is one.
+  const hasLiveRun = Boolean(graph.runtime["da3-depth"]?.outputs?.depth);
 
   const savedBytes = runs.runs.reduce((total, run) => total + (run.sizeBytes || 0), 0);
   const transient = runs.runs.filter((run) => !run.persisted).length;
@@ -176,8 +180,34 @@ export function RunsPane() {
         </div>
         {runs.error && <div className="evidence-warning">{runs.error}</div>}
         {note && <div className="evidence-warning">{note}</div>}
+        {/*
+          The way back to the live run, because this pane now owns the choice entirely — the
+          Source control in Setup became a readout, so without this a recorded run would be a
+          one-way door.
+        */}
+        <button
+          className={`run-live-row${liveSelected ? " active" : ""}`}
+          disabled={!hasLiveRun}
+          title={
+            hasLiveRun
+              ? "Point the measurement branch back at this session's DA3 run."
+              : "No live run in this session yet. Load a clip in Setup and press Run."
+          }
+          onClick={() => {
+            setNodeParam(FIXTURE_RUN_ID, "source", "live");
+            void runAuto();
+          }}
+        >
+          <span className="run-live-glyph" aria-hidden="true">
+            {liveSelected ? "●" : "○"}
+          </span>
+          <span className="run-live-label">This session's run</span>
+          <span className="run-live-note mono">
+            {hasLiveRun ? (liveSelected ? "showing" : "live DA3") : "not run yet"}
+          </span>
+        </button>
         {runs.runs.length === 0 && !runs.loading && (
-          <div className="pane-hint">No runs yet. Load a clip in the Inspector and run DA3.</div>
+          <div className="pane-hint">No runs yet. Load a clip in Setup and press Run.</div>
         )}
         {runs.runs.map((run) => (
           <RunRow

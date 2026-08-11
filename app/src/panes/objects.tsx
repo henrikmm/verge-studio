@@ -60,6 +60,7 @@ import {
   type MeasurementObject,
 } from "../measurement/measurement-store";
 import type { RunRecord } from "../lib/runs";
+import { PaneShare } from "./pane-chrome";
 
 function mean(values: number[]): number {
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : NaN;
@@ -622,6 +623,7 @@ export function ObjectsPane() {
           {targets.length} target{targets.length === 1 ? "" : "s"} · {ui.observations.length} trials
         </span>
         <span className="hint">{activeRun?.clipName || "no clip"}</span>
+        <PaneShare />
       </div>
       <div className="pane-body objects-pane">
         <section className="object-context">

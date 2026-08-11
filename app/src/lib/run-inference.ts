@@ -21,6 +21,7 @@ import { FIXTURE_RUN_ID } from "../graph/nodes";
 import { getGraph, nodeById, runAuto, runNode, setNodeParams } from "../graph/graph-store";
 import type { FramesValue } from "../graph/nodes/frame-source";
 import { getCloud } from "./cloud-store";
+import { mockTargetAllowed } from "./dev-target";
 import { FRAME_SOURCE_ID } from "./load-clip";
 import { beginRun, failRun, finishRun, resetRun } from "./run-phase";
 
@@ -61,15 +62,29 @@ export function preconditions(): Precondition[] {
   const cloud = getCloud();
 
   const target: Precondition = cloud.baseUrl === null
-    ? {
-        id: "target",
-        label: "GPU service",
-        ok: true,
-        // Short enough to survive a 320 px pane without ellipsis. What the mock actually
-        // returns is the note underneath, which has a full line to say it in.
-        detail: "local mock · free",
-        mock: true,
-      }
+    ? mockTargetAllowed()
+      ? {
+          id: "target",
+          label: "GPU service",
+          ok: true,
+          detail: "local mock · fixture geometry",
+          mock: true,
+        }
+      : {
+          /**
+           * Not a target unless somebody deliberately made it one.
+           *
+           * The mock answers `/infer` with the roadside fixture whatever it receives, so letting
+           * it satisfy this step meant the default state of the app could produce a "run" of a
+           * scene the operator never filmed. Saved runs live in the Runs pane; a new run needs a
+           * GPU.
+           */
+          id: "target",
+          label: "GPU service",
+          ok: false,
+          detail: "not deployed",
+          fix: "Press Deploy in the status bar",
+        }
     : cloud.state === "unreachable"
       ? {
           id: "target",
