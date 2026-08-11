@@ -1035,13 +1035,24 @@ export function SetupPane() {
                   {status.service.exists && !remote && (
                     <button
                       disabled={busy || !status.service.url}
-                      title="Route GPU calls through the dev server, which signs them from this Mac's gcloud credentials. No token is stored in the browser. The first request wakes the instance and starts the meter."
+                      title="Point the app at the service. Requests are signed inside the dev server from this Mac's gcloud credentials, and no token is stored in the browser. This does not wake the instance — the first real request does."
                       onClick={() =>
                         act(async () => {
+                          /**
+                           * Connecting must not wake anything, and until 2026-08-11 it did.
+                           *
+                           * This called `getGpu()` immediately, so pressing Connect started the
+                           * meter — while the help text beside it said "connecting starts nothing
+                           * by itself". That is a lie in the interface about the one thing here
+                           * that costs money, and it is also why a cold start had never been
+                           * observed: by the time Run was pressed, the container was already up.
+                           *
+                           * `cold` is the honest state for a service nobody has contacted.
+                           * Telemetry is a press of Refresh away, and that press is the operator
+                           * choosing to spend.
+                           */
                           connectProxied(status.service.url!, PROXY_BASE);
-                          const snapshot = await getGpu();
-                          update({ gpu: snapshot });
-                          setCloudState(snapshot.modelLoaded ? "warm" : "cold");
+                          setCloudState("cold");
                         })
                       }
                     >

@@ -816,30 +816,24 @@ body {
 }
 
 /*
- * Share of the dock this pane holds. The layout is meant to be 40/40/20 and Dockview persists
- * whatever you drag it to, so this is the only thing that answers "is it still?" without a
- * console.
+ * Share of the dock this pane holds, shown only while a sash is being dragged. All three appear
+ * together, which is what makes 40/40/20 checkable at a glance; the rest of the time the status
+ * rows belong to the readouts the panes exist for.
  */
 .pane-share {
   flex: none;
   font-family: var(--font-mono);
   font-size: 10px;
-  color: var(--text-dim);
-  padding: 0 4px;
-  border-radius: 2px;
-  transition: color 160ms linear, background 160ms linear;
-}
-
-/* Brief highlight while a sash is moving, so the number is findable mid-drag. */
-.pane-share.moving {
   color: var(--emph-hi);
   background: var(--bg-node);
+  border: 1px solid var(--border);
+  padding: 0 4px;
+  border-radius: 2px;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .pane-share {
-    transition: none;
-  }
+/* `hidden` is what the component sets when idle; without this the UA default loses to flex. */
+.pane-share[hidden] {
+  display: none;
 }
 
 /* The way back to this session's run, at the top of the Runs list. */

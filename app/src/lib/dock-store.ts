@@ -141,6 +141,63 @@ export interface DockState {
   ready: boolean;
 }
 
+/**
+ * Is a resize sash being dragged right now?
+ *
+ * Every pane's share readout is drawn from this, and only from this: the numbers appear on all
+ * three panes together the moment a sash is grabbed and go away afterwards. Permanently visible
+ * they were four more figures competing with the readouts the panes exist for, and the question
+ * they answer — "what did I just do to the layout?" — is only ever asked while the answer is
+ * changing.
+ *
+ * A document-level listener in the CAPTURE phase, because Dockview takes pointer capture on the
+ * sash as soon as the drag starts; a bubbling listener would see the down event but never the up.
+ */
+let sashDragging = false;
+const dragListeners = new Set<() => void>();
+let dragTail: number | undefined;
+
+function setSashDragging(next: boolean): void {
+  if (next === sashDragging) return;
+  sashDragging = next;
+  for (const listener of dragListeners) listener();
+}
+
+if (typeof document !== "undefined") {
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      const target = event.target as Element | null;
+      if (!target?.closest?.(".dv-sash")) return;
+      window.clearTimeout(dragTail);
+      setSashDragging(true);
+    },
+    true,
+  );
+  const end = () => {
+    if (!sashDragging) return;
+    // A short tail so the number you landed on is readable. Without it the figures vanish on
+    // release, which is the exact instant the result becomes interesting.
+    window.clearTimeout(dragTail);
+    dragTail = window.setTimeout(() => setSashDragging(false), 900);
+  };
+  document.addEventListener("pointerup", end, true);
+  document.addEventListener("pointercancel", end, true);
+}
+
+export function useSashDragging(): boolean {
+  return useSyncExternalStore(
+    (listener) => {
+      dragListeners.add(listener);
+      return () => {
+        dragListeners.delete(listener);
+      };
+    },
+    () => sashDragging,
+    () => false,
+  );
+}
+
 const state: DockState = { visible: [], focusedId: null, ready: false };
 let snapshot: DockState = { ...state };
 let api: DockviewApi | null = null;

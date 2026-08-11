@@ -8,15 +8,20 @@
  */
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { hidePane, toggleFocus, useDock } from "../lib/dock-store";
+import { hidePane, toggleFocus, useDock, useSashDragging } from "../lib/dock-store";
 
 /**
- * How much of the window this pane is taking, live.
+ * How much of the window this pane is taking — shown only while a sash is being dragged.
  *
- * The layout is meant to be 40/40/20 and Dockview persists whatever you drag it to, so after any
- * session of resizing there is no way to tell what the split actually is short of measuring it in
- * a console. This is that measurement, on screen, in every pane: you drag a sash and both numbers
- * move, so "is it still 40/40/20?" stops being a question anybody has to take on trust.
+ * The layout is meant to be 40/40/20 and Dockview persists whatever you drag it to, so without
+ * this there is no way to tell what the split actually is short of measuring it in a console.
+ *
+ * It is not permanent, though. The question it answers — "what did I just do to the layout?" — is
+ * only asked while the answer is changing, and four more figures sitting in the status rows
+ * forever would compete with the readouts the panes exist for. So all three appear together the
+ * moment a sash is grabbed, and go away about a second after it is released. That tail is
+ * deliberate: the number you landed on is the interesting one, and it would otherwise vanish at
+ * the instant it became readable.
  *
  * It measures its own `.pane` ancestor against the Dockview root rather than `window.innerWidth`,
  * because the dock is not the whole window — the status bar has 25 px of it — and a height share
@@ -28,11 +33,12 @@ import { hidePane, toggleFocus, useDock } from "../lib/dock-store";
  */
 export function PaneShare() {
   const ref = useRef<HTMLSpanElement>(null);
+  const dragging = useSashDragging();
   const [share, setShare] = useState<{ w: number; h: number } | null>(null);
-  const [moving, setMoving] = useState(false);
-  const settle = useRef<number | undefined>(undefined);
 
   useEffect(() => {
+    // Nothing observed while nothing is being dragged: no listener, no measurement, no cost.
+    if (!dragging) return;
     const pane = ref.current?.closest(".pane") as HTMLElement | null;
     const dock = document.querySelector(".dv-dockview") as HTMLElement | null;
     if (!pane || !dock) return;
@@ -41,46 +47,35 @@ export function PaneShare() {
       const p = pane.getBoundingClientRect();
       const d = dock.getBoundingClientRect();
       if (d.width === 0 || d.height === 0) return;
-      setShare((prior) => {
-        const next = { w: (p.width / d.width) * 100, h: (p.height / d.height) * 100 };
-        // Round to the same place it is displayed, so a sub-0.1% reflow does not flash the
-        // "moving" highlight while nobody is touching anything.
-        const same =
-          prior !== null && Math.round(prior.w * 10) === Math.round(next.w * 10) &&
-          Math.round(prior.h * 10) === Math.round(next.h * 10);
-        if (!same) {
-          setMoving(true);
-          window.clearTimeout(settle.current);
-          settle.current = window.setTimeout(() => setMoving(false), 600);
-        }
-        return same ? prior : next;
-      });
+      setShare({ w: (p.width / d.width) * 100, h: (p.height / d.height) * 100 });
     };
 
-    // Both boxes: the pane changes when a sash moves, the dock when the window does.
     const observer = new ResizeObserver(measure);
     observer.observe(pane);
     observer.observe(dock);
     measure();
-    return () => {
-      observer.disconnect();
-      window.clearTimeout(settle.current);
-    };
-  }, []);
+    return () => observer.disconnect();
+  }, [dragging]);
 
+  const visible = dragging && share !== null;
   const text =
     share === null
-      ? "—"
+      ? ""
       : share.h > 95
         ? `${share.w.toFixed(0)}%`
         : `${share.w.toFixed(0)} × ${share.h.toFixed(0)}%`;
 
+  /**
+   * Always rendered, `hidden` when idle, rather than returning null.
+   *
+   * The effect above finds its pane with `ref.current.closest(".pane")`, so the span has to be in
+   * the document before the first measurement. Returning null while idle meant the ref was still
+   * empty on the render that turned dragging on, the effect bailed out, and the figure never
+   * appeared at all. `hidden` keeps it out of the layout and out of the accessibility tree while
+   * leaving it findable.
+   */
   return (
-    <span
-      ref={ref}
-      className={`pane-share${moving ? " moving" : ""}`}
-      title="Share of the dock area this pane occupies, width first. The default arrangement is 40/40/20 across the three columns; drag a sash and this follows."
-    >
+    <span ref={ref} className="pane-share" hidden={!visible}>
       {text}
     </span>
   );
