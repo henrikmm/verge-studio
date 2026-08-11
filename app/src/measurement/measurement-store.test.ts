@@ -108,6 +108,37 @@ describe("measurement store", () => {
     expect(getMask()?.data.every((value) => value === 0)).toBe(true);
   });
 
+  /**
+   * The brush died on any subject switch that left the frame alone — Ad hoc ⇄ a named target,
+   * most often. Masks are keyed `subject:frame` and the pane only created one when the RGB
+   * image loaded, which a same-frame switch never triggers. `paintMaskStroke` then threw from
+   * inside a pointer handler, so the stroke vanished with no visible error.
+   *
+   * The pane now calls `ensureMask` on the mask's identity and again at paint time. This holds
+   * the store side of that: a switch really does leave the new key empty, and ensuring it is
+   * cheap enough to sit on the paint path.
+   */
+  it("gives each subject its own mask key, and ensures one without churning the store", () => {
+    setFreeMeasurement();
+    setMeasurementFrame(93);
+    ensureMask(24, 20);
+
+    setActiveMeasurementObject("door-leaf");
+    setMeasurementFrame(93); // the switch the pane makes without reloading the frame
+    expect(getMask()).toBeUndefined();
+
+    const created = ensureMask(24, 20);
+    // Same record back, not a fresh allocation: paintAt calls this on every pointer event, and
+    // a new Uint8Array per stroke would throw the operator's paint away.
+    expect(ensureMask(24, 20)).toBe(created);
+    expect(() => paintMaskStroke({ x: 5, y: 5 }, { x: 12, y: 12 }, 3, false)).not.toThrow();
+    expect(getMask()?.data.some(Boolean)).toBe(true);
+
+    // Back to Ad hoc at the same frame: its own mask, none of the target's paint.
+    setFreeMeasurement();
+    expect(ensureMask(24, 20).data.some(Boolean)).toBe(false);
+  });
+
   it("retains repeat trials instead of destroying the previous one, and keeps runs separate", () => {
     addObservation({ ...BASE, rawM: 1.4 });
     addObservation({ ...BASE, rawM: 1.41 });

@@ -65,6 +65,41 @@ between the best two. REGISTRY section 3 has four measured cases. The display ha
 - [ ] Make refusal travel: a height measured against a refused floor must refuse as well.
 - [ ] Agree the wording with the user before it ships.
 
+### 8. Key a mask to the clip it was painted on
+
+**Why.** A selection painted on one clip stays selected on the next one and measures it. Mask keys
+are `subject:frame` with no clip and no run in them (`maskKey`, `app/src/measurement/
+measurement-store.ts`), so nothing separates two scenes that share a subject id. Observed
+2026-08-11: 18,507 px painted on `RoomNewFixture.mp4` at frame 1 stayed on screen after switching
+to `door-504px-112f` and reported 0.759 m, then 0.763 m — the same brush strokes measured against
+a different room's point cloud, with no warning that the selection was not made there.
+
+Ad hoc collides always, because its id is the constant `__free__`. Named targets collide when two
+clips hold targets with the same name: `AddTargetForm` slugifies the name and de-duplicates within
+the clip's own set, so `doorway` in two clips is one mask. Its comment already states the rule the
+key breaks — "Ids key masks and trials, so a collision would merge two different objects'
+evidence". Recorded trials are safe: they are keyed by `objectId:runId` and freeze their own mask
+snapshot. It is the working mask that leaks.
+
+**Gate.** Painting on clip A, switching to clip B and back leaves each clip's own selection intact
+and shows neither on the other. The stale mask cannot reach a measurement: no number is produced
+from a selection painted on a different clip.
+
+**Regression.** A saved session must still restore its target masks — the persisted keys change
+shape, so `SESSION_SCHEMA_VERSION` and `STORAGE_KEY` move together and old keys migrate rather
+than being dropped. Recorded trials keep their frozen snapshots, which do not change at all.
+
+**Approval.** `none`.
+
+**Start.** `maskKey`, `restoreSession` and `persistSession` in `app/src/measurement/
+measurement-store.ts`; `setActiveClip` is where a clip change is already noticed.
+
+- [ ] Decide what the mask belongs to — the clip or the run — and say why in the Registry. A clip
+      keeps a selection across resolutions of the same scene; a run does not.
+- [ ] Put it in the key, bump the schema and migrate the stored masks.
+- [ ] Cover both collisions in `measurement-store.test.ts`: Ad hoc across two clips, and two clips
+      holding a target with the same slug.
+
 ### 7. Watch a real cold start, once
 
 **Why.** `waking` is the one phase never seen against hardware. Two attempts have failed for two

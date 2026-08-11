@@ -186,7 +186,6 @@ export function Depth2D() {
     next.onload = () => {
       if (cancelled) return;
       setImage(next);
-      ensureMask(next.naturalWidth, next.naturalHeight);
     };
     next.onerror = () => {
       if (!cancelled) setError(`could not load RGB frame ${descriptor.canonicalIndex}`);
@@ -196,6 +195,21 @@ export function Depth2D() {
       cancelled = true;
     };
   }, [descriptor, paused]);
+
+  /**
+   * Every subject and frame gets its own mask, so the one on screen must be created whenever
+   * either changes — not when the RGB image loads.
+   *
+   * Masks are keyed `subject:frame`. Creating them from the image's onload tied that key to a
+   * network event, and switching between Ad hoc and a named target does not change the frame,
+   * so the image never reloaded and no mask was made. The brush then threw "mask canvas has
+   * not been initialised" out of the pointer handler, where nothing catches it: no paint, no
+   * visible error, every stroke silently lost.
+   */
+  useEffect(() => {
+    if (!image) return;
+    ensureMask(image.naturalWidth, image.naturalHeight);
+  }, [image, object.id, ui.canonicalFrame]);
 
   useEffect(() => {
     segmentationRequestRef.current += 1;
@@ -499,7 +513,12 @@ export function Depth2D() {
 
   const paintAt = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const point = canvasPoint(event);
-    if (!point) return;
+    const canvas = canvasRef.current;
+    if (!point || !canvas) return;
+    // The effect above owns the mask, but a click can still land inside the load of a new
+    // frame's image. Idempotent when the mask is already there, and the canvas carries the
+    // frame's true pixel size, so this cannot invent one at the wrong resolution.
+    ensureMask(canvas.width, canvas.height);
     const from = lastPointRef.current ?? point;
     paintMaskStroke(from, point, ui.brushSize, tool === "erase" || event.button === 2);
     lastPointRef.current = point;

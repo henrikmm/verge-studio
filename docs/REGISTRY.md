@@ -457,6 +457,30 @@ the default layout is built. Two consequences worth knowing:
 - The share is a share, not a size. At 1280 px it is 256 px, too narrow for the Inspector group's
   three tabs — Runs sits behind an overflow chevron. TASK 6 carries the minimum width.
 
+### The brush died whenever a switch left the frame alone — fixed 2026-08-11
+
+Selecting Ad hoc after a named target, or a target whose suggested frame was already on screen,
+left the brush painting nothing. No error on screen, the cursor unchanged, every stroke lost.
+
+Masks are keyed `subject:frame`, and the only thing that created one was the RGB image's `onload`
+handler in `app/src/panes/depth-2d.tsx`. A switch that does not change the frame never reloads the
+image, so no mask was made for the new key and `paintMaskStroke` threw from inside the pointer
+handler — where React has no error boundary, so the throw reached `window.onerror` and nowhere
+else. Confirmed in the browser on `door-504px-112f`: B1 painted 24,121 px at frame 1, then Ad hoc
+at the same frame painted 0 px and logged six `mask canvas has not been initialised` errors, one
+per pointer event.
+
+It looked intermittent because two things hid it. Startup is Ad hoc at frame 1 and the first image
+load creates exactly that key, and any target painted in an earlier session comes back from
+`localStorage`. So the paths an operator repeats were the paths that worked.
+
+The mask now follows the mask's own identity — an effect on `[image, object.id, canonicalFrame]` —
+and `paintAt` ensures one from the canvas's own pixel size, which also covers a click landing
+inside a frame's image load. `ensureMask` returns the existing record untouched when the size
+matches, so the paint path allocates nothing. Five more ways in: adding a target (its suggested
+frame is the frame on screen, so it was always dead on arrival), deleting the active target,
+loading a run whose clip has no targets, and clicking during a frame change.
+
 ### The run is visible now, and the paid run shows itself — 2026-08-11
 
 Six defects in the load-configure-run path, found by reading the code and confirmed in the browser.
