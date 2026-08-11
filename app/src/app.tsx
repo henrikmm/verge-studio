@@ -7,7 +7,8 @@ import {
 } from "dockview";
 import { Depth2D } from "./panes/depth-2d";
 import { GraphPane } from "./panes/graph-pane";
-import { Inspector } from "./panes/inspector";
+import { SetupPane } from "./panes/setup";
+import { DeployControl } from "./panes/deploy-control";
 import { ObjectsPane } from "./panes/objects";
 import { RunsPane } from "./panes/runs";
 import { Viewport3D } from "./panes/viewport-3d";
@@ -39,7 +40,7 @@ const components = {
   "depth-2d": (_props: IDockviewPanelProps) => <Depth2D />,
   "viewport-3d": (_props: IDockviewPanelProps) => <Viewport3D />,
   graph: (_props: IDockviewPanelProps) => <GraphPane />,
-  inspector: (_props: IDockviewPanelProps) => <Inspector />,
+  inspector: (_props: IDockviewPanelProps) => <SetupPane />,
   objects: (_props: IDockviewPanelProps) => <ObjectsPane />,
   runs: (_props: IDockviewPanelProps) => <RunsPane />,
 };
@@ -260,6 +261,12 @@ export function App() {
         <span className={`chip ${gpuState}`}>
           <span className="dot" /> GPU: {gpuState}
         </span>
+        {/*
+          Beside the chip that reports the GPU, because it is the control that produces one.
+          Deploy used to be three clicks deep in Advanced, so the state was visible here and the
+          only way to change it was somewhere else entirely.
+        */}
+        <DeployControl />
         {gpu?.available && (
           <span className="chip">
             VRAM {formatBytes(gpu.busy ? gpu.currentBytes : gpu.peakBytes)} /{" "}

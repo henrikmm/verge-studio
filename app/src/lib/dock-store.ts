@@ -77,7 +77,12 @@ export const PANES: readonly PaneDef[] = [
    * while it is closed because node outputs live in the graph runtime rather than in the pane.
    */
   { id: "graph", component: "graph", title: "Graph", anchors: [{ direction: "below" }] },
-  { id: "inspector", component: "inspector", title: "Inspector", anchors: [{ direction: "right" }] },
+  /**
+   * Titled "Setup" since 2026-08-11 — the pane id and component name stay `inspector` so stored
+   * layouts keep resolving. It had two jobs and was named for the smaller one: it is where a
+   * session starts, and only incidentally where a selected node's parameters appear.
+   */
+  { id: "inspector", component: "inspector", title: "Setup", anchors: [{ direction: "right" }] },
   {
     id: "objects",
     component: "objects",

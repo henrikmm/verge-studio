@@ -22,8 +22,8 @@ export function ProvenanceBanner({ field }: { field: DepthFieldValue | undefined
     return (
       <div className="provenance mock">
         <b>MOCK RUN</b> — this geometry is the built-in roadside fixture, not your clip. The
-        frames are yours; the depth, cameras and point cloud are not. Connect a service in
-        Inspector → Cloud control to run DA3 for real.
+        frames are yours; the depth, cameras and point cloud are not. Press <b>Deploy</b> in the
+        status bar, then Run again, for a real reconstruction.
       </div>
     );
   }

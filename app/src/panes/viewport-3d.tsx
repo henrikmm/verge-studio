@@ -1430,8 +1430,14 @@ export function Viewport3D() {
           </div>
         )}
         {!cloud && (
+          // One child, deliberately: `.pane-empty` centres with a grid, so every loose text
+          // node and inline element would otherwise become its own centred grid item.
           <div className="pane-empty">
-            Nothing on the wire yet — drop a clip on Frame Source, then run DA3 Depth.
+            <p>
+              Nothing on the wire yet. In <b>Setup</b>: drop a clip, extract the frames, then Run.
+              <br />
+              To look at a run that already exists, pick one in <b>Runs</b>.
+            </p>
           </div>
         )}
       </div>

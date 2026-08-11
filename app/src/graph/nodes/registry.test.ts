@@ -37,11 +37,34 @@ describe("the default pipeline", () => {
     }
   });
 
-  it("starts the paid node paused and everything else automatic", () => {
-    expect(nodes.find((n) => n.id === "da3-depth")?.auto).toBe(false);
-    for (const node of nodes.filter((n) => n.id !== "da3-depth")) {
+  /**
+   * Two nodes wait to be asked, for the same reason in two currencies: DA3 spends GPU money,
+   * and Frame Source spends up to 11.7 s of this Mac decoding a 4K clip. Neither may start
+   * because a slider moved.
+   */
+  it("starts the costly nodes paused and everything else automatic", () => {
+    const costly = ["da3-depth", "frame-source"];
+    for (const id of costly) expect(nodes.find((n) => n.id === id)?.auto, id).toBe(false);
+    for (const node of nodes.filter((n) => !costly.includes(n.id))) {
       expect(node.auto, node.id).toBe(true);
     }
+  });
+
+  // Whatever else moves, these two stay out of any pass the user did not explicitly ask for.
+  // `runAutoFree` builds its deny set from exactly this predicate.
+  it("marks both costly nodes manual in the registry", () => {
+    expect(REGISTRY["da3-depth"]!.execution).toBe("manual");
+    expect(REGISTRY["frame-source"]!.execution).toBe("manual");
+  });
+
+  /**
+   * The app opens pointed at the run it is about to make, not at a fixture of a different room.
+   * It defaulted to `recorded` until 2026-08-11, which meant loading a clip and paying for a run
+   * left the viewers showing the door fixture — the run was invisible unless you found a
+   * dropdown in another pane.
+   */
+  it("points Run Source at the live branch by default", () => {
+    expect(nodes.find((n) => n.id === "fixture-run")?.params.source).toBe("live");
   });
 
   it("taps Depth 2D off the depth wire, not through the point cloud", () => {
@@ -77,9 +100,22 @@ describe("invalidation on the real pipeline", () => {
     expect(after.get(VIEWER_2D_ID)).toBe(before.get(VIEWER_2D_ID));
   });
 
-  it("keeps the offline measurement branch reusable when live DA3 parameters change", () => {
-    const before = computeDesiredKeys(nodes, edges, REGISTRY);
-    const changed = nodes.map((n) =>
+  /**
+   * On the recorded path the measurement branch is insulated from the live one.
+   *
+   * This is what lets a saved run be re-measured without the DA3 controls touching it, and it is
+   * why `activeInputs` drops the live port entirely rather than merely ignoring its value. Both
+   * cases below used to hold on the DEFAULT graph, because the default was `recorded`; they are
+   * now stated against a Run Source explicitly set to it, which is what they were always
+   * really about.
+   */
+  const recorded = nodes.map((node) =>
+    node.id === "fixture-run" ? { ...node, params: { ...node.params, source: "recorded" } } : node,
+  );
+
+  it("keeps a recorded measurement branch reusable when live DA3 parameters change", () => {
+    const before = computeDesiredKeys(recorded, edges, REGISTRY);
+    const changed = recorded.map((n) =>
       n.id === "da3-depth" ? { ...n, params: { ...n.params, processRes: 756 } } : n,
     );
     const after = computeDesiredKeys(changed, edges, REGISTRY);
@@ -90,9 +126,9 @@ describe("invalidation on the real pipeline", () => {
     expect(after.get(VIEWER_3D_ID)).toBe(before.get(VIEWER_3D_ID));
   });
 
-  it("restamps only the live branch when the source video content changes", () => {
-    const before = computeDesiredKeys(nodes, edges, REGISTRY);
-    const changed = nodes.map((n) =>
+  it("restamps only the live branch when the source video changes under a recorded run", () => {
+    const before = computeDesiredKeys(recorded, edges, REGISTRY);
+    const changed = recorded.map((n) =>
       n.id === "frame-source"
         ? { ...n, params: { ...n.params, videoSha256: "a".repeat(64) } }
         : n,
@@ -101,14 +137,56 @@ describe("invalidation on the real pipeline", () => {
 
     expect(after.get("frame-source")).not.toBe(before.get("frame-source"));
     expect(after.get("da3-depth")).not.toBe(before.get("da3-depth"));
-    for (const node of nodes.filter((candidate) => !["frame-source", "da3-depth"].includes(candidate.id))) {
+    for (const node of recorded.filter(
+      (candidate) => !["frame-source", "da3-depth"].includes(candidate.id),
+    )) {
       expect(after.get(node.id), node.id).toBe(before.get(node.id));
     }
   });
 
-  it("restamps the complete measurement branch when the fixture setting changes", () => {
+  /**
+   * And the mirror, which is the new default's whole purpose: on the live path the measurement
+   * branch DOES follow the run. A processRes change restamps everything downstream, so the
+   * viewers, the floor fit and the measurement all go stale together rather than quoting numbers
+   * from a reconstruction that no longer exists.
+   */
+  it("carries a live DA3 parameter change through to the measurement branch and the viewers", () => {
     const before = computeDesiredKeys(nodes, edges, REGISTRY);
-    const changed = nodes.map((node) =>
+    const changed = nodes.map((n) =>
+      n.id === "da3-depth" ? { ...n, params: { ...n.params, processRes: 756 } } : n,
+    );
+    const after = computeDesiredKeys(changed, edges, REGISTRY);
+
+    expect(after.get("frame-source")).toBe(before.get("frame-source"));
+    for (const id of [
+      "da3-depth",
+      "fixture-run",
+      "point-cloud",
+      "ground-plane",
+      "measure-height",
+      VIEWER_2D_ID,
+      VIEWER_3D_ID,
+    ]) {
+      expect(after.get(id), id).not.toBe(before.get(id));
+    }
+  });
+
+  it("carries a new clip through to the viewers on the live path", () => {
+    const before = computeDesiredKeys(nodes, edges, REGISTRY);
+    const changed = nodes.map((n) =>
+      n.id === "frame-source"
+        ? { ...n, params: { ...n.params, videoSha256: "a".repeat(64) } }
+        : n,
+    );
+    const after = computeDesiredKeys(changed, edges, REGISTRY);
+
+    expect(after.get(VIEWER_2D_ID)).not.toBe(before.get(VIEWER_2D_ID));
+    expect(after.get(VIEWER_3D_ID)).not.toBe(before.get(VIEWER_3D_ID));
+  });
+
+  it("restamps the complete measurement branch when the fixture setting changes", () => {
+    const before = computeDesiredKeys(recorded, edges, REGISTRY);
+    const changed = recorded.map((node) =>
       node.id === "fixture-run"
         ? { ...node, params: { ...node.params, setting: "252px-256f" } }
         : node,

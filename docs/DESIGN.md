@@ -168,16 +168,45 @@ sliders only: sliders with `--slider` thumbs, dropdowns, checkboxes. Sections ar
 **Changing a control refreshes the graph by itself**, after a short delay that folds a slider drag
 into one pass — and that refresh can never reach a costly node, whatever its badge says.
 
-Its first section is **Clip**, and it is the app's front door: a drop target, Browse, the clip's
-name and duration, the sampling rate and frame cap, the frame plan with its VRAM bar, and Run.
-Loading is free; running DA3 is a separate press because it is the only step that costs money.
+**Setup pane** (the tab formerly called Inspector; the pane id stays `inspector` so stored layouts
+resolve). It had two jobs and was named for the smaller one. Its header states the depth **mode**
+— `MODE · DA3` — not a device name, because where depth comes from is the axis that would change
+for a LiDAR or stereo source; the device that ran a job belongs on the job.
 
-The inspector also carries **Cloud control** (Advanced): sign-in state, project and region, whether
-the service exists, whether the stored image matches the current server source, and whether the
-next deploy is the quick path or the twenty-minute one. Deploy and Delete service both stream their
-logs. Every status read is free and cannot wake a machine. The **Instance** section — elapsed
-billed time and the idle warning — is not Advanced, because an instance bills whether or not
-anybody is looking at this pane.
+**Three acts, in order, and each one is a press.** The ordering was implicit and two parts of it
+were wrong, so it is now the pane's structure:
+
+1. **Clip.** Drop or Browse. This probes the file and stops. Loading must not start ffmpeg — the
+   plan below is what somebody is deciding about, and sampling a 4K clip takes 11.7 s measured.
+2. **The plan, then Extract.** Frames, effective rate, the downscale target, the upload size as a
+   bracket, and the VRAM bar — all arithmetic on the probe, so the sliders are free to drag.
+   Extract is the ffmpeg press. Afterwards a **contact sheet** shows every sampled frame in one
+   image with the reference view outlined, because "did it sample the whole clip?" is not a
+   question a frame count can answer. Clicking a cell opens that frame in Depth 2D.
+3. **Run.** Three preconditions as a visible checklist — clip, frames, somewhere to send them —
+   each saying what would satisfy it, with Run disabled until all three are met. Then the live
+   **phase readout**: reading frames, uploading, waking, loading model, inferring, fetching
+   artifacts, each with its own elapsed clock. A finished run points the viewers at itself.
+
+**Frame Source is a costly node**, in the same sense DA3 is. One spends GPU money and the other
+spends up to 11.7 s of this Mac, and neither may start because a slider moved. Both are `manual`,
+which is what makes item 17 below safe to keep: a parameter edit schedules `runAutoFree`, and that
+pass denies every manual node.
+
+**Service lifecycle control**, in the status bar beside the GPU chip, because that is where the
+state is reported and the control that changes it should not be three clicks away in Advanced. Four
+states, not two: `Deploy`, `Deploying · m:ss`, `Deployed · not billing`, `Live · m:ss`. **Only the
+last one glows.** Creating a Cloud Run service is free; the meter starts when a request wakes an
+instance. A control that lit up at "deployed" would teach the operator that deploying is the
+expensive act and that a quiet deployed service is safe — both backwards, and the second is how a
+machine gets left running overnight. Deploy and delete each confirm, every time.
+
+Setup also carries **Cloud control** (Advanced): sign-in state, project and region, whether the
+service exists, whether the stored image matches the current server source, and whether the next
+deploy is the quick path or the twenty-minute one. Deploy and delete both stream their logs. Every
+status read is free and cannot wake a machine. The **Instance** section — elapsed billed time and
+the idle warning — is not Advanced, because an instance bills whether or not anybody is looking at
+this pane.
 
 **Viewport 3D result strip**: a reserved row between the control rows and the canvas carrying the
 target, what it measured, the tape truth, the absolute error and the error percentage. Reserved
@@ -225,6 +254,14 @@ Design constraints, not copy guidelines.
    so a screenshot can never be mistaken for a real run.
 4. **No invented currency figures.** The app has no billing data and the machine's lifetime starts
    before our first contact, so it reports elapsed instance time rather than a made-up cost.
+5. **A progress bar must be fed by something counted.** The only proportion drawn during a run is
+   the upload, and it is bytes acknowledged over bytes handed to the socket. Every other phase
+   shows an elapsed clock beside a figure labelled as measured — 64 s cold start, 40 s model load,
+   ~31 s inference — and the phase itself advances on an observation of the GPU (whether anything
+   answers, whether the model is resident, whether the device is busy), never on a timer. A bar
+   that fills on a clock is a prediction wearing a measurement's clothes.
+6. **Deployed is not billing.** The two are separate states everywhere they appear, because
+   conflating them makes the cheap action look expensive and the expensive one look safe.
 
 ## Acceptance checklist
 
@@ -269,3 +306,13 @@ Design constraints, not copy guidelines.
 22. **The measurement is the headline.** Viewport 3D states what was measured, the tape truth, the
     absolute error and the error percentage in reserved chrome that never overlaps the canvas.
     With no tape truth it says so and quotes no error.
+23. **Loading a clip starts no work, and the plan precedes the press.** Dropping a file shows
+    frames, effective rate, downscale target, upload bracket and VRAM before ffmpeg runs; a
+    sampling change makes zero calls to `/api/extract`. After extraction the contact sheet's cell
+    count equals the plan's frame count, with the reference view outlined.
+24. **A run says what it is doing.** Named phases in order, each with an elapsed clock; the upload
+    the only proportion; a failure naming the phase it died in; and a success that puts its own
+    geometry on screen rather than leaving the previous clip's there.
+25. **The service lifecycle is one control with four states, and only `Live` glows.** Deploy and
+    delete each confirm. A service left alive by an earlier session reads as `Deployed` on load,
+    from a status call that cannot wake anything.

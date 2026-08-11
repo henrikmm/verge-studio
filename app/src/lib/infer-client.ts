@@ -9,6 +9,12 @@
 import type { GpuSnapshot, InferManifest, InferParams } from "./contract";
 import { startTeardown, streamJob } from "./cloud-control";
 import { getCloud, inferBase, isRemote, noteRequest, noteRun } from "./cloud-store";
+import {
+  beginServerWait,
+  beginUpload,
+  noteUploadProgress,
+  setGpuReader,
+} from "./run-phase";
 
 /**
  * TWO bases, because the two halves of the pipeline live in different places.
@@ -182,6 +188,14 @@ export async function getGpu(): Promise<GpuSnapshot> {
   return toGpu((await expectOk(await gpuFetch("/gpu", { headers: requestHeaders() }))) as WireGpu);
 }
 
+/**
+ * Hand the phase machine a way to read telemetry.
+ *
+ * Injected rather than imported, so `run-phase.ts` does not depend on this module — it is
+ * driven straight through its whole sequence in the tests, with no network and no mock server.
+ */
+setGpuReader(getGpu);
+
 export async function warmup(): Promise<GpuSnapshot> {
   const body = (await expectOk(
     await gpuFetch("/warmup", { method: "POST", headers: requestHeaders() }),
@@ -263,18 +277,39 @@ export interface FramePlan {
   requestedCount: number;
 }
 
+/**
+ * What the frames were downscaled to before upload, and whether they were touched at all.
+ *
+ * ffmpeg has always returned this and the client always dropped it, so the one number an
+ * operator needs to judge a plan — the pixel size the model will actually see — was computed,
+ * serialised, and thrown away one line before it could be shown.
+ */
+export interface FrameScale {
+  width: number;
+  height: number;
+  scaled: boolean;
+}
+
+export interface ExtractResult {
+  frames: string[];
+  plan: FramePlan;
+  probe: VideoProbe;
+  scale: FrameScale;
+  outDir: string;
+}
+
 export async function extractFrames(
   path: string,
   fps: number,
   maxFrames: number,
-): Promise<{ frames: string[]; plan: FramePlan; probe: VideoProbe; outDir: string }> {
+): Promise<ExtractResult> {
   return (await expectOk(
     await fetch(`${LOCAL_BASE}/extract`, {
       method: "POST",
       headers: requestHeaders({ "content-type": "application/json" }),
       body: JSON.stringify({ path, fps, maxFrames }),
     }),
-  )) as { frames: string[]; plan: FramePlan; probe: VideoProbe; outDir: string };
+  )) as ExtractResult;
 }
 
 /** Extracted frames live on disk; the browser reads them back through the middleware. */
@@ -289,6 +324,48 @@ export async function fetchFrameBlob(path: string): Promise<Blob> {
 }
 
 /**
+ * POST the frames and report the upload as it goes.
+ *
+ * `XMLHttpRequest` rather than `fetch`, for one reason: fetch cannot report upload progress.
+ * There is no event, no stream, no callback — a request body is opaque until the response
+ * arrives. So a 9.9 MB frame upload (measured, 111 frames of a 4K clip) was indistinguishable
+ * from a hung request, and it is the only stage of a run with a real percentage to show.
+ *
+ * The response is still parsed exactly as `expectOk` would, so failures read the same either way.
+ */
+function postFrames(url: string, form: FormData, headers: Record<string, string>): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open("POST", url);
+    for (const [key, value] of Object.entries(headers)) request.setRequestHeader(key, value);
+
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) noteUploadProgress(event.loaded, event.total);
+    };
+    // The bytes are gone and the server now owns the request. Which of waking, loading or
+    // inferring it is doing is not knowable from here — the telemetry poll decides that.
+    request.upload.onload = () => beginServerWait();
+
+    request.onload = () => {
+      const status = request.status;
+      if (status < 200 || status >= 300) {
+        return reject(new Error(`${status}: ${String(request.responseText).slice(0, 300)}`));
+      }
+      try {
+        resolve(JSON.parse(request.responseText));
+      } catch {
+        reject(new Error(`${status}: response was not JSON`));
+      }
+    };
+    request.onerror = () => reject(new Error("network error while uploading frames"));
+    request.ontimeout = () => reject(new Error("the request timed out"));
+    request.onabort = () => reject(new Error("the run was cancelled"));
+
+    request.send(form);
+  });
+}
+
+/**
  * Real service: multipart upload of the extracted frames.
  * Mock: a JSON summary, since the fixture stands in for the result.
  */
@@ -298,6 +375,7 @@ export async function infer(
 ): Promise<InferManifest> {
   noteRun();
   if (!Array.isArray(frames)) {
+    beginServerWait();
     return manifestFromWire(
       await expectOk(
         await gpuFetch("/infer", {
@@ -328,9 +406,10 @@ export async function infer(
       max_frames: params.maxFrames,
     }),
   );
+
+  beginUpload(frames.reduce((total, blob) => total + blob.size, 0));
+  noteRequest();
   return manifestFromWire(
-    await expectOk(
-      await gpuFetch("/infer", { method: "POST", headers: requestHeaders(), body: form }),
-    ),
+    await postFrames(`${inferBase()}/infer`, form, requestHeaders()),
   );
 }

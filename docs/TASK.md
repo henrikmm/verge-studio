@@ -65,6 +65,53 @@ between the best two. REGISTRY section 3 has four measured cases. The display ha
 - [ ] Make refusal travel: a height measured against a refused floor must refuse as well.
 - [ ] Agree the wording with the user before it ships.
 
+### 7. Prove the new run path against a real L4, once
+
+**Why.** Everything in the 2026-08-11 upload/deploy/inference work was built and graded against the
+local mock, including a rehearsal of a cold start. That is enough to know the readout renders; it is
+not enough to know the phases match a real service. Two specific things have never run against
+hardware: the deploy control's four states driving `deploy.sh` end to end, and the phase machine
+reading a genuine 64 s cold start and 40 s model load rather than a 6 s and 4 s imitation.
+
+**Gate.** One deployment. The status-bar control goes `Deploy` → `Deploying · m:ss` → `Deployed ·
+not billing`, and only reaches `Live` when a request wakes the instance. One inference on a clip
+from `~/Downloads` passes through every phase in order with an upload percentage that moves. One
+click deletes the service, and `gcloud run services list` returns nothing afterwards.
+
+**Regression.** The frame cap stays at 112. Whatever the VRAM readings say, nothing about this task
+raises it — that needs a second measurement, which is task 5.
+
+**Approval.** `cloud spend + user confirmation`. Approved 2026-08-11; batch it with task 5 so one
+startup answers both.
+
+**Start.** REGISTRY section 3 "The run is visible now"; `lib/deploy-store.ts`, `lib/run-phase.ts`.
+
+- [ ] Batch with task 5 rather than paying for a startup twice.
+- [ ] Do not save the run — the clip is a scratch file, not evidence.
+- [ ] Tear down in the same session, and confirm one image is left in the repository.
+- [ ] Record the real phase durations in the Registry beside the mock's rehearsal figures.
+
+### 8. Verify the 3D orbit by hand
+
+**Why.** The 2026-08-11 design review could not confirm acceptance item 5. The point cloud renders
+and the axis gizmo is visible, but two automated `left_click_drag` passes over the canvas produced
+no camera change and the first selected page text instead. Nothing in that session touched orbit, so
+this is a gap in the check rather than a known regression — and an unverified checklist item is
+exactly the kind of tick AGENTS.md says has cost this project money twice.
+
+**Gate.** A drag inside Viewport 3D visibly changes the view, confirmed by comparing two captures.
+Either the automation is made to work, or the human-gateway protocol is used and the result recorded.
+
+**Regression.** None — this is a check, not a change.
+
+**Approval.** `none` to investigate; `user confirmation` only if it needs their hand on the mouse.
+
+**Start.** `app/src/panes/viewport-3d.tsx` pointer handling; the 2026-08-11 entry in
+`docs/design-review-log.md` has what was tried.
+
+- [ ] Find out whether the drag fails because of the automation or the pane.
+- [ ] If it is the pane, that is a real defect and this task becomes a fix.
+
 ---
 
 ## Later

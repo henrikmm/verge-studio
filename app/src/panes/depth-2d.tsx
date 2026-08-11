@@ -722,7 +722,15 @@ export function Depth2D() {
               />
             </div>
           ) : (
-            <div className="pane-empty">No depth field on the wire yet.</div>
+            // One child: `.pane-empty` is a centring grid, so loose text nodes beside an
+            // inline element would each become their own centred cell.
+            <div className="pane-empty">
+              <p>
+                No depth field yet. In <b>Setup</b>: drop a clip, extract the frames, then Run.
+                <br />
+                To look at a run that already exists, pick one in <b>Runs</b>.
+              </p>
+            </div>
           )}
         </div>
         {range && field && (

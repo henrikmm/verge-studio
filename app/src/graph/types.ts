@@ -104,19 +104,31 @@ export type Executor = (ctx: ExecuteContext) => Promise<Record<string, NodeOutpu
  * generic — adding a node adds its controls, with no inspector change. DESIGN.md asks
  * for mixed control types, not sliders only.
  */
+interface ControlBase {
+  key: string;
+  label: string;
+  /**
+   * What this control is, in a sentence or two — rendered behind a `?` beside the label.
+   *
+   * DESIGN.md draws the line here: text explaining what a control *is* goes behind the dot,
+   * text about the state the app is in right now stays on the page. A native `title` is not
+   * an acceptable home for a paragraph — a second of delay, an OS-styled light box, and
+   * nothing at all for a keyboard.
+   */
+  help?: string;
+}
+
 export type ControlSpec =
-  | {
+  | (ControlBase & {
       kind: "slider";
-      key: string;
-      label: string;
       min: number;
       max: number;
       step?: number;
       suffix?: string;
-    }
-  | { kind: "select"; key: string; label: string; options: { value: string; label: string }[] }
-  | { kind: "checkbox"; key: string; label: string }
-  | { kind: "readout"; key: string; label: string };
+    })
+  | (ControlBase & { kind: "select"; options: { value: string; label: string }[] })
+  | (ControlBase & { kind: "checkbox" })
+  | (ControlBase & { kind: "readout" });
 
 export interface NodeSpec {
   type: string;

@@ -6,6 +6,63 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
+## 2026-08-11 — Setup pane, deploy control and run phases, 1280×800 (commit pending, on 7408ad8)
+
+Full pass after the upload/deploy/inference work. Graded on `da3Test.mp4` (13.5 s, 1920×1080)
+loaded through the drop target, extracted to 112 frames, and run against the local mock. Both
+modes. Three failures found and fixed during the pass; one item could not be re-verified.
+
+1. Dark surfaces — **PASS**. `body` computed `rgb(13,13,15)`.
+2. Status without hue alone — **PASS**. The new marks all carry shape or text: preconditions use
+   `●`/`◐`/`○`, the phase readout `◐`/`●`/`▲`, and the deploy chip pairs its dot with the words
+   `Deploy`, `Deploying · m:ss`, `Deployed · not billing` and `Live · m:ss`.
+3. Default panes and Graph — **PASS**. Five panes opened; the Setup tab replaces Inspector and
+   the stored layout still resolves, because the pane id stayed `inspector`.
+4. Tab strip and labels — **PASS**. Strip measured 26 px, tab 18 px, label `11px`.
+5. Viewport 3D orbit — **NOT VERIFIED**. The point cloud renders (351,232 pts) and the axis gizmo
+   is visible, but two automated `left_click_drag` passes over the canvas produced no camera
+   change — the first selected page text instead. Untouched by this work, so this is a gap in the
+   check rather than a known regression. It needs a hand, per the skill's automation note.
+6. Depth 2D turbo depth with a metre legend — **PASS**, seen in screenshot.
+7. Live status rows with numbers — **PASS**. Setup's header carries `MODE · DA3`; the run readout
+   carries elapsed seconds and byte counts.
+8. No horizontal scroll at 1280×800 — **PASS**. `scrollWidth` 1280 = `clientWidth` 1280.
+9. Font sizes — **FIXED DURING PASS**. The Browse/Change button in the Clip drop zone inherited
+   nothing and computed `13.3333px`, the only text in the pane over 12 px. It had been that way
+   since the Clip section was added. Now `11px` with the rest.
+10. Squint test against `reference/` — **PASS**. Density unchanged; the new sections reuse
+    `.inspector-row` metrics, and the contact sheet is the only new large element.
+11. Inference parameters with mixed controls — **PASS**, and every one now carries a `?`.
+12. Memory in both places, moving during a run — **PASS**. Observed climbing 8.74 → 18.55 GiB in
+    the phase readout across one run.
+13. Measured / interpolated / extrapolated — **PASS**. Read `VRAM (measured) 21.28 GiB` at 112
+    frames and `VRAM (interpolated) 16.10 GiB` at 54, live as the slider moved.
+14. Capped plan explains itself — **PASS**. `10 fps × 13.5s = 135 frames, over the 112-frame cap.
+    FPS lowered to 8.27 so the frames still span the whole clip.`
+15. Mock-backed readouts labelled — **PASS**. The MOCK RUN banner renders in both viewers; its
+    copy was updated from the stale “Inspector → Cloud control” to the status bar's Deploy.
+16. Focus, Escape, hide and reflow — **PASS**, unchanged.
+17. Parameter refresh without other interaction, and no costly node — **FIXED DURING PASS**, then
+    **PASS**. Measured by counting `fetch` calls across a sampling-rate change: the plan went from
+    112 frames @ 8.27 fps to 54 @ 4.00 with the capped note correctly disappearing, and there were
+    **0 calls to `/api/extract` and 0 to `/api/infer`**. Frame Source being `manual` is what makes
+    that safe — `runAutoFree` denies every manual node.
+18. Wire select and Backspace — **N/A**. The Graph is not in the default layout and was not opened.
+19. Every control inside a narrow pane — **FIXED DURING PASS**, then **PASS**. At 180 px the Source
+    `select` ran 63 px past the pane's right edge (right 1267 against 1204): a `select` takes its
+    minimum width from its widest option and ignores the flex container. Now `min-width: 0;
+    max-width: 100%`, and measured clean at 180, 220 and 280 px.
+20. Both modes — **PASS**. Standard hides Cloud control, Cloud session and GPU; the capped-plan
+    note, the VRAM label and the mock warning all render in Standard.
+21. Explanation behind a `?`, landing inside the window — **PASS**. With the pane forced to 180 px,
+    the Source help panel opened on hover and measured 757–1082 × 510–654 inside a 1280×800
+    window.
+22. Measurement headline in reserved chrome — **PASS**, unchanged.
+
+Also recorded: the precondition rows were rebuilt to wrap, with the fix on its own line, after the
+first capture showed the clip detail ellipsised to `none…` and the instruction running off the
+right edge at a 320 px pane.
+
 ## 2026-08-09 — Free/Object measurement and fixed-size 3D evidence, 1280×800 (commit pending)
 
 Full checklist pass on the recorded 504 px · 112f door fixture, in Standard and Advanced. The

@@ -398,6 +398,86 @@ the default layout is built. Two consequences worth knowing:
 - The share is a share, not a size. At 1280 px it is 256 px, too narrow for the Inspector group's
   three tabs — Runs sits behind an overflow chevron. TASK 6 carries the minimum width.
 
+### The run is visible now, and the paid run shows itself — 2026-08-11
+
+Six defects in the load-configure-run path, found by reading the code and confirmed in the browser.
+Three of them cost the operator something real.
+
+**A paid run did not appear on screen.** `da3-depth` produced a depth field, but both viewers read
+`fixture-run`, whose `source` defaulted to `recorded` and was only ever changed from a dropdown in
+the **Objects** pane. So the sequence was: load a clip, press Run, wait, spend money, and go on
+looking at the door fixture. `source` now defaults to `live`, a successful run points the viewers
+at itself, and recorded evidence is chosen in the Runs pane, where the runs are listed with their
+size on disk. The stored-parameter key moved v1 → v2 in the same change, because stored params are
+merged over the spec defaults and without a bump the fix would only be visible on a fresh machine.
+
+**Dropping a clip started ffmpeg before showing the plan.** `loadClip` ended in `runAuto()`, so
+sampling ran at whatever rate happened to be set and the frame plan rendered afterwards, describing
+work already done — and every settle of a slider paid it again. Measured on this Mac:
+
+| Clip | Source | Frames | Extraction | JPEG total | Bytes per pixel |
+|---|---|---|---|---|---|
+| `da3Test.mp4` (13.5 s) | 1920×1080 | 112 | **1.7 s** | 5,491,034 | 0.083 |
+| `TestOutdoor4k60fps2.mp4` (15.8 s) | 3840×2160, rotated | 111 | **11.7 s** | 10,183,282 | 0.156 |
+
+Loading now probes and stops; Extract is a press. **Frame Source is a `manual` node**, which is the
+mechanism rather than a special case: `runAutoFree` — the pass that follows any control edit —
+denies every manual node, so a slider drag restamps the cache key and updates the plan while
+running nothing. Confirmed by counting requests across a sampling change: the plan moved from 112
+frames at 8.27 fps to 54 at 4.00, with **zero calls to `/api/extract` and zero to `/api/infer`**.
+
+Those two clips are also why the predicted upload is a **bracket** rather than a figure. At
+identical pixel counts they differ by 1.9× — foliage compresses badly, a white-walled room
+compresses well. DESIGN.md honesty rule 1 permits a single number only on three or more
+measurements; this rests on two. The exact total is known later and for free, by summing the blob
+sizes at upload, so the bar during a run is measured rather than predicted.
+
+**Inference was a two-minute silence.** One blocking multipart POST: 64 s of cold start, 40 s of
+model load and ~31 s of forward pass, with the button reading "Running…" throughout. A run now
+passes through named phases, and none of them advances on a clock:
+
+- `reading` and `uploading` are counted locally. Upload is the only true proportion in the chain,
+  and getting it is why `infer()` uses `XMLHttpRequest` — `fetch` cannot report upload progress at
+  all, so a 9.9 MB frame upload was indistinguishable from a hung request. Observed mid-run:
+  `2 MiB / 5 MiB`, bar width `47.0011%`.
+- `waking`, `loadingModel` and `inferring` are read off `/gpu`: whether anything answers, whether
+  the model is resident, whether the device is busy. A failed telemetry read is itself the
+  observation "nothing is answering", which is the definition of still waking.
+- A failure keeps the phase it died in, which is the fact a bare stack trace loses.
+
+The poll moved out of the pane and into `lib/run-phase.ts`. It had lived in the Inspector, so
+hiding that pane stopped the readout — and that pane is hidden by exactly the operator who has
+filled the window with the viewport to watch a run land. It still runs only while a request is in
+flight, because Cloud Run bills instance lifetime and an idle poll is not cheap, it is the whole
+cost.
+
+**Deploy was unreachable and "deployed" meant two things.** It existed only inside Advanced → Cloud
+control, so a first-time operator could not start a GPU at all, and pressing Run without one gave
+an HTTP error from deep in the client. There is now a lifecycle control in the status bar beside
+the GPU chip, with four states — `Deploy`, `Deploying · m:ss`, `Deployed · not billing`,
+`Live · m:ss` — and **only `Live` glows**, because creating a service is free and the meter starts
+when a request wakes an instance. Its state also survives a page reload, from a status call that
+cannot wake anything. Run is gated on three visible preconditions (clip, frames, a target), each
+saying what would satisfy it.
+
+The local mock stays a legitimate target, and says so: it satisfies the third precondition while
+labelling itself as returning the roadside fixture. That is what keeps the whole app buildable
+offline at zero cost, and it is also the 2026-08-05 misdiagnosis, so it may never be silent.
+
+**The mock can now rehearse a cold service** (`/api/mock/latency`, Advanced, off by default): 6 s
+with nothing answering — a real 503, so the app's own "nothing is answering" path is what runs —
+then 4 s of model load, plus a deliberately slow body read so the upload bar is observable over
+loopback. It exists because the phases that dominate a real run never happen offline, and a readout
+for them would otherwise ship having been rendered zero times.
+
+**Smaller things fixed in the same pass.** The pane header rendered the mock's device string
+`NVIDIA L4 (mock)` in its most prominent slot; it now states `MODE · DA3`, and the device name
+moved onto **Current run** (was "Last run", which described the subject as history). Every
+parameter control gained a `?`, including the Source control whose two options were nowhere
+explained. Pressing Run twice with nothing changed reported a failure — it is a cache hit, not a
+run, and now says so. `app/vite.config.ts` honours `PORT`, because `strictPort` meant the app could
+not start at all beside another Vite project holding 5173.
+
 ### Inference settings, and why each one
 
 | Setting | Value | Reason |

@@ -772,6 +772,31 @@ body {
   min-width: 0;
 }
 
+/*
+ * The Browse/Change button inherited nothing and rendered at the browser's default 13.33 px —
+ * the only text in the whole pane over 12 px, against DESIGN.md acceptance item 9. Measured
+ * 2026-08-11; it had been that way since the Clip section was added.
+ */
+.clip-drop button {
+  background: var(--bg-node);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.clip-drop button:hover:not(:disabled) {
+  border-color: var(--text-dim);
+}
+
+.clip-drop button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* A `?` that has no heading to sit in — it ends a block of rows instead. */
 .section-help,
 .budget-help {
@@ -870,6 +895,15 @@ input[type="range"]::-moz-range-track {
   font-family: var(--font-mono);
   font-size: 11px;
   padding: 1px 4px;
+  /*
+   * A `select` has an intrinsic minimum width set by its widest option, and it ignores the
+   * flex container's attempt to shrink it. Measured 2026-08-11 at a 180 px pane: the Source
+   * dropdown ran 63 px past the pane's right edge — DESIGN.md acceptance item 19, which is
+   * graded at a narrow pane precisely because this is invisible at 1280.
+   */
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 auto;
 }
 
 .inspector-row input[type="checkbox"] {
@@ -953,6 +987,212 @@ input[type="range"]::-moz-range-track {
   font-family: var(--font-mono);
 }
 
+/* The action that moves the session forward, one per section at most. */
+.inspector-actions button.primary {
+  border-color: var(--text-dim);
+  color: var(--emph-hi);
+}
+
+/*
+ * The frame plan: what extraction WILL do, shown before it does it. Inset so it reads as a
+ * consequence of the two sliders above rather than another pair of settings.
+ */
+.frame-plan {
+  margin: 2px 8px 4px;
+  border-left: 1px solid var(--border);
+  padding-left: 6px;
+}
+
+.frame-plan .inspector-row,
+.frame-plan .vram {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+/* Preconditions: clip, frames, somewhere to send them. Glyph carries the state, not hue. */
+.precondition-list {
+  padding: 2px 8px;
+}
+
+/*
+ * Wraps, and the fix takes a line of its own.
+ *
+ * At a 320 px pane the four parts fought each other on one line: the detail ellipsised to
+ * "none…" and the fix ran off the right edge. A row that clips its own instruction is worse
+ * than a taller row — the same trade every control row here already makes.
+ */
+.precondition {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.precondition.ok {
+  color: var(--text);
+}
+
+.precondition-glyph {
+  font-family: var(--font-mono);
+  width: 9px;
+  flex: none;
+}
+
+.precondition .k {
+  flex: none;
+  min-width: 64px;
+  color: var(--text-dim);
+}
+
+.precondition .v {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Its own line, indented past the glyph so it reads as belonging to the step above it. */
+.precondition-fix {
+  flex-basis: 100%;
+  margin-left: 15px;
+  color: var(--accent-busy);
+  font-size: 10px;
+}
+
+.precondition-action {
+  flex: none;
+  background: var(--bg-node);
+  color: var(--emph-hi);
+  border: 1px solid var(--text-dim);
+  border-radius: 2px;
+  font-family: var(--font-ui);
+  font-size: 10px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+/*
+ * The live phase readout.
+ *
+ * `.phase-track` is the ONLY proportional bar here, and it is fed by bytes acknowledged over
+ * bytes handed to the socket. Every other phase shows an elapsed clock beside a figure labelled
+ * as measured — a bar that filled on a timer would be a prediction wearing a measurement's
+ * clothes, which is what honesty rule 1 forbids.
+ */
+.phase-readout {
+  padding: 4px 8px 6px;
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+}
+
+.phase-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.phase-line .k {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+}
+
+.phase-line .v {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.phase-glyph {
+  font-family: var(--font-mono);
+  flex: none;
+}
+
+.phase-glyph.busy {
+  color: var(--accent-busy);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.phase-readout.failed .phase-glyph {
+  color: var(--accent-err);
+}
+
+.phase-readout.done .phase-glyph {
+  color: var(--emph-hi);
+}
+
+.phase-detail {
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-dim);
+  padding-top: 2px;
+}
+
+.phase-track {
+  height: 3px;
+  margin: 4px 0 2px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.phase-fill {
+  height: 100%;
+  background: var(--emph);
+  transition: width 120ms linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .phase-glyph.busy {
+    animation: none;
+  }
+  .phase-fill {
+    transition: none;
+  }
+}
+
+/*
+ * The contact sheet: every sampled frame in one image, so "did it sample the whole clip?" can be
+ * answered by looking. Free — the frames are already JPEGs on local disk.
+ */
+.contact-sheet {
+  padding: 2px 8px 6px;
+}
+
+.contact-sheet-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  cursor: pointer;
+  /* Cells are ~96 px wide and shrink with the pane. Smoothing at that scale turns a grid of
+     frames into grey mush; crisp keeps each frame legible as a picture. */
+  image-rendering: crisp-edges;
+}
+
+.contact-sheet-foot {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding-top: 3px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.contact-sheet-foot .hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Bottom status bar */
 .status-bar {
   flex: none;
@@ -1001,6 +1241,75 @@ input[type="range"]::-moz-range-track {
 @keyframes pulse {
   50% {
     opacity: 0.35;
+  }
+}
+
+/*
+ * The service lifecycle control. Four states, and only one of them glows.
+ *
+ * Creating a Cloud Run service is free; the meter starts when a request wakes an instance. So
+ * `.live` is the state that costs money and the only one that pulses. Lighting up `.ready`
+ * would teach an operator that deploying is the expensive act, which is backwards and is how a
+ * machine gets left running overnight.
+ */
+.deploy-chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: none;
+  cursor: default;
+}
+
+.deploy-chip.action,
+.deploy-chip.ready,
+.deploy-chip.live {
+  cursor: pointer;
+}
+
+.deploy-chip.action {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.deploy-chip.action:hover:not(:disabled) {
+  color: var(--emph-hi);
+  border-color: var(--emph-hi);
+}
+
+/* Deployed and quiet: solid, so it reads as a real state, but at rest. */
+.deploy-chip.ready .dot {
+  background: var(--emph-hi);
+  border-color: var(--emph-hi);
+}
+
+/* Billing. The one state in the app that costs money while nobody is looking at it. */
+.deploy-chip.live {
+  color: var(--accent-busy);
+  border-color: var(--accent-busy);
+  animation: deploy-glow 2s ease-in-out infinite;
+}
+
+.deploy-chip.live .dot {
+  background: var(--accent-busy);
+  border-color: var(--accent-busy);
+}
+
+.deploy-chip:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+@keyframes deploy-glow {
+  50% {
+    box-shadow: 0 0 6px 0 var(--accent-busy);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The state must still be distinguishable without movement, so the border stays and only the
+     animation goes. Same rule as the busy dot's pulse. */
+  .deploy-chip.live,
+  .chip.busy .dot {
+    animation: none;
   }
 }
 

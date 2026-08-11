@@ -96,7 +96,21 @@ function json(res, status, body) {
 
 async function readRawBody(req) {
   const chunks = [];
-  for await (const chunk of req) chunks.push(chunk);
+  for await (const chunk of req) {
+    chunks.push(chunk);
+    /**
+     * Read slowly while rehearsing, so the upload is observable.
+     *
+     * Over loopback the kernel swallows a 5 MB body faster than a frame can be painted, so the
+     * upload phase — the one stage of a run with a true percentage — flashed past unrendered
+     * and its progress bar shipped having never been drawn. A server that reads slowly applies
+     * back-pressure to the socket, which is what makes the browser's own `upload.onprogress`
+     * fire repeatedly. Off unless the rehearsal switch is on.
+     */
+    if (latency.enabled && latency.uploadChunkDelayMs > 0) {
+      await new Promise((r) => setTimeout(r, latency.uploadChunkDelayMs));
+    }
+  }
   return Buffer.concat(chunks);
 }
 
@@ -118,7 +132,34 @@ async function videoIdentity(path) {
 }
 
 // Mock GPU state, so warmup/busy/idle transitions are visible in the UI offline.
-const state = { modelLoaded: false, busy: false, runStartedAt: 0, runPeak: 0, runMs: 0 };
+const state = {
+  modelLoaded: false,
+  busy: false,
+  runStartedAt: 0,
+  runPeak: 0,
+  runMs: 0,
+  /** "idle" | "cold" | "loading" | "busy" — which stage of a run the mock is pretending to be in. */
+  stage: "idle",
+};
+
+/**
+ * Rehearse a cold service, so the run readout can be built and reviewed without a GPU.
+ *
+ * The mock answers instantly, which is what makes the app buildable offline — and it also means
+ * the phases that dominate a real run (64 s of cold start, 40 s of model load) never appear, so
+ * the UI for them would ship having been rendered exactly zero times. Off by default: an
+ * artificial wait in the everyday offline loop would be a tax on every other piece of work.
+ *
+ * The durations are deliberately about a tenth of the measured ones. Long enough to watch each
+ * phase arrive and read its label, short enough to iterate on.
+ */
+const latency = {
+  enabled: false,
+  coldStartMs: 6000,
+  modelLoadMs: 4000,
+  /** Milliseconds to pause per received chunk. See `readRawBody` for why this exists. */
+  uploadChunkDelayMs: 12,
+};
 
 function mockSnapshot() {
   let current = state.modelLoaded ? VRAM_BASE_BYTES : 0;
@@ -247,7 +288,25 @@ export function localApi() {
               });
 
             case "GET /api/gpu":
+              /**
+               * 503 while pretending to be cold, because that is what Cloud Run does: there is
+               * no instance to answer yet. The app's phase machine reads a failed telemetry
+               * read as the observation "nothing is answering", which is the definition of
+               * still waking — so this exercises that path rather than a special case.
+               */
+              if (state.stage === "cold") {
+                return json(res, 503, { detail: "no instance yet (mock cold start)" });
+              }
               return json(res, 200, mockSnapshot());
+
+            /** Dev-only: rehearse a cold service. See `latency` above for why it exists. */
+            case "GET /api/mock/latency":
+              return json(res, 200, latency);
+
+            case "POST /api/mock/latency": {
+              Object.assign(latency, await readJsonBody(req));
+              return json(res, 200, latency);
+            }
 
             case "POST /api/warmup": {
               await new Promise((r) => setTimeout(r, 400));
@@ -262,6 +321,9 @@ export function localApi() {
             case "POST /api/shutdown":
               state.modelLoaded = false;
               state.runPeak = 0;
+              // Back to cold, so the next run rehearses the cold start again when the latency
+              // switch is on. Releasing the model is exactly what makes an instance cold.
+              state.stage = "idle";
               return json(res, 200, { status: "released" });
 
             /**
@@ -458,13 +520,25 @@ export function localApi() {
               // Rough: 7.67 GPU-seconds for 4 frames, scaled super-linearly.
               const gpuSeconds = 1.9 * frameCount ** 1.15 * (processRes / 504) ** 2;
 
+              // Rehearse the two phases a real service spends most of a cold run in. Skipped
+              // entirely unless the latency switch is on, so the everyday offline loop stays
+              // instant.
+              if (latency.enabled && !state.modelLoaded) {
+                state.stage = "cold";
+                await new Promise((r) => setTimeout(r, latency.coldStartMs));
+                state.stage = "loading";
+                await new Promise((r) => setTimeout(r, latency.modelLoadMs));
+              }
+
               state.modelLoaded = true;
               state.busy = true;
+              state.stage = "busy";
               state.runStartedAt = Date.now();
               state.runPeak = peak;
               state.runMs = Math.min(gpuSeconds * 1000, 6000);
               await new Promise((r) => setTimeout(r, state.runMs));
               state.busy = false;
+              state.stage = "idle";
 
               const glb = await readFile(new URL("scene.glb", FIXTURE_DIR));
               const npz = await readFile(new URL("result.npz", FIXTURE_DIR));

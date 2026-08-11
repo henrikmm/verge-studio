@@ -54,8 +54,14 @@ export interface GraphStoreState {
  * cleared on reboot, so restoring it would make Frame Source auto-run and fail against a file
  * that no longer exists. Losing the run selection was the actual complaint; a persisted clip
  * needs a durable copy of the video, which is a separate piece of work.
+ *
+ * Versioned, for the same reason the dock layout is. Bumped v1 → v2 on 2026-08-11 with Run
+ * Source's default moving from `recorded` to `live`. Stored params are merged OVER the spec
+ * defaults, so without a bump every profile that had ever opened the app would keep the old
+ * default and the fix would only be visible on a fresh machine. The cost is one reset of the
+ * inference parameters, which are the documented defaults anyway.
  */
-const PARAMS_KEY = "verge.graph.params.v1";
+const PARAMS_KEY = "verge.graph.params.v2";
 const UNSAVED_PARAMS: Record<string, readonly string[]> = {
   "frame-source": ["videoPath", "videoName", "videoSha256", "durationS"],
 };

@@ -315,3 +315,74 @@ export function planFrames(
     capped: true,
   };
 }
+
+/**
+ * Long edge, in pixels, that frames are downscaled to before upload. Mirrors
+ * `DEFAULT_LONG_EDGE` in `scripts/extract-frames.mjs`; `sampling-parity.test.ts` pins them
+ * together.
+ *
+ * This is a transport constraint rather than a quality choice. Cloud Run's documented HTTP/1
+ * request cap is 32 MiB and 4K JPEGs measure ~432 KB each, so a 128-frame run would be ~55 MB
+ * and simply fail. The pixels are wasted regardless — DA3 resizes to `processRes` internally.
+ */
+export const DEFAULT_LONG_EDGE = 1024;
+
+export interface ScalePlan {
+  width: number;
+  height: number;
+  scaled: boolean;
+}
+
+/**
+ * What the frames will be resized to, computed before ffmpeg runs.
+ *
+ * Downscale only: a source already under the limit passes through untouched, because upscaling
+ * inflates the upload for no information gain. Both axes round to even numbers, which is what
+ * ffmpeg's own `-2` does and what JPEG chroma subsampling wants.
+ *
+ * Duplicated from the extractor for the same reason `planFrames` is — the plan has to be
+ * shown before any work happens, and the extractor cannot answer until it has done the work.
+ */
+export function planScale(
+  width: number,
+  height: number,
+  longEdge: number = DEFAULT_LONG_EDGE,
+): ScalePlan {
+  const longest = Math.max(width, height);
+  if (!(longEdge > 0) || !(longest > longEdge)) return { width, height, scaled: false };
+  const factor = longEdge / longest;
+  const even = (n: number) => Math.max(2, Math.round((n * factor) / 2) * 2);
+  return { width: even(width), height: even(height), scaled: true };
+}
+
+/**
+ * What the frames will weigh on the wire — as a BRACKET, because one number would be a lie.
+ *
+ * A JPEG's size is set by its content, and the two clips measured on 2026-08-11 differ by a
+ * factor of 1.9 at identical pixel counts:
+ *
+ * | Clip | Frames | Frame size | Total | Bytes per pixel |
+ * |---|---|---|---|---|
+ * | `da3Test.mp4` | 112 | 1024×576 | 5,491,034 | 0.083 |
+ * | `TestOutdoor4k60fps2.mp4` | 111 | 576×1024 | 10,183,282 | 0.156 |
+ *
+ * Foliage compresses badly and a white-walled room compresses well, so the spread is the real
+ * behaviour rather than measurement noise. DESIGN.md honesty rule 1 permits a single figure only
+ * when the model rests on at least three measurements; this one rests on two, so it stays a
+ * bracket until a third clip is measured.
+ *
+ * The exact total is known later and for free — `beginUpload` sums the blob sizes — so the
+ * progress bar during a run is measured, not predicted.
+ */
+export const MEASURED_JPEG_BYTES_PER_PIXEL: readonly [low: number, high: number] = [0.083, 0.156];
+
+export function estimateUploadBytes(
+  frameCount: number,
+  scale: ScalePlan,
+): { lowBytes: number; highBytes: number } {
+  const pixels = frameCount * scale.width * scale.height;
+  return {
+    lowBytes: Math.round(pixels * MEASURED_JPEG_BYTES_PER_PIXEL[0]),
+    highBytes: Math.round(pixels * MEASURED_JPEG_BYTES_PER_PIXEL[1]),
+  };
+}
