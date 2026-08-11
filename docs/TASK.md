@@ -67,52 +67,32 @@ between the best two. REGISTRY section 3 has four measured cases. The display ha
 
 ### 7. Watch a real cold start, once
 
-**Why.** The 2026-08-11 hardware session exercised every phase of a run except one. `waking` never
-appeared, because connecting to the service had already woken the container, so by the time Run was
-pressed the instance was up and the readout went straight to loading the model. That phase is the
-longest a cold run has — 64 s measured — and the only thing that has ever exercised it is the
-mock's rehearsal against a synthetic 503.
+**Why.** `waking` is the one phase never seen against hardware. Two attempts have failed for two
+different reasons, and the second one is the useful finding: **deploying leaves an instance
+running.** Cloud Run's startup probe keeps a container alive after a deploy and only scales to zero
+after roughly fifteen minutes idle, so a run started minutes later never meets a cold container —
+`/gpu` answers at once and the readout goes straight to loading the model. That is what happened on
+2026-08-11 even with the app pointed at the service and provably not having contacted it.
 
-**Gate.** One run whose first request is the thing that wakes the instance, with `waking` visible
-in the readout and its elapsed clock running while `/gpu` is not answering. The measured duration
-goes in the Registry beside the 64 s already quoted.
+The phase logic itself is exercised: the mock rehearses it against a real 503, and a failed
+telemetry read is what the code treats as "still waking". What is unverified is the duration and
+that a real container produces the same shape.
+
+**Gate.** One run against a service that has demonstrably scaled to zero, with `waking` visible and
+its elapsed clock running. The measured duration goes in the Registry beside the quoted 64 s.
 
 **Regression.** None to the run path; this is an observation of it.
 
-**Approval.** `cloud spend + user confirmation`. Batch it with whatever else needs the GPU — do
-not pay for a startup to watch a startup.
+**Approval.** `cloud spend + user confirmation`, and it is worth stating the bill plainly: reaching
+a scaled-to-zero service costs about fifteen minutes of idle L4 on top of the run. Do not pay that
+on its own — batch it behind any other GPU work, deploy, do the other work, then leave the service
+idle while doing something else and come back.
 
-**Start.** `lib/run-phase.ts` `applyGpu`; REGISTRY section 3 "The run is visible now".
+**Start.** `lib/run-phase.ts` `applyGpu`; REGISTRY section 3 "Deploying leaves the instance warm".
 
-- [ ] Deploy, then press Run **without** connecting first, so the inference request is the one
-      that wakes the instance.
+- [ ] Confirm scale-to-zero before running — `gcloud run services describe` reporting no active
+      revision instance, rather than assuming the fifteen minutes elapsed.
 - [ ] Record the real cold-start duration against the quoted 64 s.
-
-### 8. Confirm the 3D orbit with one drag
-
-**Why.** Acceptance item 5 has been unverified since 2026-08-11. The cause is now known and it is
-**not** the pane. Three separate drag interactions were tried in the browser pane and all three
-failed identically: Viewport 3D's orbit, Dockview's own resize sash, and Dockview's tab strip.
-Dockview ships working drag, so a failure there is the automation's. All three rely on
-`setPointerCapture`, which refuses events that are not trusted — so synthetic pointer events,
-synthetic mouse events and the tool's own `left_click_drag` all produce nothing, while ordinary
-`onClick` buttons in the same app work normally.
-
-That closes the investigation and leaves one observation that needs a human hand. It is one drag.
-
-**Gate.** With the door fixture loaded in Viewport 3D, a drag inside the canvas visibly rotates
-the scene. Recorded in `docs/design-review-log.md` against acceptance item 5.
-
-**Regression.** None — this is a check, not a change.
-
-**Approval.** `user confirmation`: the one drag. Everything up to it is the agent's to prepare.
-
-**Start.** The 2026-08-11 entry in `docs/design-review-log.md`.
-
-- [x] Establish whether the failure is the automation or the pane. **The automation** — pointer
-      capture rejects untrusted events, and Dockview's own sash and tabs fail the same way.
-- [ ] Load the door fixture, put Viewport 3D in Free view, ask for one drag, record the answer.
-- [ ] Write the pointer-capture finding into the Registry so nobody re-runs this investigation.
 
 ---
 

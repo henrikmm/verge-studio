@@ -306,6 +306,36 @@ of it on both clips regardless of frame orientation (504×280 here, 280×504 for
 **The cap stays at 112.** Nothing here is evidence about 128 or 144, which is what raising it would
 need; this closes why one number looked alarming, not whether there is room above it.
 
+A third run on 2026-08-11 (`20260811-172541-b096ab`, same clip, deliberately cold service) repeats
+it **byte for byte**: driver 23,647,485,952 and allocator 18,497,626,112. The allocator figure is
+reproducible to the byte on identical input, which is what makes the 0.74 GiB spread on the driver
+figure legible as measurement of the ceiling rather than of the run.
+
+#### Deploying leaves the instance warm, so "cold start" needs a scaled-to-zero service
+
+Measured 2026-08-11 while trying to observe the `waking` phase on real hardware. The service was
+deployed, the app was pointed at it without any probe, and the chip correctly read `Deployed · not
+billing` right up to pressing Run — so the inference upload genuinely was the app's first contact.
+
+It still did not meet a cold container. `/gpu` answered almost immediately and the readout went
+from uploading to loading model. **Cloud Run's own startup probe leaves an instance running after
+a deploy, and it only scales to zero after roughly fifteen minutes idle.** A run started minutes
+after a deploy therefore never pays a cold start, and the 64 s figure in this Registry describes a
+service that has scaled to zero — not one that was just deployed.
+
+The consequence for anybody chasing that number: it costs about fifteen minutes of idle L4 to
+reach the state where it can be measured at all, which is why it is still unmeasured. Timings from
+the run itself, which are not affected:
+
+| Stage | Measured |
+|---|---|
+| Deploy, image already in the registry | 6 s (a second deploy the same day took 33 s; both far under the app's "~1-3 min" estimate) |
+| Upload, 112 frames / 5.5 MB | ~6 s |
+| Model load, server-reported | **38.98 s** — the readout quotes 40 s and needs no revision |
+| GPU | 36.31 s |
+| Server wall | 110.01 s |
+| App-side total | 1 m 58 s |
+
 Two other timings from the same session, both measured rather than estimated: a deploy that skips
 the build took **33 s**, against the app's conservative "~1-3 min" estimate. And the model load of
 37.05 s sits close enough to the 40 s the run readout quotes that the quoted figure needs no

@@ -25,11 +25,18 @@ on the items they touch rather than the full checklist, which the entry below co
 - **Item 28, pane shares** — **PASS**. `40%`, `40%`, `20%` read straight off the three panes.
 - **Item 19 at a narrow pane** — **PASS**, re-measured with the new rows: zero overflowing
   children at 180 px and at 256 px.
-- **Item 5, orbit** — still **NOT VERIFIED**, but no longer a mystery. Dockview's own sash and tab
-  strip fail to drag under exactly the same conditions, and Dockview ships working drag; all three
-  interactions use `setPointerCapture`, which rejects untrusted events. The harness cannot do it.
-  Registry section 3 records this so it is not investigated a fourth time; TASK 8 now asks for the
-  one human drag.
+- **Item 5, orbit** — **PASS**, confirmed by the user on 2026-08-11: a drag inside Viewport 3D
+  rotates the scene. It could not be graded automatically, and that is now understood rather than
+  suspected — Dockview's own sash and tab strip fail to drag under exactly the same conditions, and
+  Dockview ships working drag. All three use `setPointerCapture`, which rejects untrusted events.
+  Registry section 3 records it so it is not investigated a fourth time, and this item needs a hand
+  every pass from now on.
+
+**Amended the same day.** The pane shares became drag-only after review: all three appear together
+on pointerdown on a sash and go about a second after release. Permanently visible they were four
+more figures competing with the readouts the panes exist for, and the question they answer is only
+asked while the answer is changing. Measured across a simulated grab: hidden when idle, all three
+showing `40% / 40% / 20%` during, still showing just after release, hidden again after the tail.
 
 ## 2026-08-11 — Setup pane, deploy control and run phases, 1280×800 (commit pending, on 7408ad8)
 
