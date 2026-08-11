@@ -170,17 +170,42 @@ async function follow(id: string): Promise<{ ok: boolean; detail: string | null 
 export async function deploy(): Promise<void> {
   const { job } = await startDeploy();
   beginJob("deploy", job);
-  const { ok, detail } = await follow(job.id);
-  if (!ok) {
-    state.error = `deploy failed (${detail ?? "unknown"})`;
-    emit();
-    throw new Error(state.error);
+  let failure: string | null = null;
+  try {
+    const { ok, detail } = await follow(job.id);
+    if (!ok) failure = `deploy failed (${detail ?? "unknown"})`;
+  } catch (e) {
+    /**
+     * The stream dropped, which says nothing about the deploy.
+     *
+     * Observed on the first real deploy, 2026-08-11: `gcloud run deploy` succeeded in 33 s and
+     * the service was live, but the EventSource errored, `loadStatus` never ran, and the status
+     * bar went back to reading `Deploy` — telling the operator there was no service while one
+     * was deployed and one request away from billing. Inviting a second deployment beside a
+     * forgotten first is the worst failure this control can have, so the status refresh below is
+     * unconditional. The mock could never have shown this; its stream does not drop.
+     */
+    failure = `lost the deploy log (${e instanceof Error ? e.message : String(e)})`;
+  } finally {
+    await loadStatus(true);
   }
-  await loadStatus(true);
+
   const url = state.status?.service.url;
   if (url) {
     connectProxied(url, PROXY_BASE);
     setCloudState("cold");
+  }
+
+  // A service that exists is the outcome that matters. A lost log beside a live service is a
+  // reporting problem, not a deploy problem, and must not be reported as one.
+  if (failure && !state.status?.service.exists) {
+    state.error = failure;
+    emit();
+    throw new Error(failure);
+  }
+  if (failure) {
+    state.error = `${failure} — but the service is up and reachable.`;
+    emit();
   }
 }
 
@@ -193,14 +218,32 @@ export async function deploy(): Promise<void> {
 export async function teardown(): Promise<void> {
   const { job } = await startTeardown();
   beginJob("teardown", job);
-  const { ok, detail } = await follow(job.id);
-  if (!ok) {
-    state.error = `teardown failed (${detail ?? "unknown"})`;
+  let failure: string | null = null;
+  try {
+    const { ok, detail } = await follow(job.id);
+    if (!ok) failure = `teardown failed (${detail ?? "unknown"})`;
+  } catch (e) {
+    failure = `lost the teardown log (${e instanceof Error ? e.message : String(e)})`;
+  } finally {
+    await loadStatus(true);
+  }
+
+  /**
+   * The registry is the authority on whether the meter stopped, not the log.
+   *
+   * Erring the other way here would be the expensive mistake: claiming a deletion that did not
+   * happen leaves an L4 billing with nothing on screen saying so.
+   */
+  if (state.status?.service.exists) {
+    state.error = failure ?? "the service is still there — it was not deleted";
     emit();
     throw new Error(state.error);
   }
   markServiceDeleted();
-  await loadStatus(true);
+  if (failure) {
+    state.error = `${failure} — but the service is gone and the meter has stopped.`;
+    emit();
+  }
 }
 
 /**

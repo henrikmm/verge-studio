@@ -65,31 +65,28 @@ between the best two. REGISTRY section 3 has four measured cases. The display ha
 - [ ] Make refusal travel: a height measured against a refused floor must refuse as well.
 - [ ] Agree the wording with the user before it ships.
 
-### 7. Prove the new run path against a real L4, once
+### 7. Watch a real cold start, once
 
-**Why.** Everything in the 2026-08-11 upload/deploy/inference work was built and graded against the
-local mock, including a rehearsal of a cold start. That is enough to know the readout renders; it is
-not enough to know the phases match a real service. Two specific things have never run against
-hardware: the deploy control's four states driving `deploy.sh` end to end, and the phase machine
-reading a genuine 64 s cold start and 40 s model load rather than a 6 s and 4 s imitation.
+**Why.** The 2026-08-11 hardware session exercised every phase of a run except one. `waking` never
+appeared, because connecting to the service had already woken the container, so by the time Run was
+pressed the instance was up and the readout went straight to loading the model. That phase is the
+longest a cold run has — 64 s measured — and the only thing that has ever exercised it is the
+mock's rehearsal against a synthetic 503.
 
-**Gate.** One deployment. The status-bar control goes `Deploy` → `Deploying · m:ss` → `Deployed ·
-not billing`, and only reaches `Live` when a request wakes the instance. One inference on a clip
-from `~/Downloads` passes through every phase in order with an upload percentage that moves. One
-click deletes the service, and `gcloud run services list` returns nothing afterwards.
+**Gate.** One run whose first request is the thing that wakes the instance, with `waking` visible
+in the readout and its elapsed clock running while `/gpu` is not answering. The measured duration
+goes in the Registry beside the 64 s already quoted.
 
-**Regression.** The frame cap stays at 112. Whatever the VRAM readings say, nothing about this task
-raises it — that needs a second measurement, which is task 5.
+**Regression.** None to the run path; this is an observation of it.
 
-**Approval.** `cloud spend + user confirmation`. Approved 2026-08-11; batch it with task 5 so one
-startup answers both.
+**Approval.** `cloud spend + user confirmation`. Batch it with whatever else needs the GPU — do
+not pay for a startup to watch a startup.
 
-**Start.** REGISTRY section 3 "The run is visible now"; `lib/deploy-store.ts`, `lib/run-phase.ts`.
+**Start.** `lib/run-phase.ts` `applyGpu`; REGISTRY section 3 "The run is visible now".
 
-- [ ] Batch with task 5 rather than paying for a startup twice.
-- [ ] Do not save the run — the clip is a scratch file, not evidence.
-- [ ] Tear down in the same session, and confirm one image is left in the repository.
-- [ ] Record the real phase durations in the Registry beside the mock's rehearsal figures.
+- [ ] Deploy, then press Run **without** connecting first, so the inference request is the one
+      that wakes the instance.
+- [ ] Record the real cold-start duration against the quoted 64 s.
 
 ### 8. Verify the 3D orbit by hand
 
@@ -143,31 +140,6 @@ relabelled as one.
       try to find individual plants.
 - [ ] Output a heat map, not a list of objects.
 - [ ] Check it against the physical reference and report error, coverage and abstention rate.
-
-### 5. Close the 112-frame memory question
-
-**Why.** One run used 22.02 GiB where the measured table predicted 21.28 — 99.96% of the card,
-with no headroom left. Until it is explained we cap ourselves at 81 frames instead of 112, which
-costs us a third of the frames on every clip.
-
-**Gate.** One inference at 112 frames and 504 px on `da3Test.mp4` records its allocator peak. If
-it lands near the door clip's 17.23 GiB, the excess is the driver's own reporting near the ceiling
-and the question closes. `docs/vram-measurements.json` carries pixels per frame, the clip and the
-frame shape for every rung, and the app's estimate is checked against that run.
-
-**Regression.** The frame cap must not be raised on the strength of one run. Whatever this
-explains, 112 stays the ceiling until a second measurement agrees.
-
-**Approval.** `cloud spend + user confirmation`. Deferred on 2026-08-08 as out of scope for that
-session, not decided against. It stays here because closing it needs the GPU: nothing on this disk
-carries an allocator peak for 112 frames of that clip.
-
-**Start.** REGISTRY section 3 "The GPU's memory ceiling", `docs/vram-measurements.json`,
-`MEASURED_DRIVER_PEAKS` in `app/src/lib/contract.ts`.
-
-- [ ] Add pixels per frame, the clip and the frame shape to every rung already recorded.
-- [ ] Batch this with any other GPU work rather than paying for a startup on its own.
-- [ ] Run it, record the allocator peak, tear down, and write the answer into the Registry.
 
 ### 6. Give the side column a floor, so 20% cannot squeeze its own tabs out
 

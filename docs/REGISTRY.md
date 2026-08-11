@@ -282,6 +282,35 @@ The allocator figure is the honest signal and fits **0.0700 GiB per frame plus 9
 driver figure flattens near the top because it saturates against the device limit — 144 frames
 reads *lower* than 128, which is a plateau with scatter, not a curve.
 
+#### The 112-frame anomaly was the driver, and the question is closed — 2026-08-11
+
+One run had read **22.02 GiB** at 112 frames where the table above says 21.28 — 99.95% of the card
+with no headroom left — and until it was explained we had no reason to trust the ladder near the
+top. A second 112-frame run at 504 px settles it. Run `20260811-134219-e45202`, `da3Test.mp4`,
+frames 504×280:
+
+| Figure | This run | The 2026-08-01 door run at 112 |
+|---|---|---|
+| Driver peak | 23,647,485,952 B = **22.02 GiB** | 21.28 GiB |
+| Allocator peak | 18,497,626,112 B = **17.23 GiB** | **17.23 GiB** |
+| Baseline after load | 7,050,625,024 B = 6.57 GiB | 6.57 GiB |
+| Model load | 37.05 s | ~40 s |
+| GPU / wall | 37.35 s / 108.11 s | 30.2 s |
+
+**The two clips agree on the allocator to three significant figures and differ by 0.74 GiB on the
+driver.** That is the answer: the driver number includes the CUDA context and allocator reserve
+and saturates against the 22.03 GiB limit, so near the ceiling it measures the ceiling rather than
+the run. The allocator peak is the quantity that tracks the work, and 112 frames costs 17.23 GiB
+of it on both clips regardless of frame orientation (504×280 here, 280×504 for the outdoor runs).
+
+**The cap stays at 112.** Nothing here is evidence about 128 or 144, which is what raising it would
+need; this closes why one number looked alarming, not whether there is room above it.
+
+Two other timings from the same session, both measured rather than estimated: a deploy that skips
+the build took **33 s**, against the app's conservative "~1-3 min" estimate. And the model load of
+37.05 s sits close enough to the 40 s the run readout quotes that the quoted figure needs no
+revision.
+
 **The frame limit is 112, not 144, deliberately.** Both 128 and 144 finished at roughly 99% of
 the device, which is a coin flip rather than an operating point. 112 leaves about 15% headroom.
 
@@ -469,6 +498,24 @@ with nothing answering — a real 503, so the app's own "nothing is answering" p
 then 4 s of model load, plus a deliberately slow body read so the upload bar is observable over
 loopback. It exists because the phases that dominate a real run never happen offline, and a readout
 for them would otherwise ship having been rendered zero times.
+
+**Exercised against a real L4 on 2026-08-11**, and it found a defect the mock never could. The
+deploy succeeded in 33 s and the service was live — but the job's EventSource dropped, so the
+`await loadStatus(true)` that followed it never ran, and the status bar went back to reading
+`Deploy`. The app was telling the operator there was no service while one was deployed and a
+single request away from billing, which is precisely the state that invites a second deployment
+beside a forgotten first. The status refresh after a job is now unconditional, in a `finally`, and
+a lost log beside a live service is reported as a reporting problem rather than a failed deploy.
+Teardown got the same treatment with the polarity that matters there: the registry, not the log,
+decides whether the meter stopped.
+
+The rest of the path behaved. `Deployed · not billing` survived a page reload from the free status
+call; it became `Live · 0:04` the moment the first request woke the instance; the upload bar
+reached `3 MiB / 5 MiB` at 61.6% over the real network; the run passed through loading model into
+inferring and completed in 1 m 51 s; and one click deleted the service, after which `gcloud run
+services list` returned nothing and one image was left in the repository. **One phase was not
+observed on hardware**: `waking` never appeared, because connecting had already woken the
+container, so only the rehearsal has exercised it against a 503.
 
 **Smaller things fixed in the same pass.** The pane header rendered the mock's device string
 `NVIDIA L4 (mock)` in its most prominent slot; it now states `MODE · DA3`, and the device name
