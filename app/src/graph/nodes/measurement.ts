@@ -259,7 +259,18 @@ export const brushSelectionSpec: NodeSpec = {
     if (!descriptor) throw new Error("depth field has no frames");
     const arrays = await field.loadArrays();
     const frame = geometryFrame(arrays, descriptor);
-    const mask = getMask(objectId, requestedFrame);
+    /**
+     * The mask belongs to the frame that was actually shown, not to the one that was asked for.
+     *
+     * A run holds 112 of the 256 canonical frames, so `closestFrame` snaps: ask for 231 and get
+     * 233. Depth 2D paints on the snapped frame's image and Record freezes the trial under
+     * `selection.frame.canonicalIndex`, which is also the snapped one — but this read used the
+     * REQUESTED index. The two agreed only because the pane writes the snapped frame back into
+     * the store, so with Depth 2D closed the measurement came from one frame's mask and the
+     * trial looked for another's. `addObservation` found nothing, the server refused evidence
+     * with no frozen mask, and the trial kept its numbers while its brush disappeared.
+     */
+    const mask = getMask(objectId, descriptor.canonicalIndex);
     if (!mask) {
       const empty: BackprojectResult = {
         points: new Float32Array(),

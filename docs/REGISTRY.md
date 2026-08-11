@@ -481,6 +481,69 @@ matches, so the paint path allocates nothing. Five more ways in: adding a target
 frame is the frame on screen, so it was always dead on arrival), deleting the active target,
 loading a run whose clip has no targets, and clicking during a frame change.
 
+### A trial's brush is now recoverable, and four ways it was not — fixed 2026-08-11
+
+A recorded trial is meant to be re-openable forever, brush strokes included. Auditing the record
+path end to end turned up four defects, three of which could destroy or confuse that evidence.
+All four are fixed, and the pipeline was then run end to end in the browser.
+
+**The mask was looked up under a frame the operator never painted on.** A run holds 112 of the 256
+canonical frames, so `closestFrame` snaps: ask for 231, get 233. `brush-selection` read the mask at
+the REQUESTED frame while `capture` recorded `selection.frame.canonicalIndex`, the SNAPPED one, and
+`addObservation` then looked for the mask under that. The two agreed only because Depth 2D writes
+the snapped frame back into the store — so with that pane closed, a trial kept its numbers and lost
+its brush. The server refuses evidence with no frozen mask, so the trial also never reached disk;
+the pane said "Recorded locally, but disk evidence failed" and the trial stayed local and blind. The
+node now reads the mask at `descriptor.canonicalIndex`, the frame actually displayed and painted.
+
+**Trial numbers were reissued on every reload.** `migrateObservations` renumbered by position, so
+discarding trial 2 of 3 and reloading brought the old trial 3 back as trial 2 with a new id. The
+evidence file on disk is named from a digest of that id, so the renamed row no longer matched its
+own file: the pane saw an unknown trial and wrote a second copy, orphaning the first. Ids are now
+kept when they carry a `#`; only 0.1.0 ids, which are a different shape and not even unique, are
+reissued. A gap in the numbering is the honest record of a deletion.
+
+**A new trial could take a discarded one's number.** `addObservation` counted survivors, so after
+discarding trial 2 of 3 the next trial was numbered 3 — same id, same evidence id, one file
+overwriting the other. It counts from the highest index ever used in the group.
+
+**A failed save was silent.** `persistSession` called `setItem` inside a debounce timer with no
+`catch`, so a quota error threw where nothing was listening and the session simply stopped being
+saved. Every trial carries its mask as run-length pairs, so the payload grows with the work. The
+failure is now caught and shown in the Objects pane with the payload size.
+
+Verified in the browser on `door-504px-112f`, B1 at frame 1: painted 27,784 px, hid and reopened
+Depth 2D (which remounts it) — brush and frame intact; recorded trial 1 → `Recorded #1 on disk`,
+and the file holds the frozen mask at 27,784 px, 1,022 RLE runs, 576×1024, digest `7f70ce43`;
+reloaded — the trial, its digest and the working brush all came back; discarded it — the row went,
+the file went (34 → 33), the six saved runs untouched; cleared the brush — 0 px, and still 0 after
+another reload. No console errors throughout.
+
+**What this did not fix: the app never reads disk evidence back.** `listMeasurementEvidence` has no
+caller. Trials come only from `localStorage`, so the 33 evidence files under
+`~/verge-runs/.measurements/door-504px-112f` are invisible to the app — this session's browser
+profile showed `0 trials` beside 33 stored files. The evidence survives; nothing displays it.
+
+### Masks carry the clip they were painted on — fixed 2026-08-11
+
+Mask keys were `subject:frame` with no clip in them, so two clips sharing a subject id shared one
+mask. Measured 2026-08-11: 18,507 px painted on `RoomNewFixture.mp4` at frame 1 stayed selected
+after switching to `door-504px-112f` and reported 0.759 m, then 0.763 m — one scene's brush strokes
+measuring another scene's point cloud, with nothing on screen saying the selection was made
+elsewhere.
+
+Ad hoc collided always, because its id is the constant `__free__`. Named targets collide whenever
+two clips hold a target with the same name: `AddTargetForm` slugifies the name and de-duplicates
+within one clip's set only, so `doorway` in two clips was one mask. Its own comment already stated
+the rule the key broke — "Ids key masks and trials, so a collision would merge two different
+objects' evidence".
+
+Keys are now `clip/subject:frame` and the session schema is 0.6.0. Recorded trials were never
+affected: they are keyed `objectId:runId` and carry their own frozen mask snapshot. A 0.5.0 key is
+migrated by finding the clip whose target set owns the subject, falling back to the session's saved
+active clip when two clips claim it. Verified in the browser by staging a real 0.5.0 payload:
+`door-leaf:1` came back as `builtin-door/door-leaf:1` with its runs and revision unchanged.
+
 ### The run is visible now, and the paid run shows itself — 2026-08-11
 
 Six defects in the load-configure-run path, found by reading the code and confirmed in the browser.

@@ -291,14 +291,16 @@ export interface MeasurementUiState {
   segmentationAttempts: SegmentationAttempt[];
 }
 
-export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.5.0";
-const STORAGE_KEY = "verge.m3c.measurement-session/0.5.0";
+export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.6.0";
+const STORAGE_KEY = "verge.m3c.measurement-session/0.6.0";
 /**
- * Older keys, newest first. 0.4.0 keyed trials by a three-value fixture `setting`; 0.3.0 added
- * sittings; 0.2.0 added repeat trials and frozen masks; 0.1.0 kept one row per
- * (object, setting, frame) and destroyed repeat trials on record.
+ * Older keys, newest first. 0.5.0 keyed masks `subject:frame`, so two clips shared one; 0.4.0
+ * keyed trials by a three-value fixture `setting`; 0.3.0 added sittings; 0.2.0 added repeat
+ * trials and frozen masks; 0.1.0 kept one row per (object, setting, frame) and destroyed repeat
+ * trials on record.
  */
 const LEGACY_STORAGE_KEYS = [
+  "verge.m3c.measurement-session/0.5.0",
   "verge.m3c.measurement-session/0.4.0",
   "verge.m3b.measurement-session/0.3.0",
   "verge.m3b.measurement-session/0.2.0",
@@ -447,6 +449,12 @@ function decodeMask(value: EncodedMask): MaskRecord {
  * A pre-0.3.0 row has no sitting either. It gets `LEGACY_SITTING_ID`, not this page load's id:
  * claiming an old trial for the current sitting would manufacture a between-sitting comparison
  * out of nothing, which is the exact number this schema exists to make trustworthy.
+ *
+ * A row that already has an id KEEPS it. Renumbering by position rewrote history: delete trial 2
+ * of 3 and reload, and the old trial 3 came back as trial 2 under a new id. Its evidence file on
+ * disk is named after the id it was written with, so the renamed row no longer matched it — the
+ * pane saw an unknown trial and wrote a second copy, leaving the first orphaned. A gap in the
+ * numbering is the honest record of a deletion.
  */
 export function migrateObservations(rows: readonly MeasurementObservation[]): MeasurementObservation[] {
   const counters = new Map<string, number>();
@@ -460,18 +468,48 @@ export function migrateObservations(rows: readonly MeasurementObservation[]): Me
         ? { ...raw, runId: `door-${legacySetting}` }
         : raw;
     const group = `${row.objectId}:${row.runId}`;
-    const trialIndex = (counters.get(group) ?? 0) + 1;
-    counters.set(group, trialIndex);
+    const nextIndex = (counters.get(group) ?? 0) + 1;
+    const trialIndex = row.trialIndex ?? nextIndex;
+    counters.set(group, Math.max(nextIndex, trialIndex));
+    // A trial id carries its number after a `#`. A 0.1.0 id is a different shape and is not
+    // even unique — two trials of one object shared it — so those are reissued.
+    const keepsId = typeof row.id === "string" && row.id.includes("#");
     return {
       ...row,
       trialIndex,
-      id: `${group}#${trialIndex}`,
+      id: keepsId ? row.id : `${group}#${trialIndex}`,
       sittingId: row.sittingId ?? LEGACY_SITTING_ID,
       mask: row.mask
         ? { ...row.mask, source: row.mask.source ?? "brush", segmentation: row.mask.segmentation }
         : undefined,
     };
   });
+}
+
+/**
+ * Give a stored mask key its clip, so 0.5.0 sessions survive the re-keying.
+ *
+ * A 0.5.0 key is `subject:frame` and does not say which clip it was painted on. The subject
+ * usually does: a target id belongs to exactly one clip's set unless two clips happened to
+ * choose the same name. Where the lookup is ambiguous or finds nothing, the session's own
+ * active clip is the best available answer. A working mask is not evidence — recorded trials
+ * carry their own frozen copy — so guessing here cannot corrupt a measurement.
+ */
+export function migrateMaskKeys<T>(
+  masks: Record<string, T>,
+  savedActiveClip: string,
+  sets: Record<string, readonly MeasurementObject[]> = targetSets,
+): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries(masks).map(([key, mask]) => {
+      if (key.includes("/")) return [key, mask];
+      const subject = key.slice(0, key.lastIndexOf(":"));
+      const owners = Object.entries(sets)
+        .filter(([, targets]) => targets.some((target) => (target.maskOwnerId ?? target.id) === subject))
+        .map(([clip]) => clip);
+      return [`${owners.length === 1 ? owners[0] : savedActiveClip}/${key}`, mask];
+    }),
+  );
 }
 
 function restoreSession(): Partial<MeasurementUiState> {
@@ -506,8 +544,8 @@ function restoreSession(): Partial<MeasurementUiState> {
       canonicalFrame: saved.canonicalFrame,
       confidencePercentile: saved.confidencePercentile,
       masks: Object.fromEntries(
-        Object.entries(saved.masks ?? {})
-          .filter(([key]) => !key.startsWith(`${FREE_MEASUREMENT_ID}:`))
+        Object.entries(migrateMaskKeys(saved.masks ?? {}, saved.activeClip ?? activeClip))
+          .filter(([key]) => !isFreeMaskKey(key))
           .map(([key, mask]) => [key, decodeMask(mask)]),
       ),
       observations: migrateObservations(saved.observations ?? []),
@@ -563,10 +601,17 @@ export function paintElapsedMs(objectId?: string, frame?: number): number | unde
   return startedAt === undefined ? undefined : Date.now() - startedAt;
 }
 
+/** Set when the last save failed, so a pane can say the work is not being kept. */
+let persistError: string | undefined;
+
+export function sessionPersistError(): string | undefined {
+  return persistError;
+}
+
 function persistSession(): void {
   if (typeof window === "undefined" || !window.localStorage) return;
   const masks = Object.fromEntries(
-    Object.entries(state.masks).filter(([key]) => !key.startsWith(`${FREE_MEASUREMENT_ID}:`)).map(([key, mask]) => [
+    Object.entries(state.masks).filter(([key]) => !isFreeMaskKey(key)).map(([key, mask]) => [
       key,
       {
         width: mask.width,
@@ -578,22 +623,31 @@ function persistSession(): void {
       },
     ]),
   );
-  window.localStorage.setItem(
-    STORAGE_KEY,
-    JSON.stringify({
-      blind: state.blind,
-      activeObjectId: state.activeObjectId,
-      activeClip,
-      canonicalFrame: state.canonicalFrame,
-      confidencePercentile: state.confidencePercentile,
-      masks,
-      observations: state.observations,
-      segmentationAttempts: state.segmentationAttempts,
-      // Operator-authored targets are evidence definitions, not preferences: losing them
-      // orphans every trial recorded against them.
-      targetSets,
-    }),
-  );
+  const payload = JSON.stringify({
+    blind: state.blind,
+    activeObjectId: state.activeObjectId,
+    activeClip,
+    canonicalFrame: state.canonicalFrame,
+    confidencePercentile: state.confidencePercentile,
+    masks,
+    observations: state.observations,
+    segmentationAttempts: state.segmentationAttempts,
+    // Operator-authored targets are evidence definitions, not preferences: losing them
+    // orphans every trial recorded against them.
+    targetSets,
+  });
+  try {
+    window.localStorage.setItem(STORAGE_KEY, payload);
+    persistError = undefined;
+  } catch (reason) {
+    // A quota failure threw out of the debounce timer, where nothing catches it: the session
+    // stopped being saved and said so nowhere. Every trial carries its mask as run-length
+    // pairs, so the payload grows with the work, and this is the state most worth reporting.
+    persistError = `Session not saved (${Math.round(payload.length / 1024)} KB): ${
+      reason instanceof Error ? reason.message : String(reason)
+    }`;
+    for (const listener of listeners) listener();
+  }
 }
 
 function commit(): void {
@@ -691,9 +745,28 @@ export function setMeasurementZoom(value: number): void {
   commit();
 }
 
-function maskKey(objectId = activeMeasurementSubject().id, frame = state.canonicalFrame): string {
-  const object = measurementObjects().find((item) => item.id === objectId);
-  return `${object?.maskOwnerId ?? objectId}:${frame}`;
+/**
+ * Which clip a mask belongs to, in the key itself.
+ *
+ * Keys were `subject:frame` with no clip in them, so two clips sharing a subject id shared one
+ * mask. Ad hoc collided always — its id is the constant `__free__` — and named targets collided
+ * whenever two clips held a target with the same name, because `AddTargetForm` slugifies the name
+ * and only de-duplicates within one clip's set. Measured 2026-08-11: 18,507 px painted on
+ * `RoomNewFixture.mp4` stayed selected after switching to the door run and reported 0.759 m
+ * against the door's cloud — one scene's brush strokes measuring another scene.
+ */
+function maskKey(
+  objectId = activeMeasurementSubject().id,
+  frame = state.canonicalFrame,
+  clip = activeClip,
+): string {
+  const object = measurementObjects(clip).find((item) => item.id === objectId);
+  return `${clip}/${object?.maskOwnerId ?? objectId}:${frame}`;
+}
+
+/** Ad hoc masks are never persisted or exported: the measurement itself is temporary. */
+function isFreeMaskKey(key: string): boolean {
+  return key.slice(key.indexOf("/") + 1).startsWith(`${FREE_MEASUREMENT_ID}:`);
 }
 
 export function getMask(objectId = activeMeasurementSubject().id, frame = state.canonicalFrame): MaskRecord | undefined {
@@ -957,10 +1030,14 @@ export function addObservation(
   >,
 ): MeasurementObservation {
   const group = `${observation.objectId}:${observation.runId}`;
+  // Counted from the highest index ever used in this group, not from how many rows survive.
+  // Discarding trial 2 of 3 left two rows, so the next trial was numbered 3 and collided with
+  // the existing trial 3 — same id, same evidence id, and the disk file of one overwritten by
+  // the other.
   const trialIndex =
-    state.observations.filter(
-      (item) => item.objectId === observation.objectId && item.runId === observation.runId,
-    ).length + 1;
+    state.observations
+      .filter((item) => item.objectId === observation.objectId && item.runId === observation.runId)
+      .reduce((highest, item) => Math.max(highest, item.trialIndex), 0) + 1;
   const key = maskKey(observation.objectId, observation.canonicalFrame);
   const startedAt = paintClocks.get(key);
   const record: MeasurementObservation = {
@@ -1089,7 +1166,7 @@ export function trialStats(
 
 export function exportMeasurementSession(): string {
   const workingMasks = Object.fromEntries(
-    Object.entries(state.masks).filter(([key]) => !key.startsWith(`${FREE_MEASUREMENT_ID}:`)).map(([key, mask]) => [
+    Object.entries(state.masks).filter(([key]) => !isFreeMaskKey(key)).map(([key, mask]) => [
       key,
       {
         width: mask.width,

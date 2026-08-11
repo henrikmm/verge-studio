@@ -48,6 +48,7 @@ import {
   exportMeasurementSession,
   getMask,
   removeObservation,
+  sessionPersistError,
   setActiveMeasurementObject,
   setBlind,
   setFreeMeasurement,
@@ -387,6 +388,8 @@ export function ObjectsPane() {
   const runs = useRuns();
   const syncedEvidence = useRef(new Set<string>());
   const [evidenceStatus, setEvidenceStatus] = useState<string>();
+  // Read on every store change, which is when a save has just been attempted.
+  const persistError = ui && sessionPersistError();
   const fixture = graph.nodes.find((node) => node.id === FIXTURE_RUN_ID);
   const sourceMode = String(fixture?.params.source ?? "recorded") as "recorded" | "live";
   /**
@@ -991,6 +994,8 @@ export function ObjectsPane() {
             </button>
           </div>
           {evidenceStatus && <div className={evidenceStatus.includes("failed") || evidenceStatus.includes("Could not") ? "evidence-warning" : "honesty-note"}>{evidenceStatus}</div>}
+          {/* A trial the browser cannot store is a trial that will not be there tomorrow. */}
+          {persistError && <div className="evidence-warning">{persistError}</div>}
           {/*
             The instruction stays; the two paragraphs around it went behind `?`.
 

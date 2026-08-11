@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  BUILTIN_DOOR_CLIP,
+  DOOR_TARGETS,
   acceptActiveModelMask,
+  addTarget,
+  migrateMaskKeys,
+  setActiveClip,
   activeMeasurementObject,
   activeMeasurementSubject,
   addObservation,
@@ -49,6 +54,9 @@ const BASE = {
 describe("measurement store", () => {
   beforeEach(() => {
     clearObservations();
+    // The store is module state, so a test that changes clip would otherwise hand the next one
+    // a target set with no door-leaf in it.
+    setActiveClip(BUILTIN_DOOR_CLIP);
     setActiveMeasurementObject("door-leaf");
     setMeasurementFrame(1);
     setMaskData("door-leaf", 1, 24, 20, new Uint8Array(24 * 20));
@@ -83,7 +91,7 @@ describe("measurement store", () => {
       workingMasks: Record<string, unknown>;
       observations: MeasurementObservation[];
     };
-    expect(Object.keys(exported.workingMasks)).not.toContain("__free__:1");
+    expect(Object.keys(exported.workingMasks)).not.toContain(`${BUILTIN_DOOR_CLIP}/__free__:1`);
     expect(exported.observations).toHaveLength(0);
   });
 
@@ -139,6 +147,77 @@ describe("measurement store", () => {
     expect(ensureMask(24, 20).data.some(Boolean)).toBe(false);
   });
 
+  /**
+   * A selection painted on one clip used to stay selected on the next and measure it. Observed
+   * 2026-08-11: 18,507 px painted on `RoomNewFixture.mp4` reported 0.759 m against the door's
+   * point cloud after a run switch.
+   */
+  it("keeps each clip's masks to itself, including Ad hoc", () => {
+    setActiveClip(BUILTIN_DOOR_CLIP);
+    setFreeMeasurement();
+    setMeasurementFrame(1);
+    ensureMask(24, 20);
+    paintMask(5, 5, 3, false);
+    const doorPixels = getMask()?.data.reduce((sum, value) => sum + value, 0) ?? 0;
+    expect(doorPixels).toBeGreaterThan(0);
+
+    setActiveClip("clip-b-sha");
+    expect(getMask()).toBeUndefined();
+    expect(ensureMask(24, 20).data.some(Boolean)).toBe(false);
+
+    setActiveClip(BUILTIN_DOOR_CLIP);
+    setFreeMeasurement();
+    expect(getMask()?.data.reduce((sum, value) => sum + value, 0)).toBe(doorPixels);
+  });
+
+  /**
+   * Two clips may hold a target with the same name: `AddTargetForm` slugifies the name and only
+   * de-duplicates within one clip's set, so `doorway` can exist twice. Before the clip went into
+   * the mask key that was one mask serving two scenes.
+   */
+  it("separates same-named targets that belong to different clips", () => {
+    const doorway = {
+      id: "doorway",
+      code: "T1",
+      name: "Doorway",
+      definition: "floor to lintel",
+      truthM: 2.0,
+      mode: "vertical_extent" as const,
+      suggestedFrame: 4,
+      maskInstruction: "paint it",
+    };
+    setActiveClip("clip-one");
+    addTarget(doorway);
+    setActiveMeasurementObject("doorway");
+    setMeasurementFrame(4);
+    ensureMask(10, 10);
+    paintMask(5, 5, 2, false);
+    const painted = getMask()?.data.reduce((sum, value) => sum + value, 0) ?? 0;
+
+    setActiveClip("clip-two");
+    addTarget(doorway);
+    setActiveMeasurementObject("doorway");
+    setMeasurementFrame(4);
+    expect(getMask()).toBeUndefined();
+
+    setActiveClip("clip-one");
+    setActiveMeasurementObject("doorway");
+    expect(getMask()?.data.reduce((sum, value) => sum + value, 0)).toBe(painted);
+  });
+
+  it("gives a 0.5.0 mask key its clip from the target that owns it", () => {
+    const migrated = migrateMaskKeys(
+      { "door-leaf:1": "a", "doorway:4": "b", "clip-one/doorway:4": "c" },
+      "saved-clip",
+      { [BUILTIN_DOOR_CLIP]: DOOR_TARGETS, "clip-one": [], "clip-two": [] },
+    );
+    expect(Object.keys(migrated).sort()).toEqual([
+      "clip-one/doorway:4",
+      "builtin-door/door-leaf:1",
+      "saved-clip/doorway:4",
+    ].sort());
+  });
+
   it("retains repeat trials instead of destroying the previous one, and keeps runs separate", () => {
     addObservation({ ...BASE, rawM: 1.4 });
     addObservation({ ...BASE, rawM: 1.41 });
@@ -152,6 +231,27 @@ describe("measurement store", () => {
     expect(new Set(observations.map((item) => item.id)).size).toBe(3);
     expect(trialStats(observations, "door-leaf", "door-356px-256f").n).toBe(2);
     expect(trialStats(observations, "door-leaf", "door-504px-112f").n).toBe(1);
+  });
+
+  /**
+   * Trial numbers are part of a trial's identity: the evidence file on disk is named after the
+   * id, so reusing or renaming one loses the link to it.
+   */
+  it("never reuses a discarded trial's number, and keeps its number across a reload", () => {
+    const first = addObservation({ ...BASE, rawM: 1.4 });
+    const second = addObservation({ ...BASE, rawM: 1.41 });
+    const third = addObservation({ ...BASE, rawM: 1.42 });
+    expect([first, second, third].map((item) => item.trialIndex)).toEqual([1, 2, 3]);
+
+    removeObservation(second.id);
+    const fourth = addObservation({ ...BASE, rawM: 1.43 });
+    // Counting the survivors would have numbered this 3 and collided with the trial above.
+    expect(fourth.trialIndex).toBe(4);
+    expect(fourth.id).not.toBe(third.id);
+
+    const reloaded = migrateObservations(getMeasurementUi().observations);
+    expect(reloaded.map((item) => item.trialIndex)).toEqual([1, 3, 4]);
+    expect(reloaded.map((item) => item.id)).toEqual([first.id, third.id, fourth.id]);
   });
 
   it("reports operator spread across trials, and withholds NMAD below three of them", () => {
@@ -260,7 +360,7 @@ describe("measurement store", () => {
       repeatability: Array<{ objectId: string; setting: string; n: number; rangeM: number }>;
       workingMasks: Record<string, { paintedPixels: number; runs: number[] }>;
     };
-    expect(exported.schemaVersion).toBe("verge.measurement-session/0.5.0");
+    expect(exported.schemaVersion).toBe("verge.measurement-session/0.6.0");
     expect(exported.definitions.find((item) => item.id === "door-leaf")).toMatchObject({
       mode: "vertical_extent",
       definition: "physical leaf, bottom edge to top edge",
@@ -268,7 +368,8 @@ describe("measurement store", () => {
     expect(exported.definitions.find((item) => item.id === "table-top")).toMatchObject({
       mode: "top_above_floor",
     });
-    expect(exported.workingMasks["door-leaf:1"]).toMatchObject({
+    // Exported keys carry the clip, so a reader can tell which scene a mask was painted on.
+    expect(exported.workingMasks["builtin-door/door-leaf:1"]).toMatchObject({
       paintedPixels: 5,
       runs: [2, 3, 8, 2],
     });
