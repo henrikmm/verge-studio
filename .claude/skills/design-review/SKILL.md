@@ -1,6 +1,6 @@
 ---
 name: design-review
-description: Visual QA loop — screenshot the running app in the browser pane and grade it against the acceptance checklist in docs/DESIGN.md and the reference captures in docs/reference/. Run after any UI change.
+description: Visual QA loop — screenshot the running app in the browser pane and grade it against the acceptance checklist in docs/DESIGN.md and this app's own reference captures in docs/reference/. Run after any UI change.
 ---
 
 # Design review

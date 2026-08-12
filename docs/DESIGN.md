@@ -3,12 +3,51 @@
 What the interface must look like and do. The acceptance checklist at the end is what the
 design-review workflow grades against.
 
-Visual reference: Spencer Sterling's **Sentinel**, captured in `reference/`:
+## The reference is this app
 
-- `sentinel-streamdiff-brush-canvas.png` — viewport panes, properties, terminal, graph
-- `sentinel-scientific-organism.png` — many tabs per group, denser inspector, graph banner
+`reference/` holds five captures of **Verge Studio**, at 1280×800 on the door fixture, taken
+2026-08-12. They replaced two screenshots of somebody else's application, which had been the
+visual target since the project started and had outlived the job: item 10 passed against them
+seven consecutive times, and every write-up spent its space explaining which of our differences
+were deliberate. A target you have already reached grades nothing.
 
-Lineage: TouchDesigner and ComfyUI. Dense, dark, professional, everything observable.
+| Capture | What it pins |
+|---|---|
+| `empty-state.png` | first run — five panes, nothing loaded, no work started |
+| `default-standard.png` | the app doing its job — recorded run, depth map, point cloud |
+| `advanced-measured.png` | Advanced — a graded target, its uncertainty budget, floor layers |
+| `graph.png` | the pipeline — node cards, type-coloured ports and wires, the banner |
+| `narrow-pane.png` | a pane at 180 px, which is the only width clipped controls appear at |
+
+Redraw them with `node scripts/capture-reference.mjs`, which drives each state by name against a
+running dev server, so a re-capture changes the pixels and nothing else. **Replace them only when
+the change was deliberate and the user has agreed to it.** A baseline made of our own screenshots
+ratchets: each pass approves an image slightly unlike the last, and after a few rounds the
+standard is whatever the most recent session happened to capture. That is what item 10b guards.
+
+One capture is deliberately incomplete. `advanced-measured.png` shows the result strip reading
+`paint this target in Depth 2D to measure it`, because painting a mask is a drag and no honest
+one can be scripted from a guess. A wrong number baked into the baseline would teach the wrong
+thing, so the populated headline is graded live under item 22 instead.
+
+### What we inherited, and what is ours
+
+The density came from TouchDesigner, ComfyUI and Spencer Sterling's Sentinel: dark surfaces, tab
+strips under 28 px, thumbnails on node cards, red slider thumbs, mono numerals, a warm graph
+canvas distinct from the pane bodies. That part is settled and is not up for redesign.
+
+What is ours is the layer on top, and it is there because this app claims to have measured
+something. Five rules carry it, each specified in full further down. A reviewer protects these
+first, and a change that trades one of them for a tidier screen is a change to argue about rather
+than to make:
+
+1. **No hue carries status.** Sentinel says *Running* in green; we say it with a glyph on a
+   neutral brightness ramp, so state survives a greyscale screenshot. See **Colour**.
+2. **Every readout states where its number came from** — `RECORDED RUN · Door · 504 px · 112f`,
+   `cloud: local fixture`, `VRAM (interpolated)`. See **Honesty rules**.
+3. **The measurement is the headline**, in chrome reserved for it that never covers the scene.
+4. **Standard is the app doing its job**; the debugging surface is behind one switch.
+5. **Explanation lives behind a `?`**, never as a paragraph in a pane body.
 
 ## Principles
 
@@ -305,7 +344,13 @@ Design constraints, not copy guidelines.
 8. No horizontal window scroll at 1280×800; gaps between panes are 4 px or less.
 9. Fonts: interface text 12 px or smaller, numeric readouts in mono, nothing above 14 px except
    empty-state hints.
-10. Side-by-side squint test against `reference/`: comparable darkness, density and contrast.
+10. **Compared against `reference/`, in two halves that fail independently.**
+    **10a** — side by side with the capture of the *same state*, darkness, density and contrast
+    are comparable, and every visible difference is named and was intended.
+    **10b** — items 2, 15, 20, 21 and 22 are the same comparison graded from the running app,
+    with no image involved: they are the five rules under "What we inherited, and what is ours".
+    They cannot drift with the captures, so when 10a passes and any of them fails, they win and
+    the captures are the thing that is wrong.
 11. The inspector exposes every inference parameter with mixed control types, each showing its
     current value in mono at the right.
 12. Memory is visible in both the inspector and the status bar, and the bar moves during a run.
