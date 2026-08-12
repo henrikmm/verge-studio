@@ -11,7 +11,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        # Linux only. A private repository bills macOS runner minutes at 10x, so the
+        # two-platform matrix cost 100-200 counted minutes per push against the 2,000
+        # a month the free plan gives. macOS is the development machine and is covered
+        # by hand every day; Linux is the platform nothing else exercises. The ffmpeg
+        # step below still handles macOS, so putting it back is one word.
+        os: [ubuntu-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
