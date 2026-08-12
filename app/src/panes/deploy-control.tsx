@@ -26,7 +26,16 @@
 
 import { useEffect, useState } from "react";
 import { useCloud } from "../lib/cloud-store";
-import { deploy, lifecycle, loadStatus, reattach, teardown, useDeploy } from "../lib/deploy-store";
+import {
+  deploy,
+  lifecycle,
+  loadStatus,
+  reattach,
+  teardown,
+  unavailableServiceHint,
+  unavailableServiceText,
+  useDeploy,
+} from "../lib/deploy-store";
 import { DEPLOY_CONFIRM, TEARDOWN_CONFIRM } from "./setup";
 
 function clock(ms: number): string {
@@ -90,13 +99,12 @@ export function DeployControl() {
   }
 
   if (state === "unavailable") {
-    const hint = deployState.status?.auth.hint ?? deployState.status?.gcloud.error ?? "";
     return (
       <span
         className="chip deploy-chip"
-        title={`${hint} — signing in needs a browser consent screen, so no button here can do it for you.`}
+        title={unavailableServiceHint(deployState.status)}
       >
-        <span className="dot" /> service: gcloud not ready
+        <span className="dot" /> {unavailableServiceText(deployState.status)}
       </span>
     );
   }

@@ -11,6 +11,8 @@ import { localApiHeaders } from "./local-api";
 /** Everything the app can know about the cloud without waking an instance. */
 export interface CloudStatus {
   checkedAt: number;
+  /** False when the repository-local resource identifiers have not been configured yet. */
+  configured: boolean;
   gcloud: { available: boolean; error: string | null };
   auth: { active: boolean; account: string | null; hint?: string | null };
   project: string;

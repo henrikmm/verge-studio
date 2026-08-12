@@ -21,8 +21,11 @@ import { readdir, readFile, lstat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
+import { loadLocalCloudEnv } from "./local-env.mjs";
 
 const execFileAsync = promisify(execFile);
+
+loadLocalCloudEnv();
 
 // Same defaults and same env overrides as scripts/deploy.sh, so the two cannot describe
 // different services. If you change one, change both.
@@ -34,8 +37,8 @@ export const IMAGE_NAME = process.env.IMAGE_NAME ?? "da3-service";
 export const OUTPUT_BUCKET = (process.env.VERGE_OUTPUT_BUCKET ?? "").trim();
 export const IMAGE_URI = PROJECT_ID ? `${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}` : "";
 
-function configurationError() {
-  const missing = [!PROJECT_ID && "PROJECT_ID", !OUTPUT_BUCKET && "VERGE_OUTPUT_BUCKET"].filter(Boolean);
+export function configurationError(env = { PROJECT_ID, VERGE_OUTPUT_BUCKET: OUTPUT_BUCKET }) {
+  const missing = [!env.PROJECT_ID && "PROJECT_ID", !env.VERGE_OUTPUT_BUCKET && "VERGE_OUTPUT_BUCKET"].filter(Boolean);
   return missing.length ? `cloud is unconfigured: set ${missing.join(" and ")}` : null;
 }
 
@@ -123,6 +126,7 @@ export async function cloudStatus(repoRoot, { refresh = false } = {}) {
   if (configError) {
     cached = {
       checkedAt: Date.now(),
+      configured: false,
       gcloud: { available: false, error: configError },
       auth: { active: false, account: null, hint: configError },
       project: "",
@@ -138,6 +142,7 @@ export async function cloudStatus(repoRoot, { refresh = false } = {}) {
   if (!version.ok) {
     cached = {
       checkedAt: Date.now(),
+      configured: true,
       gcloud: { available: false, error: version.error },
       auth: { active: false, account: null },
       project: PROJECT_ID,
@@ -170,6 +175,7 @@ export async function cloudStatus(repoRoot, { refresh = false } = {}) {
 
   cached = {
     checkedAt: Date.now(),
+    configured: true,
     gcloud: { available: true, error: null },
     auth: {
       active: authed,

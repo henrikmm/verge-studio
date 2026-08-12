@@ -95,13 +95,13 @@ echo "image digest: ${DIGEST}"
 # Cloud Run may reclaim mid-session -- so refuse rather than deploy something that looks
 # fine until it silently eats a paid run.
 echo "== output bucket =="
-if gcloud storage buckets describe "gs://${OUTPUT_BUCKET}" \
+if gcloud storage buckets describe "gs://${VERGE_OUTPUT_BUCKET}" \
      --project="${PROJECT_ID}" >/dev/null 2>&1; then
-  echo "  gs://${OUTPUT_BUCKET}/${OUTPUT_PREFIX}/ ready"
+  echo "  gs://${VERGE_OUTPUT_BUCKET}/${OUTPUT_PREFIX}/ ready"
 else
   cat >&2 <<EOF
 
-REFUSING TO DEPLOY: gs://${OUTPUT_BUCKET} does not exist.
+REFUSING TO DEPLOY: gs://${VERGE_OUTPUT_BUCKET} does not exist.
 
 This deploy sets --min-instances=0, which is only safe when artifacts are written to a
 bucket rather than to the instance's own disk. Without it, Cloud Run can replace the
@@ -130,7 +130,7 @@ gcloud run deploy "${SERVICE}" \
   --timeout=900 \
   --no-allow-unauthenticated \
   --service-account="${RUNTIME_SA}" \
-  --set-env-vars="VERGE_OUTPUT_BUCKET=${OUTPUT_BUCKET},VERGE_OUTPUT_PREFIX=${OUTPUT_PREFIX}" \
+  --set-env-vars="VERGE_OUTPUT_BUCKET=${VERGE_OUTPUT_BUCKET},VERGE_OUTPUT_PREFIX=${OUTPUT_PREFIX}" \
   --quiet --project="${PROJECT_ID}"
 
 URL="$(gcloud run services describe "${SERVICE}" --region="${REGION}" \

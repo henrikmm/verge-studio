@@ -42,6 +42,7 @@ fixtures/door/**
 # local env
 .env
 .env.*
+!.env.local.example
 
 # Live run manifests from a warm cloud session. Point at a transient service and
 # become meaningless once it is torn down; the fixture under fixtures/room/ is the

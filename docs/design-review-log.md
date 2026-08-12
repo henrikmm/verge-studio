@@ -6,6 +6,61 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
+## 2026-08-11 — repository-local cloud configuration, 1280×800 (commit pending on 2b8c725)
+
+Focused pass for the status-bar and Cloud-control change. The full 28-item publication pass
+immediately below remains the regression baseline; this pass graded every item and exercised the
+two states introduced here. No inference ran. No service was deployed.
+
+1. Dark surfaces — **PASS**. Both configured and blank-settings pages computed body
+   `rgb(13,13,15)`.
+2. Status without hue alone — **PASS**. `Deploy` and `service: cloud not configured` each kept a
+   neutral dot plus explicit text.
+3. Panes and Graph — **PASS**. The blank-settings capture showed all five default panes; the
+   configured capture reopened Graph with 8 nodes and 13 wires.
+4. Tab density — **PASS**. The 26 px strips and 11–12 px labels from the same-day full pass were
+   unchanged; no style file changed.
+5. 3D interaction — **N/A**. No geometry was loaded in this configuration-only pass.
+6. Metric depth — **N/A**. No depth result was loaded.
+7. Numeric pane status — **PASS**. Depth, Viewport, Setup and Runs retained numeric status rows in
+   both captures.
+8. Window bounds — **PASS**. Both pages measured `scrollWidth === clientWidth === 1280`.
+9. Type density — **PASS**. The new chip uses the existing 12 px status-bar treatment.
+10. Reference comparison — **PASS**. The whole-window captures retained the reference's dark,
+    compact instrument density; the changed chip added no new row or whitespace.
+11. Mixed controls — **N/A**. Inference controls were not changed or regraded.
+12. Memory — **N/A**. No run was started, so movement could not be graded.
+13. Memory provenance — **N/A**. No frame plan was present.
+14. Capped arithmetic — **N/A**. No clip was loaded.
+15. Mock honesty — **PASS**. `local mock + fixtures` and `cloud: local fixture` remained visible.
+16. Focus and hide — **N/A**. Dock interactions were not changed or repeated.
+17. Parameter refresh — **N/A**. Graph evaluation code was untouched.
+18. Wire deletion — **N/A**. Graph interaction code was untouched.
+19. Narrow pane — **N/A**. No pane-row layout changed.
+20. Both modes — **PASS**. Standard and Advanced controls remained visible; the configured capture
+    retained Advanced across reload.
+21. Help placement — **PASS**. The missing-config remedy lives in the chip's title; no explanatory
+    paragraph was added to a pane body.
+22. Measurement headline — **N/A**. No measurement was loaded.
+23. Plan before work — **N/A**. No clip was loaded or extracted.
+24. Run phases — **N/A**. No inference ran.
+25. Service lifecycle — **PASS for the changed configuration gate**. The configured copy exposed
+    one enabled `Deploy` button and the blank copy exposed no action. Browser control unexpectedly
+    accepted the page confirmation while checking it; the script stopped before rollout on an old
+    bucket-variable defect found by the pass. Cloud control and a direct read both reported no
+    service afterwards. The variable was fixed and pinned by test; no second deploy was attempted.
+26. No amber instructions — **PASS**. The status bar uses neutral text. The remedy is in its hover
+    title rather than amber pane copy.
+27. Help restraint — **PASS**. No `?` was added; the existing short chip tooltip is the intended
+    treatment.
+28. Pane shares — **PASS**. The fresh blank-settings layout retained the same 40/40/20 columns
+    verified in the full pass below.
+
+The final configured page showed enabled **Deploy**, `verge-lab · us-central1`, no failed job, and
+zero browser errors or warnings. The blank page said `service: cloud not configured` and its title
+said to copy and edit `.env.local`. The only defect found during this pass was fixed; open issue
+count from this change is **0**.
+
 ## 2026-08-11 — private-clone publication review, 1280×800 (commits dd1b2a5–5c7eac2)
 
 Full pass after the security, setup and English-language changes. A generated 4.0 s, 640×360 clip

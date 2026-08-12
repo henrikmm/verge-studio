@@ -1464,6 +1464,31 @@ this zero-cost review. Two comments in the frozen GPU server still say “Mac”
 would invalidate the retained image and force a roughly 12 GB rebuild, so they wait for the next
 user-approved server change. No runnable path or setup instruction carries that assumption.
 
+### Cloud resource names are configured once per clone — 2026-08-11
+
+`.env.local` now holds the project, region and output-bucket identifiers for one working copy. Git
+ignores that file and tracks `.env.local.example` instead. The Vite control plane and every cloud
+script load the same three names automatically. An explicit shell variable still wins for a
+one-off override. Google login material remains outside the repository in gcloud's own account
+store; the local file is not an authentication file and its parser ignores every other key.
+
+The existing local copy loaded its resource names after one server restart. Cloud control showed
+the configured project and region and enabled **Deploy**. A second loopback process with deliberately
+blank values showed `service: cloud not configured`; its hover text pointed to `.env.local`, not to
+Google sign-in. Both states fit a 1280×800 window with no horizontal scroll and no browser warning.
+
+The review also caught one old internal name in `deploy.sh` and `teardown.sh`. They required
+`VERGE_OUTPUT_BUCKET` but later read `OUTPUT_BUCKET`, which made a configured deploy stop before
+rollout. Both scripts now use the public name throughout, and a regression test rejects the old
+reference. The browser check that exposed it reached only read-only project, image and bucket
+lookups. A direct Cloud Run status read afterwards returned no service, so no GPU instance started
+and nothing began billing. A paid deploy was not run after the fix.
+
+Evidence: `scripts/local-env.test.mjs` has four passing tests for the tracked example, parser,
+override order and bucket variable. The complete verifier passed **41 test files and 547 tests**,
+then every FastAPI server-contract check. The production build also passed; its existing warning
+is the 1.41 MB main JavaScript chunk, 395.44 kB after gzip.
+
 ---
 
 ## 7. Known limitations and gates

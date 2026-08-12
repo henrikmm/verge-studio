@@ -120,6 +120,20 @@ export function lifecycle(deploy: DeployState, cloud: CloudSession): Lifecycle {
   return deploy.status.service.exists ? "deployed" : "absent";
 }
 
+export function unavailableServiceText(status: CloudStatus | null): string {
+  return status?.configured === false
+    ? "service: cloud not configured"
+    : "service: gcloud not ready";
+}
+
+export function unavailableServiceHint(status: CloudStatus | null): string {
+  if (status?.configured === false) {
+    return "Copy .env.local.example to .env.local, set PROJECT_ID and VERGE_OUTPUT_BUCKET, then restart the app.";
+  }
+  const hint = status?.auth.hint ?? status?.gcloud.error ?? "gcloud is not ready";
+  return `${hint} — signing in needs a browser consent screen, so no button here can do it for you.`;
+}
+
 /** Free: gcloud metadata only. Safe on mount, and cannot wake anything. */
 export async function loadStatus(refresh = false): Promise<void> {
   state.statusBusy = true;

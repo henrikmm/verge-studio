@@ -191,22 +191,25 @@ gcloud auth list
 ### 2. Choose names for resources you own
 
 Project IDs and bucket names are globally unique. They are identifiers, not credentials.
+Create the ignored local configuration once:
 
 ```bash
-export PROJECT_ID="your-unique-google-project-id"
-export REGION="us-central1"
-export VERGE_OUTPUT_BUCKET="your-unique-verge-runs-bucket"
+cp .env.local.example .env.local
 ```
 
-The app and every cloud script refuse to use the cloud when these values are absent. Keep them in
-your shell profile or a private local helper if desired; do not store tokens or credential JSON in
-the repository.
+Edit `.env.local` and replace the project and bucket placeholders. The app and every cloud script
+load it automatically. Explicit shell variables still take priority for a one-off override. The
+file is ignored by Git and holds resource identifiers only; never put tokens or credential JSON in
+it. Restart the app after changing it.
 
 ### 3. Create and bill the project
 
 If you do not already have a project:
 
 ```bash
+set -a
+source .env.local
+set +a
 gcloud projects create "${PROJECT_ID}" --name="Verge Studio"
 gcloud billing accounts list
 gcloud billing projects link "${PROJECT_ID}" --billing-account="YOUR_BILLING_ACCOUNT_ID"
@@ -332,8 +335,9 @@ export VERGE_CORS_ORIGINS="http://127.0.0.1:5174,http://localhost:5174"
 ./scripts/create-bucket.sh
 ```
 
-**Cloud control says unconfigured.** Export `PROJECT_ID`, `REGION` and `VERGE_OUTPUT_BUCKET` in the
-same shell that starts the app.
+**Cloud control says unconfigured.** Copy `.env.local.example` to `.env.local`, replace its
+placeholders, and restart the app. Shell variables override the file when you need a temporary
+project or region.
 
 **Preflight reports authentication missing.** Run `gcloud auth login`, then confirm the active
 account with `gcloud auth list`. Do not substitute a downloaded service-account key.

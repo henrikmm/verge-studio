@@ -20,8 +20,10 @@ import { promisify } from "node:util";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { InferManifest } from "./contract";
 import { manifestFromWire } from "./infer-client";
+import { unavailableServiceHint, unavailableServiceText } from "./deploy-store";
 import {
   approvedServiceUrl,
+  configurationError,
   sourceTag,
   // @ts-expect-error - plain ESM module, no type declarations
 } from "../../vite-plugins/cloud.mjs";
@@ -559,6 +561,30 @@ describe("approved service URLs", () => {
   it("refuses a bearer destination outside Cloud Run or loopback", () => {
     expect(() => approvedServiceUrl("https://attacker.invalid")).toThrow("unapproved");
     expect(approvedServiceUrl("https://service-abc-uc.a.run.app")).toBe("https://service-abc-uc.a.run.app");
+  });
+});
+
+describe("cloud configuration status", () => {
+  it("names missing local configuration separately from a gcloud failure", () => {
+    expect(configurationError({ PROJECT_ID: "", VERGE_OUTPUT_BUCKET: "" })).toContain(
+      "PROJECT_ID and VERGE_OUTPUT_BUCKET",
+    );
+    expect(
+      configurationError({ PROJECT_ID: "friend-project", VERGE_OUTPUT_BUCKET: "friend-bucket" }),
+    ).toBeNull();
+    const status = {
+      configured: false,
+      checkedAt: 0,
+      gcloud: { available: false, error: "unconfigured" },
+      auth: { active: false, account: null },
+      project: "",
+      region: "us-central1",
+      service: { name: "verge-da3", exists: false, url: null },
+      image: { uri: "", tag: null, present: false },
+      deploy: { willSkipBuild: false, estimate: "unconfigured" },
+    };
+    expect(unavailableServiceText(status)).toBe("service: cloud not configured");
+    expect(unavailableServiceHint(status)).toContain(".env.local");
   });
 });
 

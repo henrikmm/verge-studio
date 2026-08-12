@@ -1,6 +1,49 @@
 #!/usr/bin/env bash
 # Shared, non-mutating configuration checks for the optional Google Cloud path.
 
+load_local_cloud_env() {
+  local common_dir config raw key value
+  common_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  config="${common_dir%/scripts}/.env.local"
+  [[ -f "${config}" ]] || return 0
+
+  while IFS= read -r raw || [[ -n "${raw}" ]]; do
+    raw="${raw%$'\r'}"
+    [[ "${raw}" =~ ^[[:space:]]*$ || "${raw}" =~ ^[[:space:]]*# ]] && continue
+    [[ "${raw}" == export[[:space:]]* ]] && raw="${raw#export }"
+    if [[ "${raw}" != *=* ]]; then
+      echo "invalid .env.local line: expected NAME=value" >&2
+      return 1
+    fi
+
+    key="${raw%%=*}"
+    value="${raw#*=}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    key="${key%"${key##*[![:space:]]}"}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "${value}" == \"*\" && "${value}" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "${value}" == \'*\' && "${value}" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+
+    case "${key}" in
+      PROJECT_ID)
+        [[ -n "${PROJECT_ID+x}" ]] || export PROJECT_ID="${value}"
+        ;;
+      REGION)
+        [[ -n "${REGION+x}" ]] || export REGION="${value}"
+        ;;
+      VERGE_OUTPUT_BUCKET)
+        [[ -n "${VERGE_OUTPUT_BUCKET+x}" ]] || export VERGE_OUTPUT_BUCKET="${value}"
+        ;;
+    esac
+  done < "${config}"
+}
+
+load_local_cloud_env
+
 require_command() {
   local command="$1"
   if ! command -v "${command}" >/dev/null 2>&1; then
