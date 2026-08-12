@@ -27,6 +27,39 @@ Supporting documents: `README.md` (how to run it), `MEASUREMENTS.md` (tape truth
 results), `docs/DESIGN.md` (what the interface must look like and do), `docs/SOURCES.md`
 (external references worth trusting).
 
+**A new fact goes to exactly one of them.** Writing it twice is how two records disagree:
+
+| What you have | Where it goes |
+|---|---|
+| A reading graded against a tape measure | `MEASUREMENTS.md` |
+| Any other measured number, or a decision and its reason | `docs/REGISTRY.md` |
+| A rule the interface must obey from now on | `docs/DESIGN.md` |
+| What one review graded, on one date | `docs/design-review-log.md` |
+| Work not yet done | `docs/TASK.md` |
+
+## Where things are
+
+| Directory | What it holds |
+|---|---|
+| `app/` | React, TypeScript, Vite — the panes, the node graph, the 3D viewport |
+| `geometry/` | Ground fitting, back-projection, scale checks, measurement. No browser code |
+| `server/` | The FastAPI wrapper around DA3, and its GPU container image |
+| `scripts/` | Verification, inspection, frame extraction, cloud lifecycle |
+| `fixtures/` | Recorded runs used as input by tests and by the app |
+| `donor/` | Verbatim copies from an earlier project, for reference only |
+
+Four places hold run data, and confusing them is how a session loses work:
+
+- **`fixtures/`** is the durable evidence. `manifest.json` and `SHA256SUMS` are committed; the
+  npz and GLB payloads are gitignored, so **a fresh clone cannot load a fixture run** and cannot
+  redraw the design captures. Rebuild one with a cloud run plus `scripts/save-run.sh`.
+- **`.runs/`** holds manifests from a warm cloud session. They stop meaning anything the moment
+  the service is torn down. Never committed.
+- **`.inspect/`** holds pictures drawn by `scripts/inspect.mjs`. Evidence for the session that
+  made them, cheap to redraw, never committed.
+- **`~/verge-runs`** is where Save puts a run — outside the repository on purpose, so a 135 MB
+  artifact can never be staged by accident.
+
 ## How the work is done
 
 **Everything that can run on the local computer, runs there.** Extracting frames, geometry, tests and
@@ -116,7 +149,26 @@ Every change ends in the loop that matches it:
 | The deployed service | `scripts/smoke-infer.sh` — one short run, never a loop of GPU runs |
 
 Run `scripts/verify.sh` with a Python environment that has FastAPI installed, or the server check
-silently skips and the green tick means less than it looks. `README.md` gives the command.
+silently skips and the green tick means less than it looks:
+
+```
+VERGE_PY=.venv/bin/python ./scripts/verify.sh
+```
+
+`.nvmrc` pins the Node version. Install with `npm ci --prefix app`, never `npm install` — the
+lockfile is the record of what the CI and the development machine both ran. Cloud resource names
+come from `.env.local`, copied from `.env.local.example`; nothing in the app hard-codes them.
+
+**How the tests are arranged.** They sit beside the code they cover, named `*.test.ts` — 41 files
+and 547 tests as of 2026-08-12. There is one runner: `vitest`, from `app/`, and its glob reaches
+`../geometry` and `../scripts` deliberately, so neither can drift from the app on types or on the
+camera convention. File parallelism is off, because several fixture suites each rebuild the same
+million-point cloud and running them together makes their wall-clock time a function of worker
+contention rather than of anything real.
+
+**There are no browser or component tests.** The interface is checked by the design-review
+workflow instead, against this app's own captures in `docs/reference/`. Anything you can see on
+screen is untested by `verify.sh`, whatever its green tick says.
 
 **Record only what you observed.** A ticked box for code that was written but never run has cost
 this project real money twice. If you built something and did not exercise it, say so and leave
@@ -124,6 +176,12 @@ the box unticked. An untested seam described as working is worse than one descri
 
 Commit at the end of each coherent unit. Never commit dependencies, model weights, secrets, or
 media over 5 MB.
+
+Work happens on a branch off `main`, and CI runs `verify.sh` on Linux on every push. There are two
+remotes: **`origin`** (`henrikmm/verge-studio`) is the standalone repository and the copy that
+matters; `greenv` carries one mirrored branch so a group can see the work. Push to `origin` unless
+told otherwise. Branch protection is not available on this plan, so nothing but you stops a bad
+push — see REGISTRY section 6.
 
 **Commit messages follow [Conventional Commits](https://www.conventionalcommits.org)**, as of
 2026-08-08. `<type>(<scope>): <summary>`, then an optional body and footers, blank line between.
@@ -152,56 +210,38 @@ them from the app's own runs and geometry, over no network — it cannot disagre
 A height statistic over ground is only a measurement of grass if that ground is grass, and only the
 selection drawn on the source frame can tell you whether it is.
 
-## How to write here
+## Claims, and what has to be attached to one
 
-Everything here is in English, and all of it is aimed at one reader. This applies to what you say
-in the conversation too, not only to the files — the same person reads both.
+English throughout, in the files and in the conversation — the same person reads both. Two things
+about vocabulary, then the part that actually matters.
 
-**Picture the reader, because they are real.** They work in software and they read this code.
-They started this project and know exactly what it is for. What they are still picking up is the
-domain: depth models, plane fitting, the geometry. They are picking it up deliberately, and they
-are not slow — but they will not stop to decode your vocabulary, and they should not have to.
+**Never explain programming.** The reader writes software and started this project. **Explain a
+domain term the first time it appears**, in a clause rather than a footnote — depth models, plane
+fitting, the geometry are what they are deliberately picking up. Use the exact term rather than an
+easier one that is slightly wrong; define it once, then use it freely. Do not simplify the
+subject, and do not write around a word because it is long.
 
-So: never explain programming, they know what a function is. Always explain a domain term the
-first time it appears, in a clause rather than a footnote. And never make them work to reach an
-idea they would have understood immediately.
+**Where this repository is strict is claims about the system**, because a claim is the one thing
+the reader cannot check by looking at the code. It costs nothing to write that a fit improved, and
+nothing to be wrong about it.
 
-The subject here is genuinely hard, and that is the reason to keep the writing easy. Difficulty in
-the sentence adds to difficulty in the material and the reader pays for both. A paragraph that is
-hard to read does not deliver its idea, however correct the idea is.
+- **A claim carries its evidence** — the file, the run id, the date, the command. "Moves the floor
+  by 31.9 cm" can be argued with; "significant drift" cannot. If a number is a guess, say so and
+  give the range. Put the file and function names in the evidence line, where someone will look
+  them up, not in the sentence explaining why the decision was made.
+- **Outcome first, mechanism second.** A reader who stops after the first sentence should still
+  have the thing that mattered.
+- **Say what you observed, not what you expect.** Code that was written but never run is described
+  as untested, not as working. That distinction has cost this project real money twice.
 
-The test is mechanical: **read the sentence aloud.** If you run out of breath, or have to go back
-to find the subject, it is too long. Cut it in two.
+**This governs claims, not every sentence.** Most work here is ordinary engineering, and a comment
+explaining why a function guards its input needs no measurement behind it. Writing that reads well
+is welcome. Writing that sounds authoritative about something nobody checked is the failure, and
+it is the only one this section is trying to prevent.
 
-- **One idea per sentence.** Two clauses joined by "which", "so that" or a semicolon are usually
-  two sentences pretending to be one.
-- **Numbers instead of adjectives.** "Moves the floor by 31.9 cm" tells the reader what to do
-  next. "Significant drift" tells them nothing and cannot be checked. If a number is a guess, say
-  it is a guess and give the range.
-- **Outcome first, mechanism second.** What happened, then how. A reader who stops after the first
-  sentence should still have learned the thing that mattered.
-- **Say it plainly, then name it.** "An algorithm that guesses at random and keeps the best guess
-  (RANSAC)" costs four words and loses nobody. Short words and ordinary grammar everywhere else:
-  "use", not "utilise"; "because", not "due to the fact that".
-- **Write to be disagreed with.** Give the file, the run, the date. A claim nobody can check is an
-  opinion.
-- **File and function names belong in the evidence lines**, where someone will look them up — not
-  in the sentence explaining why a decision was made.
-
-**The failure to avoid is writing that performs.** It reads as careful and costs the reader a
-pass to unpack. It is the most common way work here goes unread:
-
-> ✗ The exporter's adaptive percentile floor decimates the reconstruction's less-certain strata.
-> ✓ The exporter throws away the least confident 40% of every pixel.
-
-Same fact, nothing lost, one obstacle removed — and the second version can be checked, because it
-has a number in it. If you catch yourself reaching for an unusual word, the plain one was almost
-certainly right. Ornament is not a style choice here; it is a defect.
-
-**`TASK.md` is the model — read it before writing anything else.** It is the plainest file in the
-repository because someone is about to act on it, and it stays technical throughout: the register
-to copy is *precise and ordinary*, not *simplified*. `REGISTRY.md` carries evidence and runs
-denser, under exactly the same rules. Code comments explain **why**, and never restate **what**.
+`TASK.md` is the register to copy: technical throughout, and plain because somebody is about to
+act on it. `REGISTRY.md` runs denser under the same rules. Code comments explain **why** and never
+restate **what**.
 
 Code style: TypeScript in strict mode, file names in kebab-case, React components in PascalCase.
 
