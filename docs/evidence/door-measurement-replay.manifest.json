@@ -1,0 +1,66 @@
+{
+  "schema_version": "verge.public-evidence-bundle/0.1.0",
+  "bundle_id": "door-measurement-replay-2026-08-11",
+  "audience": "private friends-only repository",
+  "rights_status": "The standard indoor fixture is approved for this private audience. This is not a public-redistribution licence.",
+  "source": {
+    "fixture": "fixtures/door/504px-112f",
+    "fixture_run_id": "20260801-193446-e53e7d",
+    "run_alias": "door-504px-112f",
+    "trial_identity": "door-leaf:door-504px-112f#1@sitting-msmd3iex-i6wswj@2026-08-09T22:20:07.102Z@987957e9e0732a02",
+    "target": "B1 door leaf",
+    "definition": "bottom edge to top edge",
+    "tape_truth_m": 2.1,
+    "recorded_trial_measurement_m": 2.021077,
+    "model": {
+      "repository_id": "depth-anything/DA3NESTED-GIANT-LARGE-1.1",
+      "revision": "b2359bdf726fb44ef62acca04d629dcf158053e7",
+      "depth_mode": "metric",
+      "linear_unit": "metre"
+    },
+    "commit": "2752d86949368ec4ecd3412eae555a39d79e47b8"
+  },
+  "generation": {
+    "replay_command": "node scripts/inspect.mjs measurement door-504px-112f 'door-leaf:door-504px-112f#1@sitting-msmd3iex-i6wswj@2026-08-09T22:20:07.102Z@987957e9e0732a02'",
+    "bundle_commands": [
+      "ffmpeg -hide_banner -loglevel error -i .inspect/door-504px-112f-measurement-1-mask.png -frames:v 1 -compression_level 9 docs/evidence/door-endpoint-marks.png",
+      "ffmpeg -hide_banner -loglevel error -i .inspect/door-504px-112f-measurement-1-3d.png -frames:v 1 -compression_level 9 docs/evidence/door-3d-ruler.png"
+    ],
+    "source_outputs": [
+      {
+        "path": ".inspect/door-504px-112f-measurement-1-mask.png",
+        "sha256": "a358e5d0db8be42b622f45dd2e054cb4250c817d41c08fc08d6f98914ab82a77"
+      },
+      {
+        "path": ".inspect/door-504px-112f-measurement-1-3d.png",
+        "sha256": "773d6b8786598702115fb8042e5d658f1b0e8b359887da555668627cf937d32d"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "path": "door-endpoint-marks.png",
+      "role": "source-frame endpoint marks from the frozen recorded trial",
+      "width_px": 576,
+      "height_px": 1066,
+      "size_bytes": 197132,
+      "sha256": "983fd3d48089d0a168a9e57fe0bd3795d49dbf6b5230d7789cfdf141cdddf2b5"
+    },
+    {
+      "path": "door-3d-ruler.png",
+      "role": "matching replayed 3D selection and ruler",
+      "width_px": 900,
+      "height_px": 900,
+      "size_bytes": 86181,
+      "sha256": "f1db15c09f0014dfc7571f17be9a4770581910c536ff1a8e2b3892dc6e839b74"
+    }
+  ],
+  "claim_scope": "One frozen, hand-painted indoor door trial can be replayed from source-frame endpoint marks to a matching 3D selection and ruler. The recorded trial reads 2.021077 m against a 2.100 m tape truth.",
+  "limitations": [
+    "This is one selected trial, not the three-trial mean and not an accuracy claim across scenes.",
+    "The evidence is from one indoor clip and one operator. It does not establish results for other rooms, phones, camera paths, floor visibility, outdoor terrain, or grass.",
+    "The endpoint marks are hand-painted evidence. This bundle does not validate automatic segmentation.",
+    "The images contain a private interior and are approved only for the stated private audience.",
+    "No roadside YouTube-derived fixture or Sentinel reference image is included or promoted by this bundle."
+  ]
+}

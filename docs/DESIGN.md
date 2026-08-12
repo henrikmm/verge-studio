@@ -213,7 +213,7 @@ were wrong, so it is now the pane's structure:
    artifacts, each with its own elapsed clock. A finished run points the viewers at itself.
 
 **Frame Source is a costly node**, in the same sense DA3 is. One spends GPU money and the other
-spends up to 11.7 s of this Mac, and neither may start because a slider moved. Both are `manual`,
+spends up to 11.7 s of local time, and neither may start because a slider moved. Both are `manual`,
 which is what makes item 17 below safe to keep: a parameter edit schedules `runAutoFree`, and that
 pass denies every manual node.
 

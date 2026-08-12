@@ -29,7 +29,7 @@ results), `docs/DESIGN.md` (what the interface must look like and do), `docs/SOU
 
 ## How the work is done
 
-**Everything that can run on this Mac, runs on this Mac.** Extracting frames, geometry, tests and
+**Everything that can run on the local computer, runs there.** Extracting frames, geometry, tests and
 every viewer are local and free. The cloud does exactly one thing: the forward pass of the depth
 model, which needs a GPU. Never send CPU-shaped work to the cloud.
 
@@ -53,8 +53,9 @@ idle period afterwards. Two consequences follow:
 - **Ask before you spend, and say what it will cost.** Deploying, running inference, or anything
   else that starts or wakes the service requires the user to agree first, in that conversation.
 - **Delete the service when you are done.** A correctness requirement, not tidiness: it keeps one
-  machine permanently alive, so it never stops billing on its own. Save any run you care about
-  *before* deleting — results live on that machine and disappear with it.
+  machine permanently alive, so it never stops billing on its own. Bucket-backed results survive
+  teardown for three days, but Save is still the only way to keep one. A degraded run whose bucket
+  publish failed must be saved before deletion because that result exists only on the instance.
 
 Plan the whole batch of experiments before deploying, and run them back to back against one warm
 machine. Four experiments in one session cost roughly one startup; four sessions cost four.
@@ -207,7 +208,7 @@ Code style: TypeScript in strict mode, file names in kebab-case, React component
 ## Boundaries
 
 - `donor/` holds verbatim copies from an earlier project, kept for reference. Application code
-  never imports from it. The original repository at `~/dev/Motiva_Challenge` is read-only.
+  never imports from it. The predecessor repository, when present, is read-only.
 - `server/` is frozen unless the user has agreed to pay for a rebuild. Any edit under it — even a
   comment — forces a ~20 minute rebuild on the next deploy. Batch small changes with a real one.
 - When you are unsure how the depth model, React Flow, Dockview or Three.js behaves, check

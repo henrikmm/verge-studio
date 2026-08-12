@@ -84,20 +84,25 @@ drift; a bad propagated state contaminates later frames.
   https://docs.cloud.google.com/storage/docs/using-uniform-bucket-level-access
 - Object lifecycle rules: https://docs.cloud.google.com/storage/docs/lifecycle
 
-Deployment patterns were adapted from the predecessor project at
-`~/dev/Motiva_Challenge/infra/gcp/worker/` — read-only, never modified.
+Deployment patterns were adapted from the read-only predecessor copied into `donor/`.
 
-## This project's cloud environment
+## Verified cloud environment
 
-Project `verge-lab`, region `us-central1`, keyless application-default credentials. There is **no
-GPU quota with zonal redundancy on this project**, so `--no-gpu-zonal-redundancy` is mandatory on
-every deploy (verified by probe, 2026-07-31). Artifact Registry does not use immutable tags here;
-images are pushed by digest.
+The original maintainer runs in `us-central1`. The scripts now require every operator to name a
+project, region and globally unique bucket rather than inheriting that environment. The local
+control plane uses the active gcloud CLI login; it does not use local Application Default
+Credentials (ADC). The deployed service uses keyless ADC from its dedicated runtime service
+account. No service-account key belongs in this repository.
+
+The original project has no GPU quota with zonal redundancy, so
+`--no-gpu-zonal-redundancy` is mandatory on every deploy (verified by probe, 2026-07-31).
+Artifact Registry does not use immutable tags here; images are pushed by digest.
 
 Video hosting sites block datacenter networks, so a video URL can never be fetched from the cloud.
-Frames are always uploaded from this Mac.
+Frames are always extracted on the local computer before upload.
 
 ## Local environment
 
-ffmpeg 8.1.2 via Homebrew. Node 22 or later and npm via Homebrew. Python 3 at
-`/usr/local/bin/python3`. The dev server runs on port 5173.
+The verified development environment uses ffmpeg 8.1.2, Node 22 or later, npm and Python 3.
+The dev server runs on loopback port 5173 by default. README.md carries the supported-platform
+install instructions rather than assuming one package manager or filesystem layout.

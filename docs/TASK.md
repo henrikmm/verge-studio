@@ -32,6 +32,59 @@ written. Unticked boxes are allowed in this file and nowhere else in the reposit
 
 ## Now
 
+### 8. Make a private clone safe and repeatable
+
+**Why.** The repository is about to be shared with trusted friends, but a web page can currently
+send commands to the local development server while it is open. One saved-run path can then attach
+the operator's Google identity token to a caller-controlled address. A new clone also defaults to
+the original Google project and bucket, assumes Homebrew and macOS in several places, and does not
+explain what its first local run can prove. Private access narrows the audience; it does not make
+those failures safe or make setup reproducible.
+
+**Gate.** Every privileged local route rejects a foreign origin and a missing or wrong per-process
+token before it starts a process, contacts a service or changes a file. A saved run can fetch only
+from the configured Cloud Run service or its declared private bucket, and hostile service, artifact,
+run-id and path cases are held by tests. A clone made from tracked files in a new sibling directory
+installs from the lockfile, passes the complete local verification with the server contract enabled,
+starts the app, and exercises the offline reconstruction path using only the README. The README
+requires the reader's own Google project and states which operating systems were actually tested.
+
+**Regression.** No test may contact or wake the cloud. The fixture-backed app stays usable at zero
+cost, paid nodes still require a press, mock results keep their label, the tape-graded measurements
+in `MEASUREMENTS.md` do not change, and the interface still passes the design review at 1280x800.
+
+**Approval.** `none`. The user approved the local implementation, the standard fixtures and the
+existing Git history on 2026-08-11. A real cloud deploy or inference remains separately gated as
+paid work and is not part of this task.
+
+**Start.** `app/vite-plugins/local-api.mjs`, `runs.mjs`, `cloud.mjs`; `scripts/deploy.sh`,
+`create-bucket.sh`, `extract-frames.mjs`; `README.md`; REGISTRY sections 1, 6 and 7; this task's
+2026-08-11 read-only security, portability and evidence audit in the conversation.
+
+- [ ] Put a same-origin and per-process-token boundary around privileged local routes and prove
+      hostile requests stop before side effects.
+- [ ] Remove caller-controlled credential destinations; validate service URLs, artifact locations,
+      run identifiers and paths at the boundary, with regression tests.
+- [ ] Require a user-owned Google project and bucket, stop changing global gcloud configuration,
+      use a dedicated runtime identity, and add a free preflight that names missing setup without
+      deploying anything.
+- [ ] Replace machine-specific language with `local computer` or an actual platform name. Keep
+      macOS only where the behaviour or measurement is genuinely macOS-specific.
+- [ ] Make the supported-platform and dependency contract executable: locked Node install,
+      platform-neutral ffmpeg help, a complete Python verification environment, and CI for every
+      platform claimed as verified.
+- [ ] Rewrite the README around a zero-cost first run, current measured capability and limits,
+      Google project creation and authentication, safe paid operation, data locations and recovery.
+- [ ] Publish only user-approved fixture evidence, with the exact run/trial, model revision, commit,
+      scope and limitation beside every screenshot or number. Do not turn one indoor clip into a
+      general accuracy claim.
+- [ ] Scan the current tree and all retained local history for secrets and non-English prose. Keep
+      the approved history and report the author-email exposure rather than rewriting it.
+- [ ] Clone the repository into a temporary sibling under `/Users/hmandrick/dev`, follow the README
+      from scratch, run the full verification, start the app and exercise the offline pipeline.
+- [ ] Run the design-review workflow after the visible wording changes. Record what was observed,
+      move established facts to the Registry, delete this finished task and commit each coherent unit.
+
 ### 2. Let the app say "I cannot find the ground"
 
 **Why.** When the evidence for a floor is weak, the app picks a winner anyway and draws it exactly

@@ -6,6 +6,74 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
+## 2026-08-11 — private-clone publication review, 1280×800 (commit pending)
+
+Full pass after the security, setup and English-language changes. A generated 4.0 s, 640×360 clip
+was loaded through Browse, planned at 40 frames, extracted to 40 JPEGs and run against the local
+mock. No cloud request was made. The first attempt exposed a real regression: the new local nonce
+covered `/api/...` but not the mock's exact `/api` base, so the run stopped at a 403. The base check
+and its regression test were fixed before this final pass.
+
+1. Dark surfaces — **PASS**. Body `rgb(13,13,15)`; zero white computed backgrounds.
+2. Status without hue alone — **PASS**. Idle, running, refusal and failure each carried a glyph and
+   text. Red remained confined to failure/refusal and control thumbs; no green status appeared.
+3. Panes and graph — **PASS**. Five default panes were present. Graph reopened with 13 wires in
+   measurement view and 15 in full view; the dock sash resized under a real pointer drag.
+4. Tab density — **PASS**. Every measured tab strip was 26 px high.
+5. 3D interaction — **PASS**. Viewport reported 351,232 points with the axis gizmo visible. A drag
+   changed the camera from the front view to an oblique view of the cloud.
+6. Metric depth — **PASS**. Depth mode showed the turbo map and a 27.93–66.48 m legend.
+7. Numeric pane status — **PASS**. Depth reported 210.1 ms and Viewport reported 16.7–19.5 ms plus
+   the point count.
+8. Window bounds — **PASS**. `scrollWidth === clientWidth === 1280`; groups met with no gap.
+9. Type density — **PASS**. Visible controls and readouts matched the 12 px interface scale; the
+   numeric rows used the mono face. No pane heading exceeded the allowed scale.
+10. Reference comparison — **PASS**. Against both Sentinel captures the app kept the same dark,
+    dense instrument character, restrained separators and compact graph, without copying their
+    brighter ornamental effects.
+11. Mixed controls — **PASS**. Inspector showed sliders, selects, checkboxes, actions and mono
+    values, including the point-cloud source and colour selects.
+12. Memory — **PASS**. Inspector and status bar both showed VRAM. During inference the live row
+    moved from 6.70 GiB toward 13.57 GiB, then recorded a 14.92 GiB mock peak.
+13. Memory provenance — **PASS**. The 40-frame plan said `interpolated`; extrapolation and warning
+    cases remain pinned by the run-planning tests.
+14. Capped arithmetic — **N/A**. The publication walkthrough intentionally used the README's 4 s
+    clip, which produced 40 frames and did not meet the cap. The capped case remains covered by the
+    existing design record and tests.
+15. Mock honesty — **PASS**. Depth, Viewport, the run record and status bar all said MOCK and stated
+    that the geometry was the roadside fixture, not the loaded clip.
+16. Focus and hide — **PASS**. Focus made one group 1280×775 while the other groups were 0 px wide;
+    Escape restored three groups. Hiding Depth left its view-bar control visible, and reopening it
+    restored the pane.
+17. Parameter refresh — **PASS**. Point Cloud's colour select changed from photograph to height
+    and back through the Inspector. The graph remained live and no costly `Running…` control
+    appeared; the held mock output stayed visible.
+18. Wire deletion — **PASS**. Selecting one full-graph wire produced exactly one selected edge;
+    Backspace changed 15 edges to 14. Reset restored the default graph.
+19. Narrow pane — **PASS**. Setup measured 179 px wide. Across 27 visible Inspector rows, zero child
+    bounds crossed the pane bounds.
+20. Both modes — **PASS**. Standard loaded first; Advanced exposed cloud, layer and navigation
+    controls, survived reload, and retained every Standard control.
+21. Help placement — **PASS**. There were zero visible explanatory paragraphs in pane bodies.
+    Live mock and ground-refusal warnings remained visible; the same-day help-placement pass above
+    remains current because this change altered wording, not the popover.
+22. Measurement headline — **N/A**. This mock walkthrough had no selected measurement or tape
+    truth. The result-strip behavior remains held by its nine tests and the frozen door evidence.
+23. Plan before work — **PASS**. Loading showed 40 frames, 10.00 effective fps, 640×360, upload
+    bracket and VRAM before extraction. Only the Extract press produced the 40-cell contact sheet.
+24. Run phases — **PASS**. The run showed named inference, a 4 s elapsed clock, measured-memory
+    wording, then `run complete`; its own mock depth and point cloud replaced the empty viewers.
+25. Service lifecycle — **N/A**. No paid service existed. The read-only state still separated
+    `Service: none — nothing is billing` from `Next deploy: unconfigured`; deploy confirmations
+    were not invoked.
+26. No amber instructions — **PASS**. Amber named the missing cloud configuration; it did not tell
+    the operator what to press.
+27. Help restraint — **PASS**. Parameter rows carried label help rather than `?` buttons; section
+    help stayed within the two-dot limit.
+28. Pane shares — **PASS**. The fresh layout measured 512 / 512 / 256 px, exactly 40 / 40 / 20.
+
+Final browser console: **0 errors and 0 warnings**. Final open issue count from this pass: **0**.
+
 ## 2026-08-11 — Amber removed, help on labels, pane shares, 1280×800 (commit pending, on a311aa7)
 
 A second pass the same day, from the user's review of the first. Four conventions changed; graded
