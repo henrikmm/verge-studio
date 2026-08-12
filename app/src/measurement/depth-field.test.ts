@@ -15,7 +15,7 @@ import { connectCloud, disconnectCloud } from "../lib/cloud-store";
  */
 describe("fetchArtifactBuffer", () => {
   const SIGNED =
-    "https://storage.googleapis.com/verge-lab-runs/runs/transient/r/verge-result.npz" +
+    "https://storage.googleapis.com/example-verge-runs/runs/transient/r/verge-result.npz" +
     "?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Signature=deadbeef";
 
   afterEach(() => {

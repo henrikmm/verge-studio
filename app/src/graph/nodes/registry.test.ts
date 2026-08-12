@@ -39,7 +39,7 @@ describe("the default pipeline", () => {
 
   /**
    * Two nodes wait to be asked, for the same reason in two currencies: DA3 spends GPU money,
-   * and Frame Source spends up to 11.7 s of this Mac decoding a 4K clip. Neither may start
+   * and Frame Source spends up to 11.7 s of local time decoding a 4K clip. Neither may start
    * because a slider moved.
    */
   it("starts the costly nodes paused and everything else automatic", () => {

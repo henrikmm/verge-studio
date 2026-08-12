@@ -52,8 +52,8 @@
     },
     "worker_report": {
       "path": "worker-report.json",
-      "size_bytes": 3869,
-      "sha256": "024c77517f8e52a4c5013c1531129179f5897b19d68a9edc89e409101100ac4c"
+      "size_bytes": 3871,
+      "sha256": "0c04730f266107474cee4a9c30f8c58bdde9d2f354bb0be09c6c143150fdb49e"
     },
     "run_summary": {
       "path": "run-summary.json",

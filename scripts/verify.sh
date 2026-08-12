@@ -11,8 +11,12 @@ echo "== fixture smoke =="
 node scripts/check-fixtures.mjs
 
 if [ -f app/package.json ]; then
+  if [ ! -d app/node_modules ]; then
+    echo "app dependencies are missing; run: npm ci --prefix app" >&2
+    exit 1
+  fi
   echo "== typecheck =="
-  (cd app && npx tsc --noEmit)
+  (cd app && npm run typecheck --silent)
   echo "== unit tests =="
   (cd app && npm test --silent)
 fi
@@ -22,7 +26,7 @@ fi
 # to be run separately with `node --test`, which would now try to execute .ts files.
 # Keeping one runner also means geometry and the app can never drift apart on types.
 
-# Server contract smoke. Needs fastapi but NOT torch/DA3, so it runs on this Mac
+# Server contract smoke. Needs fastapi but NOT torch/DA3, so it runs on the local computer
 # whenever a venv with fastapi is on PATH (set VERGE_PY to point at one).
 VERGE_PY="${VERGE_PY:-python3}"
 if "${VERGE_PY}" -c "import fastapi" >/dev/null 2>&1; then

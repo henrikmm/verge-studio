@@ -21,12 +21,10 @@
 # back, and a rollback is worth far more than a dollar of storage.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/cloud-common.sh
 
-PROJECT_ID="${PROJECT_ID:-verge-lab}"
-REGION="${REGION:-us-central1}"
-SERVICE="${SERVICE:-verge-da3}"
-REPOSITORY="${REPOSITORY:-verge}"
-IMAGE_NAME="${IMAGE_NAME:-da3-service}"
+require_command gcloud
+require_cloud_config
 PURGE_IMAGE="${PURGE_IMAGE:-0}"
 REAP_OLD_IMAGES="${REAP_OLD_IMAGES:-1}"
 
@@ -55,8 +53,7 @@ else
   echo "== keeping the current image, reaping older ones (PURGE_IMAGE=1 to delete all) =="
   IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}"
   # Identical to deploy.sh's SRC_TAG. Keep the two in step.
-  KEEP_TAG="src-$(find server -type f -not -path '*/__pycache__/*' \
-    | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256 | cut -c1-16)"
+  KEEP_TAG="$(source_tag)"
 
   # Promotion needs something to promote. If server/ has been edited since the last build,
   # no stored image carries KEEP_TAG -- and reaping "everything that is not the current
@@ -112,8 +109,6 @@ gcloud artifacts repositories list --location="${REGION}" --project="${PROJECT_I
 #
 # Deleting the bucket is not part of teardown. A saved run is already home in ~/verge-runs,
 # and an unsaved one is the only copy of something already paid for.
-OUTPUT_BUCKET="${VERGE_OUTPUT_BUCKET:-verge-lab-runs}"
-OUTPUT_PREFIX="${VERGE_OUTPUT_PREFIX:-runs/transient}"
 if gcloud storage buckets describe "gs://${OUTPUT_BUCKET}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
   echo "transient run artifacts still in gs://${OUTPUT_BUCKET}/${OUTPUT_PREFIX}/:"
   gcloud storage du -s "gs://${OUTPUT_BUCKET}/${OUTPUT_PREFIX}" \

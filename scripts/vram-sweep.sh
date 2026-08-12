@@ -8,7 +8,8 @@
 #    sweep, tear down.
 # 2. LOCAL. Frames for every rung come from ONE ffmpeg decode. Sampling by FPS spreads
 #    frames across the clip, so ffmpeg decodes the entire 4K stream for ANY frame count
-#    -- extracting per rung meant five full decodes and froze the Mac on 2026-08-01.
+#    -- extracting per rung meant five full decodes and froze the development computer on
+#       2026-08-01.
 #    scripts/extract-frames.mjs --ladder decodes once and hardlinks strided subsets.
 #
 # Output: docs/vram-measurements.json, which keeps every sweep ever run rather than
@@ -217,5 +218,9 @@ PY
 
 echo
 echo "Instance is STILL WARM and STILL BILLING."
-echo "Artifacts are in gs://verge-lab-runs and survive teardown, but only for three days."
+if [[ -n "${VERGE_OUTPUT_BUCKET:-}" ]]; then
+  echo "Artifacts are in gs://${VERGE_OUTPUT_BUCKET} and survive teardown only for its lifecycle period."
+else
+  echo "Check each manifest's publish_mode before teardown; this script has no bucket default."
+fi
 echo "Save anything worth keeping with scripts/save-run.sh, then run scripts/teardown.sh."

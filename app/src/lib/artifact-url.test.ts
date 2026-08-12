@@ -70,7 +70,7 @@ describe("isSignedStorageUrl", () => {
   it("recognises a signed GCS link", () => {
     expect(
       isSignedStorageUrl(
-        "https://storage.googleapis.com/verge-lab-runs/runs/transient/r/scene.glb" +
+        "https://storage.googleapis.com/example-verge-runs/runs/transient/r/scene.glb" +
           "?X-Goog-Algorithm=GOOG4-RSA-SHA256&X-Goog-Signature=deadbeef",
       ),
     ).toBe(true);
@@ -79,7 +79,7 @@ describe("isSignedStorageUrl", () => {
   it("rejects an unsigned storage URL, which the browser cannot read anyway", () => {
     // public-access-prevention is on, so this would 403. Treating it as signed would send
     // it without the token and lose the only credential that might have worked.
-    expect(isSignedStorageUrl("https://storage.googleapis.com/verge-lab-runs/x.glb")).toBe(false);
+    expect(isSignedStorageUrl("https://storage.googleapis.com/example-verge-runs/x.glb")).toBe(false);
   });
 
   it("rejects a Cloud Run artifact URL, which DOES need the token and the range chunking", () => {

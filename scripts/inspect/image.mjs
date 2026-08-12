@@ -269,7 +269,7 @@ function run(command, args, stdin = null) {
     child.on("error", (error) =>
       rejectRun(
         error.code === "ENOENT"
-          ? new Error(`${command} not found on PATH — install with: brew install ffmpeg`)
+          ? new Error(`${command} not found on PATH — install ffmpeg with your platform package manager`)
           : error,
       ),
     );

@@ -42,7 +42,7 @@ export interface GraphStoreState {
  *
  * The pane layout (`dock-store`) and the measurement objects, targets and painted trials
  * (`measurement-store`) have both persisted for a while. The graph did not — so a browser
- * reload, or a Mac waking from sleep and discarding the tab, silently reset Run Source to the
+ * reload, or a computer waking from sleep and discarding the tab, silently reset Run Source to the
  * built-in door fixture while the operator's own targets stayed on screen. Reported 2026-08-05
  * after an hour's break: "the default was the standard run not the da3Test one".
  *

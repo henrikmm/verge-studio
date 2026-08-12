@@ -1,5 +1,5 @@
 /**
- * FrameSource — local ffmpeg only. The Mac samples the video; the cloud never does.
+ * FrameSource — local ffmpeg only. The local computer samples the video; the cloud never does.
  *
  * `videoSha256` is a parameter rather than incidental metadata on purpose: it makes
  * the cache key track the video's *content*, so replacing a file at the same path
@@ -9,7 +9,8 @@
  *
  * `manual` has always meant "this costs something, so it waits to be asked". That was read as
  * *money*, and ffmpeg is free — but it is not cheap. Sampling decodes the ENTIRE clip whatever
- * the frame count: measured on this Mac, 1.7 s for a 13.5 s 1080p clip and 11.7 s for a 15.8 s
+ * the frame count: measured on the original development computer, 1.7 s for a 13.5 s 1080p clip
+ * and 11.7 s for a 15.8 s
  * 4K60 one. As an auto node it paid that on every settle of the two sliders below, and it
  * started before the operator had seen what the settings would do.
  *

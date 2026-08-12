@@ -14,21 +14,35 @@
 # 121 MB for three days is well under a cent.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/cloud-common.sh
 
-PROJECT_ID="${PROJECT_ID:-verge-lab}"
-REGION="${REGION:-us-central1}"
-BUCKET="${VERGE_OUTPUT_BUCKET:-verge-lab-runs}"
-# Must agree with VERGE_OUTPUT_PREFIX in server/main.py and with scripts/bucket-lifecycle.json.
-PREFIX="${VERGE_OUTPUT_PREFIX:-runs/transient}"
+require_command gcloud
+require_command python3
+require_cloud_config
+BUCKET="${VERGE_OUTPUT_BUCKET}"
+PREFIX="${OUTPUT_PREFIX}"
 
 PROJECT_NUMBER="$(gcloud projects describe "${PROJECT_ID}" --format='value(projectNumber)')"
-# deploy.sh passes no --service-account, so Cloud Run uses the default compute identity.
-# If that ever changes, change it here too or the grants land on the wrong principal.
-RUNTIME_SA="${RUNTIME_SA:-${PROJECT_NUMBER}-compute@developer.gserviceaccount.com}"
+
+echo "== runtime service account =="
+if gcloud iam service-accounts describe "${RUNTIME_SA}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
+  echo "  ${RUNTIME_SA} already exists"
+else
+  gcloud iam service-accounts create "${RUNTIME_SA_NAME}" \
+    --project="${PROJECT_ID}" \
+    --display-name="Verge Studio runtime"
+  echo "  created ${RUNTIME_SA}"
+fi
 
 echo "== bucket =="
-if gcloud storage buckets describe "gs://${BUCKET}" --project="${PROJECT_ID}" >/dev/null 2>&1; then
-  echo "  gs://${BUCKET} already exists"
+if BUCKET_PROJECT_NUMBER="$(gcloud storage buckets describe "gs://${BUCKET}" \
+    --project="${PROJECT_ID}" --format='value(projectNumber)' 2>/dev/null)"; then
+  if [[ "${BUCKET_PROJECT_NUMBER}" != "${PROJECT_NUMBER}" ]]; then
+    echo "REFUSING: gs://${BUCKET} belongs to project number ${BUCKET_PROJECT_NUMBER}, not ${PROJECT_NUMBER}." >&2
+    echo "Choose a globally unique VERGE_OUTPUT_BUCKET that belongs to PROJECT_ID." >&2
+    exit 1
+  fi
+  echo "  gs://${BUCKET} already exists in ${PROJECT_ID}"
 else
   # Same region as the service: the upload from Cloud Run is then free and fast, and a
   # cross-region bucket would add egress to every one of a run's 121 MB.
@@ -48,19 +62,44 @@ echo "  applied scripts/bucket-lifecycle.json"
 echo "== cors =="
 # Without this the browser cannot fetch a signed link at all -- which is the entire point of
 # the signed link. Fails as an opaque network error, so it is worth setting deliberately.
+LOCAL_PORT="${PORT:-5173}"
+CORS_ORIGINS="${VERGE_CORS_ORIGINS:-http://localhost:${LOCAL_PORT},http://127.0.0.1:${LOCAL_PORT}}"
+CORS_FILE="$(mktemp "${TMPDIR:-/tmp}/verge-bucket-cors.XXXXXX")"
+trap 'rm -f "${CORS_FILE}" "${BUCKET_CHECK_FILE:-}"' EXIT
+python3 - "${CORS_FILE}" "${CORS_ORIGINS}" <<'PY'
+import json, sys
+
+origins = [origin.strip() for origin in sys.argv[2].split(",") if origin.strip()]
+if not origins or any(not origin.startswith(("http://", "https://")) for origin in origins):
+    raise SystemExit("VERGE_CORS_ORIGINS must be a comma-separated list of http(s) origins")
+with open(sys.argv[1], "w", encoding="utf-8") as output:
+    json.dump([{
+        "origin": origins,
+        "method": ["GET", "HEAD"],
+        "responseHeader": ["Content-Type", "Content-Range", "Accept-Ranges", "Content-Length"],
+        "maxAgeSeconds": 3600,
+    }], output)
+PY
 gcloud storage buckets update "gs://${BUCKET}" \
-  --cors-file=scripts/bucket-cors.json --project="${PROJECT_ID}" >/dev/null
-echo "  applied scripts/bucket-cors.json (http://localhost:5173)"
+  --cors-file="${CORS_FILE}" --project="${PROJECT_ID}" >/dev/null
+echo "  applied CORS for ${CORS_ORIGINS}"
 
 echo "== iam =="
-# Scoped to this bucket, not the project. objectAdmin rather than objectCreator because a V4
-# signed URL carries the SIGNER's authority: the service must be able to read what it signs
-# for, or every link it mints returns 403.
-gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+# Scoped to this bucket, not the project. Signed GET links carry the signer's authority,
+# so the runtime needs both a writer and a reader role. It never needs bucket administration.
+gcloud storage buckets remove-iam-policy-binding "gs://${BUCKET}" \
   --member="serviceAccount:${RUNTIME_SA}" \
   --role=roles/storage.objectAdmin \
+  --project="${PROJECT_ID}" >/dev/null 2>&1 || true
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role=roles/storage.objectCreator \
   --project="${PROJECT_ID}" >/dev/null
-echo "  ${RUNTIME_SA} -> roles/storage.objectAdmin on gs://${BUCKET}"
+gcloud storage buckets add-iam-policy-binding "gs://${BUCKET}" \
+  --member="serviceAccount:${RUNTIME_SA}" \
+  --role=roles/storage.objectViewer \
+  --project="${PROJECT_ID}" >/dev/null
+echo "  ${RUNTIME_SA} -> objectCreator + objectViewer on gs://${BUCKET}"
 
 # The one grant that is not obvious. Inside Cloud Run there is no private key to sign with,
 # so generate_signed_url has to go through the IAM signBlob API -- and the runtime account
@@ -77,13 +116,14 @@ echo
 echo "== verifying the prefix that actually receives data =="
 # Read the rule BACK and assert it. Setting a rule and reporting success from the exit code
 # is exactly the mistake the donor bucket embodies.
+BUCKET_CHECK_FILE="$(mktemp "${TMPDIR:-/tmp}/verge-bucket-check.XXXXXX")"
 gcloud storage buckets describe "gs://${BUCKET}" --project="${PROJECT_ID}" \
-  --format=json > /tmp/verge-bucket-check.json
-python3 - "${PREFIX}" <<'PY'
+  --format=json > "${BUCKET_CHECK_FILE}"
+python3 - "${PREFIX}" "${BUCKET_CHECK_FILE}" <<'PY'
 import json, sys
 
 prefix = sys.argv[1].strip("/") + "/"
-data = json.load(open("/tmp/verge-bucket-check.json"))
+data = json.load(open(sys.argv[2]))
 rules = (data.get("lifecycle_config") or data.get("lifecycleConfig") or {}).get("rule", [])
 
 matching = [
@@ -104,7 +144,6 @@ if age is None or age > 3:
 print(f"  OK: Delete at age={age} days matches prefix {prefix!r}")
 print(f"  uniform access: {data.get('uniform_bucket_level_access') or data.get('iamConfiguration')}")
 PY
-rm -f /tmp/verge-bucket-check.json
 
 echo
 echo "bucket ready: gs://${BUCKET}/${PREFIX}/"

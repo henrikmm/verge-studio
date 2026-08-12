@@ -15,7 +15,8 @@
  *
  * Until 2026-08-11 `loadClip` ended with `runAuto()`, so dropping a file started ffmpeg
  * immediately at whatever sampling rate happened to be set, and the frame plan rendered
- * afterwards — describing work already done. Measured on this Mac: 1.7 s for a 13.5 s 1080p clip
+ * afterwards — describing work already done. Measured on the original development computer:
+ * 1.7 s for a 13.5 s 1080p clip
  * and 11.7 s for a 15.8 s 4K60 one, paid again on every settle of a slider, because the sampling
  * controls call `setNodeParamAndRun`.
  *

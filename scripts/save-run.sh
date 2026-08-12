@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Bring a run's artifacts home -- the durable local copy in ~/verge-runs.
 #
-# The urgency here changed on 2026-08-06. Artifacts now go to gs://verge-lab-runs, so
+# The urgency here changed when durable artifact publishing was added. Artifacts now go to the
+# configured output bucket, so
 # tearing the service down no longer destroys them: they survive until the bucket's
 # lifecycle rule deletes them three days later. Saving is still the only way to KEEP a run
 # ("nothing is kept unless the user saves it"), it is simply no longer a race against

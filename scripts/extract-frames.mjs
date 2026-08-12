@@ -1,4 +1,4 @@
-// Local frame extraction — the Mac does this, never the cloud.
+// Local frame extraction — this machine does it, never the cloud.
 //
 // Mirrors DA3's own video handling (app/modules/file_handlers.py::_process_video):
 // sample by target FPS, not by "N frames across the clip". The one thing we add is
@@ -27,8 +27,8 @@ const run = promisify(execFile);
  * must decode the ENTIRE video for any frame count -- 1579 frames of 3840x2160 HEVC
  * for `test_demo.mp4`, whether you asked for 32 frames or 256.
  *
- * On this Mac (6 cores, only 2 of them performance) software HEVC decode saturates
- * every core for the whole pass. Measured 2026-08-01 on a 3 s window: software 4.8 s,
+ * On the original development computer (6 cores, only 2 performance cores), software HEVC decode
+ * saturates every core for the whole pass. Measured 2026-08-01 on a 3 s window: software 4.8 s,
  * videotoolbox 1.8 s -- 2.7x faster, on the dedicated media engine instead of the CPU.
  * Sustained software decode froze the machine outright; this is the fix for that.
  */
@@ -43,7 +43,10 @@ const THREAD_ARGS = ["-threads", "2"];
 
 export class FfmpegMissingError extends Error {
   constructor() {
-    super("ffmpeg/ffprobe not found on PATH — install with: brew install ffmpeg");
+    super(
+      "ffmpeg and ffprobe must be on PATH. Install FFmpeg with your platform's package manager, " +
+        "then restart this terminal.",
+    );
     this.name = "FfmpegMissingError";
   }
 }

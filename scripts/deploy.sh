@@ -26,21 +26,15 @@
 # The service reports which path a run actually took as diagnostics.publish_mode.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+source scripts/cloud-common.sh
 
-PROJECT_ID="${PROJECT_ID:-verge-lab}"
-REGION="${REGION:-us-central1}"
-SERVICE="${SERVICE:-verge-da3}"
-REPOSITORY="${REPOSITORY:-verge}"
-IMAGE_NAME="${IMAGE_NAME:-da3-service}"
-IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}"
+require_command gcloud
+require_cloud_config
 # Durable artifact storage. Create it with scripts/create-bucket.sh, which also sets the
 # lifecycle rule that bounds retention -- the bucket is a precondition of this deploy, not
 # a side effect of it, because _publish has no deletion path of its own.
-OUTPUT_BUCKET="${VERGE_OUTPUT_BUCKET:-verge-lab-runs}"
-OUTPUT_PREFIX="${VERGE_OUTPUT_PREFIX:-runs/transient}"
-
 echo "== project =="
-gcloud config set project "${PROJECT_ID}" --quiet
+echo "  ${PROJECT_ID} (passed to every gcloud command; global gcloud config is unchanged)"
 
 # No --immutable-tags: it makes images undeletable, which the predecessor learned the
 # expensive way.
@@ -69,8 +63,7 @@ fi
 #
 # Hashing the source rather than trusting a mutable tag means a stale image can never
 # be silently deployed: different source, different tag, no match, rebuild.
-SRC_TAG="src-$(find server -type f -not -path '*/__pycache__/*' \
-  | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256 | cut -c1-16)"
+SRC_TAG="$(source_tag)"
 echo "== source tag: ${SRC_TAG} =="
 
 if [[ "${FORCE_BUILD:-0}" == "1" ]]; then
@@ -136,6 +129,7 @@ gcloud run deploy "${SERVICE}" \
   --concurrency=4 \
   --timeout=900 \
   --no-allow-unauthenticated \
+  --service-account="${RUNTIME_SA}" \
   --set-env-vars="VERGE_OUTPUT_BUCKET=${OUTPUT_BUCKET},VERGE_OUTPUT_PREFIX=${OUTPUT_PREFIX}" \
   --quiet --project="${PROJECT_ID}"
 
