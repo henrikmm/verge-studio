@@ -12,7 +12,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { parseNpz } from "../app/src/lib/npz";
 import { estimateGravity, cameraCentres, trajectorySpan } from "./gravity";
 import { fitGroundPlane } from "./plane";
@@ -63,9 +63,17 @@ function transformDirection(direction: Vec3, transform: number[]): Vec3 {
 }
 
 describe.skipIf(!available)("real fixture: fixtures/room/504px-112f", () => {
-  const glb = readGlb(GLB);
-  const points = glb.points;
-  const npz = parseNpz(readFileSync(NPZ).buffer as ArrayBuffer);
+  let glb: ReturnType<typeof readGlb>;
+  let points: Float32Array;
+  let npz: ReturnType<typeof parseNpz>;
+
+  // Vitest evaluates a skipped suite's callback while it registers tests. Keep the reads in a
+  // hook so a fresh clone can skip these untracked payloads without touching absent files.
+  beforeAll(() => {
+    glb = readGlb(GLB);
+    points = glb.points;
+    npz = parseNpz(readFileSync(NPZ).buffer as ArrayBuffer);
+  });
 
   it("carries the 1,000,000-point cloud DA3 exports", () => {
     expect(points.length / 3).toBe(1_000_000);
