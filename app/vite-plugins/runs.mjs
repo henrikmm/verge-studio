@@ -17,6 +17,8 @@ import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { cloudStatus } from "./cloud.mjs";
+import { FRAME_ROOT } from "./temp-store.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -41,6 +43,16 @@ const BUILTIN_SETTINGS = [
 
 const FIXTURE_DIR = resolve(new URL("../../fixtures/door", import.meta.url).pathname);
 
+/** A manifest alone is traceability, not a runnable fixture. */
+export function builtinFixtureAvailable(setting, root = FIXTURE_DIR) {
+  return [
+    join(root, setting, "manifest.json"),
+    join(root, setting, "verge-result.npz"),
+    join(root, setting, "scene.glb"),
+    join(root, "frames", "frame-0001.jpg"),
+  ].every(existsSync);
+}
+
 function builtinRuns() {
   return BUILTIN_SETTINGS.map(({ setting, label, gpuSeconds }) => ({
     id: `door-${setting}`,
@@ -53,7 +65,7 @@ function builtinRuns() {
     source: "fixture",
     builtin: true,
     persisted: true,
-    available: existsSync(join(FIXTURE_DIR, setting, "manifest.json")),
+    available: builtinFixtureAvailable(setting),
     gpuSeconds,
     // Served by Vite's publicDir, which points at fixtures/.
     artifactBase: `/door/${setting}/`,
@@ -126,14 +138,77 @@ export async function listRuns() {
 /**
  * Register a completed run WITHOUT persisting its artifacts.
  *
- * This is what keeps "transient by default" true: the run becomes selectable and
- * measurable immediately, but its bytes still live only on the Cloud Run instance until
- * someone presses Save. If the instance is deleted first, the stub remains and honestly
- * reports itself as unavailable.
+ * This is what keeps "transient by default" true: the run becomes selectable and measurable
+ * immediately, but its bytes stay in the three-day bucket until someone presses Save. If bucket
+ * publication degraded, those bytes remain on the Cloud Run instance and must be saved before
+ * deletion.
  */
-export async function registerRun(entry) {
+function safeRunId(value) {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value);
+}
+
+function contained(root, value) {
+  const resolved = resolve(value);
+  return resolved.startsWith(resolve(root) + sep);
+}
+
+export function trustedArtifact(artifact, runId, bucket) {
+  if (!artifact || typeof artifact.name !== "string" || artifact.name !== artifact.name.split("/").pop() || artifact.name.includes("..")) {
+    return false;
+  }
+  const expectedGsUri = `gs://${bucket}/runs/transient/${runId}/${artifact.name}`;
+  // save-run.sh deliberately prefers gs_uri. A valid local fallback URL cannot make
+  // an untrusted durable address safe, because the script would choose that address.
+  if (artifact.gsUri !== undefined && artifact.gsUri !== null) {
+    return artifact.gsUri === expectedGsUri;
+  }
+  return artifact.url === `/artifact/${runId}/${artifact.name}`;
+}
+
+export function saveNeedsService(manifest, runId, bucket) {
+  const artifacts = manifest?.artifacts;
+  if (!Array.isArray(artifacts) || artifacts.length === 0) return true;
+  return !artifacts.every((artifact) => (
+    trustedArtifact(artifact, runId, bucket) && typeof artifact.gsUri === "string"
+  ));
+}
+
+async function requireTrustedRun(repoRoot, entry) {
+  const id = String(entry?.id ?? "");
+  if (!safeRunId(id)) throw new Error("run id is invalid");
+  const status = await cloudStatus(repoRoot, { refresh: true });
+  if (!status.service.url || entry.serviceUrl !== status.service.url) {
+    throw new Error("run service is not this configured Cloud Run service");
+  }
+  if (!entry.manifest || !Array.isArray(entry.manifest.artifacts) || !entry.manifest.artifacts.every((a) => trustedArtifact(a, id, process.env.VERGE_OUTPUT_BUCKET ?? ""))) {
+    throw new Error("run artifact destination is not approved");
+  }
+  if (!Array.isArray(entry.framePaths) || !entry.framePaths.every((path) => typeof path === "string" && contained(FRAME_ROOT, path))) {
+    throw new Error("run frame path is outside the extracted-frame directory");
+  }
+  return id;
+}
+
+async function requireSaveableRun(repoRoot, run) {
+  const id = String(run?.id ?? "");
+  if (!safeRunId(id)) throw new Error("run id is invalid");
+  const bucket = process.env.VERGE_OUTPUT_BUCKET ?? "";
+  if (!run.manifest || !Array.isArray(run.manifest.artifacts) || !run.manifest.artifacts.every((a) => trustedArtifact(a, id, bucket))) {
+    throw new Error("run artifact destination is not approved");
+  }
+  const needsService = saveNeedsService(run.manifest, id, bucket);
+  if (!needsService) return false;
+
+  const status = await cloudStatus(repoRoot, { refresh: true });
+  if (!status.service.url || run.serviceUrl !== status.service.url) {
+    throw new Error("a degraded run needs its configured Cloud Run service to save");
+  }
+  return true;
+}
+
+export async function registerRun(repoRoot, entry) {
+  const id = await requireTrustedRun(repoRoot, entry);
   const runs = await readIndex();
-  const id = String(entry.id);
   const next = {
     id,
     label: entry.label ?? id,
@@ -265,11 +340,13 @@ async function serviceToken(serviceUrl) {
 }
 
 export async function saveRun(repoRoot, id) {
+  if (!safeRunId(id)) throw new Error("run id is invalid");
   const runs = await readIndex();
   const run = runs.find((item) => item.id === id);
   if (!run) throw new Error(`no such run: ${id}`);
   if (!run.manifest) throw new Error(`run ${id} has no manifest to save from`);
   if (!run.serviceUrl) throw new Error(`run ${id} has no service URL — it may already be gone`);
+  const needsServiceToken = await requireSaveableRun(repoRoot, run);
 
   const manifestPath = join(tmpdir(), `verge-save-${id}.json`);
   await writeFile(manifestPath, JSON.stringify(toWireManifest(run.manifest)));
@@ -282,9 +359,9 @@ export async function saveRun(repoRoot, id) {
       ...process.env,
       VERGE_URL: run.serviceUrl,
       // Saving happens in a shell, so the browser's credential-free proxy cannot help here.
-      // The token is minted in THIS process from ADC and handed to the child — it never
-      // reaches the browser, and nothing has to be typed or pasted to save a run.
-      VERGE_TOKEN: run.token || (await serviceToken(run.serviceUrl)),
+      // The token is minted in THIS process from the active gcloud login and handed to the child.
+      // It never reaches the browser, and nothing has to be typed or pasted to save a run.
+      VERGE_TOKEN: needsServiceToken ? run.token || (await serviceToken(run.serviceUrl)) : "",
       FIXTURE_ROOT: RUNS_ROOT,
     },
   });
@@ -319,6 +396,7 @@ export async function saveRun(repoRoot, id) {
 
 /** Delete a run's bytes and drop it from the registry. Built-ins are not deletable. */
 export async function deleteRun(id) {
+  if (!safeRunId(id)) throw new Error("run id is invalid");
   if (id.startsWith("door-")) throw new Error("built-in fixture runs cannot be deleted");
   const runs = await readIndex();
   await rm(join(RUNS_ROOT, id), { recursive: true, force: true });
@@ -347,6 +425,7 @@ function measurementEvidenceId(packet) {
 }
 
 async function recordedRun(id) {
+  if (!safeRunId(id)) throw new Error("run id is invalid");
   const run = [...builtinRuns(), ...(await readIndex())].find((item) => item.id === id);
   if (!run) throw new Error(`no such run: ${id}`);
   if (!run.persisted) throw new Error(`run ${id} is transient — save it before recording evidence`);

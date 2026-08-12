@@ -1,6 +1,7 @@
 import type { RunRecord } from "../lib/runs";
 import type { GroundPlaneValue, MeasurementValue, SelectionValue } from "../graph/nodes";
 import type { MeasurementObject, MeasurementObservation } from "./measurement-store";
+import { localApiHeaders } from "../lib/local-api";
 
 export const MEASUREMENT_EVIDENCE_SCHEMA = "verge.measurement-evidence/0.2.0";
 
@@ -53,7 +54,7 @@ export async function saveMeasurementEvidence(packet: MeasurementEvidencePacket)
   await expectOk(
     await fetch(`/api/runs/${encodeURIComponent(packet.runId)}/measurements`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: localApiHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(packet),
     }),
   );
@@ -70,7 +71,7 @@ export async function deleteMeasurementEvidence(runId: string, evidenceId: strin
   await expectOk(
     await fetch(
       `/api/runs/${encodeURIComponent(runId)}/measurements/${encodeURIComponent(evidenceId)}`,
-      { method: "DELETE" },
+      { method: "DELETE", headers: localApiHeaders() },
     ),
   );
 }

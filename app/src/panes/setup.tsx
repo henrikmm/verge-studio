@@ -62,6 +62,7 @@ import {
   releaseModel,
   warmup,
 } from "../lib/infer-client";
+import { localApiHeaders } from "../lib/local-api";
 import { update, useSession } from "../lib/session-store";
 import { useAdvanced } from "../lib/ui-mode";
 import { FRAME_SOURCE_ID, extractClipFrames, loadClip } from "../lib/load-clip";
@@ -233,7 +234,7 @@ function Control({
  * Drop and Browse both go through `loadClip`, which writes `frame-source` — the same node the
  * Graph's card writes. Loading probes the file and stops there: the plan below is arithmetic on
  * the probe, so the sampling controls are free to drag. Extract is the press that spends 1.7 to
- * 11.7 seconds of this Mac, and Run is the separate press that spends the GPU.
+ * 11.7 seconds of local work, and Run is the separate press that spends the GPU.
  */
 function ClipSection() {
   const graph = useGraph();
@@ -301,7 +302,7 @@ function ClipSection() {
             expose one — and probed. Nothing is uploaded anywhere and nothing is billed.
           </p>
           <p>
-            <b>Extract</b> samples frames evenly across the <b>whole</b> clip on this Mac.
+            <b>Extract</b> samples frames evenly across the <b>whole</b> clip on this computer.
             Measured here: 1.7 s for a 13.5 s 1080p clip, 11.7 s for a 15.8 s 4K60 one. It is
             free and it is not instant, which is why it is a press rather than a side effect of
             dropping a file.
@@ -471,7 +472,7 @@ function ClipSection() {
             <button
               disabled={extracting}
               className={extracted ? "" : "primary"}
-              title="Runs ffmpeg on this Mac. Free, and not instant — measured 1.7 s for a 13.5 s 1080p clip and 11.7 s for a 15.8 s 4K60 one. Nothing is uploaded."
+              title="Runs ffmpeg on this computer. Free, and not instant — measured 1.7 s for a 13.5 s 1080p clip and 11.7 s for a 15.8 s 4K60 one. Nothing is uploaded."
               onClick={() => void extract()}
             >
               {extracting
@@ -687,7 +688,7 @@ function MockDevSwitches() {
             setEnabled(next);
             void fetch("/api/mock/latency", {
               method: "POST",
-              headers: { "content-type": "application/json" },
+              headers: localApiHeaders({ "content-type": "application/json" }),
               body: JSON.stringify({ enabled: next }),
             }).catch(() => {});
           }}
@@ -876,8 +877,8 @@ export function SetupPane() {
                         </p>
                         <p>
                           DA3 Depth and Frame Source ship paused, for the same reason in two
-                          currencies: one spends GPU money, the other spends up to 11.7 s of this
-                          Mac decoding a 4K clip. Neither should start because a slider moved.
+                          currencies: one spends GPU money, the other spends up to 11.7 s of the
+                          local computer decoding a 4K clip. Neither should start because a slider moved.
                         </p>
                       </>
                     }
@@ -1035,7 +1036,7 @@ export function SetupPane() {
                   {status.service.exists && !remote && (
                     <button
                       disabled={busy || !status.service.url}
-                      title="Point the app at the service. Requests are signed inside the dev server from this Mac's gcloud credentials, and no token is stored in the browser. This does not wake the instance — the first real request does."
+                      title="Point the app at the service. Requests are signed inside the development server with the active gcloud login, and no token is stored in the browser. This does not wake the instance — the first real request does."
                       onClick={() =>
                         act(async () => {
                           /**
@@ -1193,7 +1194,7 @@ export function SetupPane() {
                       and Cloud Run then bills its whole lifetime.
                     </p>
                     <p>
-                      These two fields are the manual path, kept for a service this Mac's gcloud
+                      These two fields are the manual path, kept for a service the local gcloud
                       cannot see. Otherwise prefer the status bar's Deploy control, which finds the
                       service itself and keeps the credential out of the browser entirely.
                     </p>

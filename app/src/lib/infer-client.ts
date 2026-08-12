@@ -9,6 +9,7 @@
 import type { GpuSnapshot, InferManifest, InferParams } from "./contract";
 import { startTeardown, streamJob } from "./cloud-control";
 import { getCloud, inferBase, isRemote, noteRequest, noteRun } from "./cloud-store";
+import { localApiHeaders } from "./local-api";
 import {
   beginServerWait,
   beginUpload,
@@ -20,7 +21,7 @@ import {
  * TWO bases, because the two halves of the pipeline live in different places.
  *
  * `LOCAL_BASE` is always the Vite dev middleware: probe, upload, extract, frame. That
- * work is ffmpeg on this Mac and must never go to the cloud (local-first), and the
+ * work is local ffmpeg and must never go to the cloud (local-first), and the
  * deployed service has no such routes anyway.
  *
  * The GPU base — gpu, warmup, shutdown, infer — now lives in `cloud-store` and is chosen at
@@ -81,13 +82,26 @@ export function requestHeaders(extra: Record<string, string> = {}): Record<strin
   return token ? { ...extra, authorization: `Bearer ${token}` } : extra;
 }
 
+function inferRequestHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const headers = requestHeaders(extra);
+  return isLocalApiBase(inferBase()) ? localApiHeaders(headers) : headers;
+}
+
+/** Both the mock root (`/api`) and the cloud proxy below it are privileged local routes. */
+export function isLocalApiBase(base: string): boolean {
+  return base === "/api" || base.startsWith("/api/");
+}
+
 /**
  * Every GPU-service call goes through here so the instance timer and request count reflect
  * reality. Local ffmpeg routes deliberately do not — they cost nothing and touch no instance.
  */
 async function gpuFetch(path: string, init?: RequestInit): Promise<Response> {
   noteRequest();
-  return fetch(`${inferBase()}${path}`, init);
+  return fetch(`${inferBase()}${path}`, {
+    ...init,
+    headers: inferRequestHeaders((init?.headers ?? {}) as Record<string, string>),
+  });
 }
 
 async function expectOk(res: Response): Promise<unknown> {
@@ -185,7 +199,7 @@ export function manifestFromWire(w: any): InferManifest {
 }
 
 export async function getGpu(): Promise<GpuSnapshot> {
-  return toGpu((await expectOk(await gpuFetch("/gpu", { headers: requestHeaders() }))) as WireGpu);
+  return toGpu((await expectOk(await gpuFetch("/gpu"))) as WireGpu);
 }
 
 /**
@@ -198,7 +212,7 @@ setGpuReader(getGpu);
 
 export async function warmup(): Promise<GpuSnapshot> {
   const body = (await expectOk(
-    await gpuFetch("/warmup", { method: "POST", headers: requestHeaders() }),
+    await gpuFetch("/warmup", { method: "POST" }),
   )) as { gpu: WireGpu };
   return toGpu(body.gpu);
 }
@@ -208,7 +222,7 @@ export async function warmup(): Promise<GpuSnapshot> {
  * see `scripts/teardown.sh` and `deleteService()` for the action that actually does.
  */
 export async function releaseModel(): Promise<void> {
-  await expectOk(await gpuFetch("/shutdown", { method: "POST", headers: requestHeaders() }));
+  await expectOk(await gpuFetch("/shutdown", { method: "POST" }));
 }
 
 /**
@@ -250,7 +264,7 @@ export async function probeVideo(path: string): Promise<VideoSource> {
   return (await expectOk(
     await fetch(`${LOCAL_BASE}/probe`, {
       method: "POST",
-      headers: requestHeaders({ "content-type": "application/json" }),
+      headers: localApiHeaders(requestHeaders({ "content-type": "application/json" })),
       body: JSON.stringify({ path }),
     }),
   )) as VideoSource;
@@ -264,7 +278,7 @@ export async function uploadVideo(file: File): Promise<VideoSource> {
   return (await expectOk(
     await fetch(`${LOCAL_BASE}/upload`, {
       method: "POST",
-      headers: requestHeaders({ "x-filename": file.name, "content-type": "application/octet-stream" }),
+      headers: localApiHeaders(requestHeaders({ "x-filename": file.name, "content-type": "application/octet-stream" })),
       body: file,
     }),
   )) as VideoSource;
@@ -306,7 +320,7 @@ export async function extractFrames(
   return (await expectOk(
     await fetch(`${LOCAL_BASE}/extract`, {
       method: "POST",
-      headers: requestHeaders({ "content-type": "application/json" }),
+      headers: localApiHeaders(requestHeaders({ "content-type": "application/json" })),
       body: JSON.stringify({ path, fps, maxFrames }),
     }),
   )) as ExtractResult;
@@ -380,7 +394,7 @@ export async function infer(
       await expectOk(
         await gpuFetch("/infer", {
           method: "POST",
-          headers: requestHeaders({ "content-type": "application/json" }),
+          headers: inferRequestHeaders({ "content-type": "application/json" }),
           body: JSON.stringify({
             frameCount: frames.frameCount,
             processRes: params.processRes,
@@ -410,6 +424,6 @@ export async function infer(
   beginUpload(frames.reduce((total, blob) => total + blob.size, 0));
   noteRequest();
   return manifestFromWire(
-    await postFrames(`${inferBase()}/infer`, form, requestHeaders()),
+    await postFrames(`${inferBase()}/infer`, form, inferRequestHeaders()),
   );
 }

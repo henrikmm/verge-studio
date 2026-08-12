@@ -15,9 +15,16 @@ export default defineConfig({
    * that refuses, because the cloud proxy, the artifact URLs and the frame routes are all
    * same-origin and a half-loaded app on an unexpected port fails in confusing ways. What the
    * override adds is a way to run this beside another Vite project that has already taken 5173
-   * — which happens on this Mac — instead of being unable to start at all.
+   * — which can happen on any development computer — instead of being unable to start at all.
    */
-  server: { port: Number(process.env.PORT) || 5173, strictPort: true },
+  server: {
+    host: "127.0.0.1",
+    origin: `http://127.0.0.1:${Number(process.env.PORT) || 5173}`,
+    port: Number(process.env.PORT) || 5173,
+    strictPort: true,
+    allowedHosts: [],
+    cors: false,
+  },
   // geometry/ lives outside app/ (it is the one piece with no browser dependency), but
   // the app imports it and it must be typechecked and tested by the same loop. scripts/ joins
   // it for the same reason: the inspector projects points onto frames using the project's own

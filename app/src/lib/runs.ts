@@ -11,6 +11,7 @@
  */
 
 import type { InferManifest } from "./contract";
+import { localApiHeaders } from "./local-api";
 
 /** Opaque, stable identity for a run. Measurements are keyed by this. */
 export type RunId = string;
@@ -83,7 +84,7 @@ export async function registerRun(entry: {
   return (await expectOk(
     await fetch(`${BASE}/runs`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: localApiHeaders({ "content-type": "application/json" }),
       body: JSON.stringify(entry),
     }),
   )) as RunRecord;
@@ -91,12 +92,12 @@ export async function registerRun(entry: {
 
 export async function saveRun(id: RunId): Promise<{ run: RunRecord; output: string }> {
   return (await expectOk(
-    await fetch(`${BASE}/runs/${encodeURIComponent(id)}/save`, { method: "POST" }),
+    await fetch(`${BASE}/runs/${encodeURIComponent(id)}/save`, { method: "POST", headers: localApiHeaders() }),
   )) as { run: RunRecord; output: string };
 }
 
 export async function deleteRun(id: RunId): Promise<void> {
-  await expectOk(await fetch(`${BASE}/runs/${encodeURIComponent(id)}`, { method: "DELETE" }));
+  await expectOk(await fetch(`${BASE}/runs/${encodeURIComponent(id)}`, { method: "DELETE", headers: localApiHeaders() }));
 }
 
 /**

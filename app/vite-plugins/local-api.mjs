@@ -4,7 +4,7 @@
 // can be built and reviewed offline at zero cost. Swapping to the real service is a
 // base-URL change, nothing more.
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -179,10 +179,30 @@ function mockSnapshot() {
   };
 }
 
-export function localApi() {
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+function requestOrigin(req) {
+  const raw = req.headers.origin || req.headers.referer;
+  try {
+    return raw ? new URL(raw).origin : "";
+  } catch {
+    return "";
+  }
+}
+
+function reject(res, detail) {
+  return json(res, 403, { detail });
+}
+
+export function localApi(options = {}) {
+  const nonce = options.nonce ?? randomBytes(32).toString("base64url");
   return {
     name: "verge-local-api",
+    transformIndexHtml() {
+      return [{ tag: "meta", attrs: { name: "verge-dev-nonce", content: nonce }, injectTo: "head" }];
+    },
     configureServer(server) {
+      const localOrigin = options.origin ?? server.config?.server?.origin ?? "http://127.0.0.1:5173";
       // No gcloud child may outlive the dev server. A deploy orphaned by Ctrl-C would keep
       // rolling out a revision nobody is watching, and a half-applied deploy is worse than
       // none — the operator would have no log and no way to know it happened.
@@ -201,6 +221,16 @@ export function localApi() {
       server.middlewares.use(async (req, res, next) => {
         const url = new URL(req.url, "http://localhost");
         if (!url.pathname.startsWith("/api/")) return next();
+
+        const privileged = url.pathname.startsWith("/api/cloud/svc/") || MUTATING_METHODS.has(req.method);
+        if (privileged) {
+          if (requestOrigin(req) !== localOrigin) {
+            return reject(res, "local API requires the configured loopback origin");
+          }
+          if (req.headers["x-verge-dev-nonce"] !== nonce) {
+            return reject(res, "local API request is missing this dev session's nonce");
+          }
+        }
 
         try {
           /**
@@ -454,7 +484,7 @@ export function localApi() {
               return json(res, 200, { root: RUNS_ROOT, runs: await listRuns() });
 
             case "POST /api/runs":
-              return json(res, 200, await registerRun(await readJsonBody(req)));
+              return json(res, 200, await registerRun(REPO_ROOT, await readJsonBody(req)));
 
             /**
              * Serve a saved run's bytes. Runs live outside the project (~/verge-runs) so

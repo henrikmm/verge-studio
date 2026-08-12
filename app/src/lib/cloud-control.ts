@@ -6,6 +6,8 @@
  * the authenticated path to the service is a same-origin prefix that the dev server signs.
  */
 
+import { localApiHeaders } from "./local-api";
+
 /** Everything the app can know about the cloud without waking an instance. */
 export interface CloudStatus {
   checkedAt: number;
@@ -57,7 +59,7 @@ export async function fetchCloudStatus(refresh = false): Promise<CloudStatus> {
 }
 
 async function startJob(path: string): Promise<{ job: JobView; attached: boolean }> {
-  return (await expectOk(await fetch(path, { method: "POST" }))) as {
+  return (await expectOk(await fetch(path, { method: "POST", headers: localApiHeaders() }))) as {
     job: JobView;
     attached: boolean;
   };

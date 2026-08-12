@@ -21,6 +21,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { InferManifest } from "./contract";
 import { manifestFromWire } from "./infer-client";
 import {
+  approvedServiceUrl,
   sourceTag,
   // @ts-expect-error - plain ESM module, no type declarations
 } from "../../vite-plugins/cloud.mjs";
@@ -37,6 +38,9 @@ import {
   // @ts-expect-error - plain ESM module, no type declarations
 } from "../../vite-plugins/local-api.mjs";
 import {
+  builtinFixtureAvailable,
+  saveNeedsService,
+  trustedArtifact,
   toWireManifest,
   // @ts-expect-error - plain ESM module, no type declarations
 } from "../../vite-plugins/runs.mjs";
@@ -154,6 +158,61 @@ describe("job runner", () => {
     });
     const result = await waitFor(job.id);
     expect(result.lines.join("\n")).not.toContain("secretsecret");
+  });
+});
+
+describe("built-in fixture availability", () => {
+  it("requires the manifest, geometry, depth, and canonical source frame", async () => {
+    const root = await mkdtemp(join(tmpdir(), "verge-door-fixture-"));
+    try {
+      const setting = "504px-112f";
+      await mkdir(join(root, setting), { recursive: true });
+      await writeFile(join(root, setting, "manifest.json"), "{}");
+      expect(builtinFixtureAvailable(setting, root)).toBe(false);
+
+      await mkdir(join(root, "frames"), { recursive: true });
+      await Promise.all([
+        writeFile(join(root, setting, "verge-result.npz"), "depth"),
+        writeFile(join(root, setting, "scene.glb"), "geometry"),
+        writeFile(join(root, "frames", "frame-0001.jpg"), "frame"),
+      ]);
+      expect(builtinFixtureAvailable(setting, root)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("saved-run destinations", () => {
+  const runId = "20260806-000000-abcdef";
+  const bucket = "release-test-bucket";
+
+  it("allows a bucket-backed run to save after its service is gone without a token", () => {
+    const artifact = {
+      name: "verge-result.npz",
+      url: "https://storage.googleapis.com/example/signed",
+      gsUri: `gs://${bucket}/runs/transient/${runId}/verge-result.npz`,
+    };
+    expect(trustedArtifact(artifact, runId, bucket)).toBe(true);
+    expect(saveNeedsService({ artifacts: [artifact] }, runId, bucket)).toBe(false);
+  });
+
+  it("rejects a mismatched durable address even when the local fallback is valid", () => {
+    const artifact = {
+      name: "verge-result.npz",
+      url: `/artifact/${runId}/verge-result.npz`,
+      gsUri: "gs://unapproved-bucket/runs/transient/x/verge-result.npz",
+    };
+    expect(trustedArtifact(artifact, runId, bucket)).toBe(false);
+  });
+
+  it("rejects another object under the approved run prefix", () => {
+    const artifact = {
+      name: "verge-result.npz",
+      url: `/artifact/${runId}/verge-result.npz`,
+      gsUri: `gs://${bucket}/runs/transient/${runId}/different-object.npz`,
+    };
+    expect(trustedArtifact(artifact, runId, bucket)).toBe(false);
   });
 });
 
@@ -291,8 +350,8 @@ describe("toWireManifest", () => {
           name: "verge-result.npz",
           sizeBytes: 107_434_959,
           sha256: "bb",
-          url: "https://storage.googleapis.com/verge-lab-runs/runs/transient/r/verge-result.npz?X-Goog-Signature=aa",
-          gsUri: "gs://verge-lab-runs/runs/transient/r/verge-result.npz",
+          url: "https://storage.googleapis.com/example-verge-runs/runs/transient/r/verge-result.npz?X-Goog-Signature=aa",
+          gsUri: "gs://example-verge-runs/runs/transient/r/verge-result.npz",
         },
       ],
       diagnostics: {
@@ -309,13 +368,13 @@ describe("toWireManifest", () => {
     const restored = manifestFromWire(toWireManifest(original));
     expect(restored).toEqual(original);
     expect(restored.artifacts[0].gsUri).toBe(
-      "gs://verge-lab-runs/runs/transient/r/verge-result.npz",
+      "gs://example-verge-runs/runs/transient/r/verge-result.npz",
     );
     expect(restored.diagnostics?.publishMode).toBe("gcs");
 
     // The wire field save-run.sh actually reads, under the name it reads it by.
     expect(toWireManifest(original).artifacts[0].gs_uri).toBe(
-      "gs://verge-lab-runs/runs/transient/r/verge-result.npz",
+      "gs://example-verge-runs/runs/transient/r/verge-result.npz",
     );
   });
 
@@ -496,10 +555,45 @@ describe("service proxy", () => {
   });
 });
 
+describe("approved service URLs", () => {
+  it("refuses a bearer destination outside Cloud Run or loopback", () => {
+    expect(() => approvedServiceUrl("https://attacker.invalid")).toThrow("unapproved");
+    expect(approvedServiceUrl("https://service-abc-uc.a.run.app")).toBe("https://service-abc-uc.a.run.app");
+  });
+});
+
+describe("local API guard", () => {
+  afterEach(() => resetJobs());
+
+  it("rejects a foreign origin before it can invoke the cloud proxy", async () => {
+    const handler = middleware();
+    const req = fakeRequest("/api/cloud/svc/gpu");
+    req.headers.origin = "https://attacker.invalid";
+    const res = fakeResponse();
+    await handler(req, res, () => {});
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toContain("loopback origin");
+  });
+
+  it("rejects a missing nonce before a deploy starts a child process", async () => {
+    const handler = middleware();
+    const req = fakeRequest("/api/cloud/deploy", "POST");
+    delete req.headers["x-verge-dev-nonce"];
+    const res = fakeResponse();
+    await handler(req, res, () => {});
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toContain("nonce");
+    expect(getRunningJob("deploy")).toBeNull();
+  });
+});
+
 /** The plugin's request handler, pulled out of the Vite plugin shape. */
+const TEST_ORIGIN = "http://127.0.0.1:5173";
+const TEST_NONCE = "test-dev-nonce";
+
 function middleware() {
   let handler: (req: unknown, res: unknown, next: () => void) => Promise<void>;
-  localApi().configureServer({
+  localApi({ nonce: TEST_NONCE, origin: TEST_ORIGIN }).configureServer({
     middlewares: { use: (fn: never) => (handler = fn) },
     httpServer: null,
   });
@@ -514,7 +608,7 @@ function fakeRequest(url: string, method = "GET") {
   };
   req.url = url;
   req.method = method;
-  req.headers = {};
+  req.headers = { origin: TEST_ORIGIN, "x-verge-dev-nonce": TEST_NONCE };
   return req;
 }
 

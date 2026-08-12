@@ -33,7 +33,7 @@ export interface CloudSession {
    *
    * Two shapes, both remote. An absolute `https://…run.app` is the direct connection, which
    * needs a token in this store. `PROXY_BASE` (`/api/cloud/svc`) is same-origin and needs
-   * none: the dev server signs each request from ADC that never leaves the Mac. Prefer the
+   * none: the dev server signs each request from the local gcloud login. Prefer the
    * second — a credential the browser never receives cannot leak from it.
    */
   baseUrl: string | null;
@@ -161,7 +161,20 @@ export function connectProxied(serviceUrl: string, proxyBase: string): void {
 }
 
 export function connectCloud(baseUrl: string, token: string): void {
-  state.baseUrl = baseUrl.replace(/\/$/, "");
+  const normalized = baseUrl.replace(/\/$/, "");
+  if (token) {
+    let url: URL;
+    try {
+      url = new URL(normalized);
+    } catch {
+      throw new Error("service URL is invalid");
+    }
+    const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+    if ((url.protocol !== "https:" && !loopback) || (!loopback && !url.hostname.endsWith(".run.app"))) {
+      throw new Error("refusing to send a bearer token to an unapproved service host");
+    }
+  }
+  state.baseUrl = normalized;
   state.token = token;
   state.serviceUrl = /^https?:\/\//i.test(baseUrl) ? baseUrl.replace(/\/$/, "") : null;
   state.proxied = false;

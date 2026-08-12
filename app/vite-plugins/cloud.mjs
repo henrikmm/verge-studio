@@ -1,6 +1,6 @@
 // The cloud control plane, local half.
 //
-// Everything here runs in the Vite dev process on this Mac. None of it exists in a production
+// Everything here runs in the local Vite development process. None of it exists in a production
 // build and none of it is reachable from anywhere but localhost — same standing as /api/upload
 // and the old /api/teardown.
 //
@@ -26,12 +26,18 @@ const execFileAsync = promisify(execFile);
 
 // Same defaults and same env overrides as scripts/deploy.sh, so the two cannot describe
 // different services. If you change one, change both.
-export const PROJECT_ID = process.env.PROJECT_ID ?? "verge-lab";
+export const PROJECT_ID = (process.env.PROJECT_ID ?? "").trim();
 export const REGION = process.env.REGION ?? "us-central1";
 export const SERVICE = process.env.SERVICE ?? "verge-da3";
 export const REPOSITORY = process.env.REPOSITORY ?? "verge";
 export const IMAGE_NAME = process.env.IMAGE_NAME ?? "da3-service";
-export const IMAGE_URI = `${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}`;
+export const OUTPUT_BUCKET = (process.env.VERGE_OUTPUT_BUCKET ?? "").trim();
+export const IMAGE_URI = PROJECT_ID ? `${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${IMAGE_NAME}` : "";
+
+function configurationError() {
+  const missing = [!PROJECT_ID && "PROJECT_ID", !OUTPUT_BUCKET && "VERGE_OUTPUT_BUCKET"].filter(Boolean);
+  return missing.length ? `cloud is unconfigured: set ${missing.join(" and ")}` : null;
+}
 
 /* ------------------------------------------------------------------ source tag */
 
@@ -113,6 +119,21 @@ const CACHE_MS = 5_000;
 export async function cloudStatus(repoRoot, { refresh = false } = {}) {
   if (!refresh && cached && Date.now() - cached.checkedAt < CACHE_MS) return cached;
 
+  const configError = configurationError();
+  if (configError) {
+    cached = {
+      checkedAt: Date.now(),
+      gcloud: { available: false, error: configError },
+      auth: { active: false, account: null, hint: configError },
+      project: "",
+      region: REGION,
+      service: { name: SERVICE, exists: false, url: null },
+      image: { uri: "", tag: null, present: false },
+      deploy: { willSkipBuild: false, estimate: "unconfigured", detail: configError },
+    };
+    return cached;
+  }
+
   const version = await gcloud(["--version"], 15_000);
   if (!version.ok) {
     cached = {
@@ -192,7 +213,7 @@ function tokenExpiry(jwt) {
 }
 
 /**
- * A Google identity token for the service, minted from this Mac's ADC.
+ * A Google identity token for the service, minted from the active gcloud CLI login.
  *
  * NEVER returned to the browser, never written to a log, never put in a URL. It exists inside
  * this process for exactly as long as it takes to attach an Authorization header.
@@ -220,15 +241,30 @@ let serviceUrlCache = null;
  * Where the service lives.
  *
  * `VERGE_SERVICE_URL` overrides the lookup, which covers running the DA3 container locally on
- * this Mac — a legitimate dev path, and the one the proxy tests use so they need no cloud.
+ * the local computer — a legitimate development path used by proxy tests with no cloud.
  */
 async function resolveServiceUrl(repoRoot) {
-  if (process.env.VERGE_SERVICE_URL) return process.env.VERGE_SERVICE_URL.replace(/\/$/, "");
+  if (process.env.VERGE_SERVICE_URL) return approvedServiceUrl(process.env.VERGE_SERVICE_URL);
   if (serviceUrlCache) return serviceUrlCache;
   const status = await cloudStatus(repoRoot);
   if (!status.service.url) throw new Error(`no deployed service named ${SERVICE}`);
   serviceUrlCache = status.service.url;
   return serviceUrlCache;
+}
+
+/** A bearer minted here may only travel to Cloud Run or an explicit loopback test service. */
+export function approvedServiceUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("service URL is invalid");
+  }
+  const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1";
+  if ((url.protocol !== "https:" && !loopback) || (!loopback && !url.hostname.endsWith(".run.app"))) {
+    throw new Error("refusing to send an identity token to an unapproved service host");
+  }
+  return url.toString().replace(/\/$/, "");
 }
 
 /** A service on this machine has no IAM in front of it, so there is no token to mint. */

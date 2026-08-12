@@ -46,6 +46,11 @@ describe("cloud session identity", () => {
     disconnectCloud();
     expect(getCloud().token).toBe("");
   });
+
+  it("refuses to attach a bearer token to an unapproved host", () => {
+    expect(() => connectCloud("https://attacker.invalid", "secret-token")).toThrow("unapproved");
+    expect(getCloud().token).toBe("");
+  });
 });
 
 describe("the instance clock", () => {
