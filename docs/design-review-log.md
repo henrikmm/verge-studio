@@ -6,7 +6,7 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
-## 2026-08-11 — private-clone publication review, 1280×800 (commit pending)
+## 2026-08-11 — private-clone publication review, 1280×800 (commits dd1b2a5–5c7eac2)
 
 Full pass after the security, setup and English-language changes. A generated 4.0 s, 640×360 clip
 was loaded through Browse, planned at 40 frames, extracted to 40 JPEGs and run against the local

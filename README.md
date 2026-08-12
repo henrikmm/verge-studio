@@ -310,6 +310,11 @@ only after saving anything you need.
 **Node is rejected before installation.** Use the Node 22 version recorded in `.nvmrc`. Versions
 before 22.12 and future versions from Node 27 onward are not claimed as compatible.
 
+**npm reports unapproved install scripts.** npm 11 may list `fsevents`, `onnxruntime-node` and
+`protobufjs`. The app uses the browser ONNX runtime, and the clean-clone build and mock run pass
+with those scripts disabled. Only esbuild is approved in `app/package.json`; do not bulk-approve
+the others without reviewing why you need their Node-side behavior.
+
 **ffmpeg or ffprobe is missing.** Install both with the platform package manager and confirm each
 is on `PATH`. The app reports a platform-neutral error rather than assuming Homebrew.
 
