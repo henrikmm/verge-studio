@@ -23,6 +23,9 @@
     "react-dom": "^19.1.0",
     "three": "^0.178.0"
   },
+  "overrides": {
+    "sharp": "0.35.3"
+  },
   "devDependencies": {
     "@types/node": "^26.1.2",
     "@types/react": "^19.1.0",
