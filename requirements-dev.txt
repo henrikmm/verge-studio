@@ -1,4 +1,4 @@
-# Enough to run server/test_contract.py locally. This does not install DA3 or model weights.
+# Enough to run server/test_contract.py on Python 3.12. This does not install DA3 or model weights.
 fastapi==0.115.6
 pydantic==2.10.6
 python-multipart==0.0.20

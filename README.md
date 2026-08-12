@@ -87,12 +87,15 @@ On macOS, Homebrew is one way to install them:
 brew install node@22 python@3.12 ffmpeg
 ```
 
-On Ubuntu or WSL 2:
+On Ubuntu 24.04, or WSL 2 running that release:
 
 ```bash
 sudo apt update
-sudo apt install git ffmpeg python3 python3-venv
+sudo apt install git ffmpeg python3.12 python3.12-venv
 ```
+
+On another Linux distribution, install Python 3.12 and its virtual-environment package through
+that distribution's supported package or version manager.
 
 Install Node 22 from your normal Node version manager or the official Node distribution. Confirm
 the commands before continuing:
@@ -100,7 +103,7 @@ the commands before continuing:
 ```bash
 node --version
 npm --version
-python3 --version
+python3.12 --version
 ffmpeg -version
 ffprobe -version
 ```
@@ -111,7 +114,7 @@ From the repository root:
 
 ```bash
 npm ci --prefix app
-python3 -m venv .venv
+python3.12 -m venv .venv
 ./.venv/bin/python -m pip install --requirement requirements-dev.txt
 ```
 

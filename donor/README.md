@@ -1,7 +1,7 @@
 # Donor staging
 
-Verbatim copies from an earlier project (`~/dev/Motiva_Challenge`), kept here as reference while
-porting ideas across.
+Verbatim copies from an earlier read-only project, kept here as reference while porting ideas
+across.
 
 **Rules:**
 
