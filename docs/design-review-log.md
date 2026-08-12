@@ -6,6 +6,21 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
+**Grade every item; write down the ones that carry information.** From 2026-08-12 an entry holds
+the items that failed, the items whose grade changed, the items measured for the first time, and
+one line collapsing the rest — *"Items 1–9, 11–14, 16–20, 22–28: PASS, unchanged from
+2026-08-09"*. The full form ran about fifty lines an entry, of which roughly eight were new: the
+remainder was `N/A` for a pane the change never touched and `PASS, unchanged` for one nobody
+looked at. Both are true, neither is evidence. Grading every item is what catches a regression;
+writing every item down is what buries the lines that matter. The entries below 2026-08-12 are in
+the old form and are left as they were written.
+
+**This file is allowed to grow, and has no size budget.** It is a record of dates and nobody
+reads it start to finish. When it becomes unwieldy, summarise the older entries by hand — keep
+each one's date, commit and findings, drop the rest — rather than trimming as you go. A retention
+rule enforced by the docs check would make that a chore on somebody's critical path, which is how
+evidence gets deleted in a hurry to make a build pass.
+
 ## 2026-08-11 — repository-local cloud configuration, 1280×800 (commit pending on 2b8c725)
 
 Focused pass for the status-bar and Cloud-control change. The full 28-item publication pass
