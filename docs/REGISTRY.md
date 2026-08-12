@@ -1489,6 +1489,42 @@ override order and bucket variable. The complete verifier passed **41 test files
 then every FastAPI server-contract check. The production build also passed; its existing warning
 is the 1.41 MB main JavaScript chunk, 395.44 kB after gzip.
 
+### The work is published to GitHub, in two private repositories — 2026-08-11
+
+`henrikmm/verge-studio` is the standalone repository and holds all five branches. A branch also
+called `verge-studio`, inside `henrikmm/GreenV`, carries the same 99 commits so the group can see
+this work beside the rest of their challenge. `GreenV` is the repository formerly named
+`ChallengeMotiva`; renaming left every branch, hash and collaborator in place, and GitHub redirects
+the old address.
+
+`main` in GreenV was emptied at `f3dc81e`, an ordinary commit that deletes 1,911 files. Its parent
+is `b0cea2d`, the commit main had before, so the old tree is one `git checkout` away and `git
+revert` puts it back where it was. No history was rewritten, nothing was force-pushed, no branch
+was deleted. `HM-ml-classificationV2` still points at `b0cea2d` as well, so that content has two
+routes back. The other four branches were compared against hashes recorded before the work started
+and none had moved.
+
+The verification matrix now runs on Linux alone. A private repository bills macOS runner minutes at
+10x, so two platforms would have cost 100-200 counted minutes per push against the 2,000 a month
+the free plan gives. The first run on GitHub — the first this workflow has ever had, since the
+repository had no remote until today — passed in **1 minute 47 seconds**.
+
+Branch protection is unavailable. Rulesets and classic protection both return HTTP 403, `Upgrade to
+GitHub Pro or make this repository public`, because private repositories on the free plan get
+neither. The `verge-studio` branch in GreenV is therefore unprotected and its two write
+collaborators can change it. The standalone repository is the copy that matters and has no
+collaborators.
+
+Nothing git ignores was published. The two source clips (218 MB), the door and room fixture
+payloads (645 MB), `.venv`, `node_modules`, `.inspect`, `.runs` and `.env.local` were each checked
+and are untracked. Only 12 MB under `fixtures/` is tracked: manifests, checksums and the roadside
+fixture.
+
+Evidence: `scripts/verify.sh` passed before the push with **41 test files and 547 tests**, then
+every FastAPI server-contract check. Backups taken beforehand are in `~/dev/_backups/2026-08-11/` —
+a 1.6 GB folder snapshot, a bare mirror of the history, and a 176 MB mirror of the group repository
+as it stood before any change, with `ChallengeMotiva-branch-hashes-BEFORE.txt` beside it.
+
 ---
 
 ## 7. Known limitations and gates
