@@ -94,6 +94,37 @@ idle while doing something else and come back.
       revision instance, rather than assuming the fifteen minutes elapsed.
 - [ ] Record the real cold-start duration against the quoted 64 s.
 
+### 8. Grade the orbit without asking the user
+
+**Why.** Acceptance item 5 wants proof that dragging inside Viewport 3D changes the camera, and
+until 2026-08-12 that needed the user's hand: every drag rests on `setPointerCapture`, which
+refuses events the page synthesised. What was wrong was the scope of that conclusion. Chrome's
+DevTools protocol injects at the browser level, its events are trusted, and a ten-step drag over
+the canvas orbits the camera — measured 2026-08-12, two screenshots either side showing the room
+from a different angle with both elapsed clocks unchanged. So the one review step that reliably
+interrupts a person is automatable, and is still being handed to them.
+
+**Gate.** A design review grades item 5 from a script, with the two screenshots as its evidence
+and no request to the user. The check fails when the camera does not move — proven by running it
+against a build with orbit disabled, not by watching it pass.
+
+**Regression.** `scripts/capture-reference.mjs` must keep producing the same five captures. This
+shares its CDP plumbing, and a refactor that makes the captures drift silently costs more than
+the manual orbit check ever did.
+
+**Approval.** `none`.
+
+**Start.** `scripts/capture-reference.mjs` has the whole mechanism — `dragSash` is the same shape
+the orbit needs. REGISTRY section 3, "Drag can be automated, but not from inside the page", has
+the measurement and the reason. The browser pane still cannot do this; do not retry it there.
+
+- [ ] Lift the CDP driving out of the capture script so both callers share it, without changing
+      what the captures look like.
+- [ ] Compare the two screenshots on pixels rather than byte length — a PNG can differ in size
+      for reasons that are not the camera.
+- [ ] Prove the check can fail before trusting it to pass.
+- [ ] Update the design-review skill so item 5 names the script instead of the human gateway.
+
 ---
 
 ## Later

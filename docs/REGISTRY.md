@@ -259,6 +259,19 @@ because hundreds of measurement cells would turn the canvas into confetti.
 
 ## 3. Measured facts — do not re-derive these
 
+**How an entry here shrinks.** This section is the only part of the registry that grows without
+bound, and about a fifth of it was the story of a defect: how it was found, what the broken code
+did, which theories failed on the way. Git holds all of that. Once a fix has held, such an entry
+keeps the **rule** that stops it coming back, the **number** that proves it mattered, and the one
+line saying it was exercised — and loses the forensics. Applied on 2026-08-12 to three entries
+about the app's own plumbing.
+
+**It does not apply to a measurement.** The confidence-cut and ground-fit entries below are titled
+like defect stories and are nothing of the kind: they are sweeps, tables and thresholds that a
+future session would otherwise pay to re-derive. Compressing on the word "fixed" in a heading
+would have destroyed the two most load-bearing entries in this file. The test is what the body
+holds, not what the title says.
+
 ### The GPU's memory ceiling
 
 The L4 card reports **22.03 GiB usable** (23,659,151,360 bytes), not the advertised 24 — that
@@ -442,29 +455,23 @@ the default layout is built. Two consequences worth knowing:
 - The share is a share, not a size. At 1280 px it is 256 px, too narrow for the Inspector group's
   three tabs — Runs sits behind an overflow chevron. TASK 6 carries the minimum width.
 
-### The brush died whenever a switch left the frame alone — fixed 2026-08-11
+### A mask is created from the mask's identity, never from an image load — fixed 2026-08-11
 
-Selecting Ad hoc after a named target, or a target whose suggested frame was already on screen,
-left the brush painting nothing. No error on screen, the cursor unchanged, every stroke lost.
+Masks are keyed by `clip/subject:frame`, and whatever creates one must depend on that whole key.
+Creating it from the RGB image's `onload` instead meant any switch that left the frame alone —
+Ad hoc after a named target, a new target whose suggested frame was already on screen — produced
+no mask, and every stroke was lost in silence. It is an effect on `[image, object.id,
+canonicalFrame]` now, and `paintAt` also ensures one from the canvas's own pixel size, which
+covers a click landing mid-load.
 
-Masks are keyed `subject:frame`, and the only thing that created one was the RGB image's `onload`
-handler in `app/src/panes/depth-2d.tsx`. A switch that does not change the frame never reloads the
-image, so no mask was made for the new key and `paintMaskStroke` threw from inside the pointer
-handler — where React has no error boundary, so the throw reached `window.onerror` and nowhere
-else. Confirmed in the browser on `door-504px-112f`: B1 painted 24,121 px at frame 1, then Ad hoc
-at the same frame painted 0 px and logged six `mask canvas has not been initialised` errors, one
-per pointer event.
+Two lessons outlive the bug. **A throw inside a React pointer handler has no error boundary**: it
+reaches `window.onerror` and nowhere else, so the app looks fine while doing nothing — this cost
+the diagnosis, not the fix. And the defect read as intermittent only because startup is Ad hoc at
+frame 1, which is the one key the image load did create, so the paths an operator repeats were
+the paths that worked.
 
-It looked intermittent because two things hid it. Startup is Ad hoc at frame 1 and the first image
-load creates exactly that key, and any target painted in an earlier session comes back from
-`localStorage`. So the paths an operator repeats were the paths that worked.
-
-The mask now follows the mask's own identity — an effect on `[image, object.id, canonicalFrame]` —
-and `paintAt` ensures one from the canvas's own pixel size, which also covers a click landing
-inside a frame's image load. `ensureMask` returns the existing record untouched when the size
-matches, so the paint path allocates nothing. Five more ways in: adding a target (its suggested
-frame is the frame on screen, so it was always dead on arrival), deleting the active target,
-loading a run whose clip has no targets, and clicking during a frame change.
+Confirmed in the browser on `door-504px-112f`: B1 painted 24,121 px at frame 1 while Ad hoc at the
+same frame painted 0.
 
 ### Recorded evidence is read back, and a trial's brush can be looked at — 2026-08-11
 
@@ -509,65 +516,41 @@ frozen mask produces a trial that repeats the code rather than the measuring.
 
 ### A trial's brush is now recoverable, and four ways it was not — fixed 2026-08-11
 
-A recorded trial is meant to be re-openable forever, brush strokes included. Auditing the record
-path end to end turned up four defects, three of which could destroy or confuse that evidence.
-All four are fixed, and the pipeline was then run end to end in the browser.
+A recorded trial is meant to be re-openable forever, brush strokes included. Four rules hold that
+together, each of which was broken once and is now pinned by tests:
 
-**The mask was looked up under a frame the operator never painted on.** A run holds 112 of the 256
-canonical frames, so `closestFrame` snaps: ask for 231, get 233. `brush-selection` read the mask at
-the REQUESTED frame while `capture` recorded `selection.frame.canonicalIndex`, the SNAPPED one, and
-`addObservation` then looked for the mask under that. The two agreed only because Depth 2D writes
-the snapped frame back into the store — so with that pane closed, a trial kept its numbers and lost
-its brush. The server refuses evidence with no frozen mask, so the trial also never reached disk;
-the pane said "Recorded locally, but disk evidence failed" and the trial stayed local and blind. The
-node now reads the mask at `descriptor.canonicalIndex`, the frame actually displayed and painted.
+- **Read the mask at the frame actually displayed**, `descriptor.canonicalIndex`, never the one
+  requested. A run holds 112 of the 256 canonical frames, so `closestFrame` snaps — ask for 231,
+  get 233 — and the two only ever agreed because Depth 2D writes the snapped frame back. With
+  that pane closed a trial kept its numbers and lost its brush, and the server refuses evidence
+  with no frozen mask, so it never reached disk either.
+- **A trial's id is permanent.** Its evidence file on disk is named from a digest of that id, so
+  renumbering by position orphans the file and writes a second copy beside it. **A gap in the
+  numbering is the honest record of a deletion**, not something to tidy up.
+- **Number a new trial from the highest index ever used**, not from the survivors, or a discarded
+  trial's number is reissued and one evidence file overwrites another.
+- **A `localStorage` write inside a debounce needs a `catch`.** Every trial carries its mask as
+  run-length pairs, so the payload grows with the work; a quota error thrown where nothing was
+  listening simply stopped the session being saved. It surfaces in the Objects pane with the
+  payload size.
 
-**Trial numbers were reissued on every reload.** `migrateObservations` renumbered by position, so
-discarding trial 2 of 3 and reloading brought the old trial 3 back as trial 2 with a new id. The
-evidence file on disk is named from a digest of that id, so the renamed row no longer matched its
-own file: the pane saw an unknown trial and wrote a second copy, orphaning the first. Ids are now
-kept when they carry a `#`; only 0.1.0 ids, which are a different shape and not even unique, are
-reissued. A gap in the numbering is the honest record of a deletion.
-
-**A new trial could take a discarded one's number.** `addObservation` counted survivors, so after
-discarding trial 2 of 3 the next trial was numbered 3 — same id, same evidence id, one file
-overwriting the other. It counts from the highest index ever used in the group.
-
-**A failed save was silent.** `persistSession` called `setItem` inside a debounce timer with no
-`catch`, so a quota error threw where nothing was listening and the session simply stopped being
-saved. Every trial carries its mask as run-length pairs, so the payload grows with the work. The
-failure is now caught and shown in the Objects pane with the payload size.
-
-Verified in the browser on `door-504px-112f`, B1 at frame 1: painted 27,784 px, hid and reopened
-Depth 2D (which remounts it) — brush and frame intact; recorded trial 1 → `Recorded #1 on disk`,
-and the file holds the frozen mask at 27,784 px, 1,022 RLE runs, 576×1024, digest `7f70ce43`;
-reloaded — the trial, its digest and the working brush all came back; discarded it — the row went,
-the file went (34 → 33), the six saved runs untouched; cleared the brush — 0 px, and still 0 after
-another reload. No console errors throughout.
-
-**What this did not fix, and the entry above did:** the app never read disk evidence back, so the
-33 files under `~/verge-runs/.measurements/door-504px-112f` were invisible to it — this session's
-browser profile showed `0 trials` beside 33 stored packets.
+Exercised end to end in the browser on `door-504px-112f`, B1 at frame 1: 27,784 px painted,
+recorded, reloaded and discarded, with the frozen mask on disk at 1,022 RLE runs and digest
+`7f70ce43`, and the file count going 34 → 33 on the discard.
 
 ### Masks carry the clip they were painted on — fixed 2026-08-11
 
-Mask keys were `subject:frame` with no clip in them, so two clips sharing a subject id shared one
-mask. Measured 2026-08-11: 18,507 px painted on `RoomNewFixture.mp4` at frame 1 stayed selected
-after switching to `door-504px-112f` and reported 0.759 m, then 0.763 m — one scene's brush strokes
-measuring another scene's point cloud, with nothing on screen saying the selection was made
-elsewhere.
+Mask keys are `clip/subject:frame`, session schema 0.6.0. Without the clip in the key, two clips
+sharing a subject id shared one mask: measured 2026-08-11, 18,507 px painted on
+`RoomNewFixture.mp4` stayed selected after switching to `door-504px-112f` and reported 0.759 m,
+then 0.763 m — one scene's strokes measuring another scene's cloud, with nothing on screen saying
+so. Ad hoc collided every time, its id being the constant `__free__`; named targets collide
+whenever two clips hold a target with the same name, because slug de-duplication runs within one
+clip's set only.
 
-Ad hoc collided always, because its id is the constant `__free__`. Named targets collide whenever
-two clips hold a target with the same name: `AddTargetForm` slugifies the name and de-duplicates
-within one clip's set only, so `doorway` in two clips was one mask. Its own comment already stated
-the rule the key broke — "Ids key masks and trials, so a collision would merge two different
-objects' evidence".
-
-Keys are now `clip/subject:frame` and the session schema is 0.6.0. Recorded trials were never
-affected: they are keyed `objectId:runId` and carry their own frozen mask snapshot. A 0.5.0 key is
-migrated by finding the clip whose target set owns the subject, falling back to the session's saved
-active clip when two clips claim it. Verified in the browser by staging a real 0.5.0 payload:
-`door-leaf:1` came back as `builtin-door/door-leaf:1` with its runs and revision unchanged.
+Recorded trials were never affected — they are keyed `objectId:runId` and carry their own frozen
+mask. A 0.5.0 key migrates by finding the clip whose target set owns the subject, falling back to
+the saved active clip when two claim it; verified by staging a real 0.5.0 payload.
 
 ### The run is visible now, and the paid run shows itself — 2026-08-11
 
@@ -660,25 +643,15 @@ services list` returned nothing and one image was left in the repository. **One 
 observed on hardware**: `waking` never appeared, because connecting had already woken the
 container, so only the rehearsal has exercised it against a 503.
 
-**Reviewed with the user on 2026-08-11, and four conventions came out of it.**
-
-- **Amber is a warning, never a hint.** Three lines of instruction were written in
-  `--accent-busy` — "Drop a video above, or press Browse", "Press Extract frames", and a
-  paragraph about the mock. Amber in this app means something is wrong or being spent; spending
-  it on a tutorial teaches the reader to ignore the colour. A row now states what is true and the
-  section's `?` says what to do.
-- **A `?` per row is the clutter the `?` was introduced to remove.** Five of them had appeared in
-  one pane. A control is now explained by hovering **its own label**, which carries a dotted
-  underline and opens the same panel on hover, on click and on keyboard focus. `?` is reserved for
-  a section, one or two at most.
-- **Every pane states its share of the window.** The split was in fact exactly 40/40/20
-  (512/512/256 at 1280 px), but Dockview persists whatever you drag it to and nothing on screen
-  said so, which made a correct layout indistinguishable from a drifted one.
-- **The mock is no longer a run target by default.** It answers with the roadside fixture whatever
-  it receives, so its only honest job is as a development fixture. With no service deployed Run is
-  now disabled and says "not deployed" rather than producing a scene the operator never filmed —
-  the 2026-08-05 misdiagnosis, closed at the source. An Advanced switch restores it for building
-  the interface without a GPU, which is what it is genuinely for.
+**Reviewed with the user on 2026-08-11, and four interface conventions came out of it**: amber is
+a warning and never a hint, a control is explained by hovering its own label rather than by a `?`
+per row, every pane states its share of the window, and the mock is not a run target unless an
+Advanced switch says so. All four are specified in `docs/DESIGN.md` — they are rules the interface
+obeys from now on, so that is where they live, and the checklist grades them as items 26, 27, 28
+and 15. What belongs here is only the count: five `?` had appeared in one pane, three lines of
+`--accent-busy` were tutorial text, and the split was in fact exactly 40/40/20 (512/512/256 at
+1280 px) but nothing on screen said so, which made a correct layout indistinguishable from a
+drifted one.
 
 The Source control moved with them. It was a dropdown offering "recorded evidence" beside "live
 DA3 output", which put "which past run am I looking at?" inside the panel for configuring the next
@@ -693,27 +666,38 @@ explained. Pressing Run twice with nothing changed reported a failure — it is 
 run, and now says so. `app/vite.config.ts` honours `PORT`, because `strictPort` meant the app could
 not start at all beside another Vite project holding 5173.
 
-### Drag cannot be automated in the browser pane — 2026-08-11
+### Drag can be automated, but not from inside the page — corrected 2026-08-12
 
-**Every drag interaction in this app relies on `setPointerCapture`, and pointer capture refuses
-untrusted events.** So no synthetic pointer event, no synthetic mouse event, and not the browser
-tool's own `left_click_drag` can drive one. Ordinary `onClick` buttons in the same app work
-normally, which is what makes this look like a pane defect when it is not.
-
-Three interactions were tried and all three failed identically:
+**Every drag in this app relies on `setPointerCapture`, and pointer capture refuses untrusted
+events.** Anything the page can synthesise is untrusted, so no synthetic pointer event, no
+synthetic mouse event and not the browser tool's own `left_click_drag` drives one. Ordinary
+`onClick` buttons in the same app work normally, which is what makes this look like a defect in
+our canvas when it is not. Measured 2026-08-11, three interactions failing identically:
 
 | Interaction | Owner | Result |
 |---|---|---|
 | Viewport 3D orbit | our code | no camera change |
-| Dockview resize sash | third-party | no width change (measured 512/512/256 before and after) |
+| Dockview resize sash | third-party | no width change (512/512/256 before and after) |
 | Dockview tab strip | third-party | no tab change |
 
-Dockview ships working drag in every application that uses it. A failure in **its** sash is
-therefore the harness's, and that is what rules our own canvas out as the cause.
+Dockview ships working drag in every application that uses it, so a failure in **its** sash was
+what ruled our own canvas out as the cause.
 
-**Consequence for the design review.** Acceptance item 5 (orbit) cannot be graded automatically.
-It needs the human-gateway protocol in AGENTS.md: prepare the state, ask for the one drag, record
-the answer. Do not re-derive this — it cost a pass through three separate theories.
+**What was wrong was the scope of the conclusion.** The entry read "drag cannot be automated",
+and the true statement is narrower: input injected *from within the page* cannot be. Chrome's
+DevTools protocol injects at the browser level and its events are trusted, so
+`Input.dispatchMouseEvent` drives all three. Measured 2026-08-12:
+
+- `scripts/capture-reference.mjs` drags the Dockview sash from 512 px to 187 px, which is how the
+  `narrow-pane.png` capture exists at all.
+- A ten-step drag across Viewport 3D's canvas orbits the camera. Two screenshots either side of
+  it show the room from a different angle and the axis gizmo rotated to match, with both elapsed
+  clocks unchanged at 774.0 ms — so the difference is the camera, not a readout ticking.
+
+**Consequence for the design review.** Acceptance item 5 (orbit) no longer needs the human-gateway
+protocol, but it does need a script: the browser pane still cannot do it, and nothing has changed
+about why. Grading it automatically means driving Chrome over CDP the way the capture script does.
+That is TASK.md's job and is not wired in yet.
 
 ### Inference settings, and why each one
 
