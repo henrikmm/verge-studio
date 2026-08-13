@@ -21,6 +21,54 @@ each one's date, commit and findings, drop the rest — rather than trimming as 
 rule enforced by the docs check would make that a chore on somebody's critical path, which is how
 evidence gets deleted in a hurry to make a build pass.
 
+## 2026-08-13 — target identity and delete-by-archive, 1280×800 (working tree on a932364)
+
+Focused pass for the change that made a target's identity independent of its name, restored target
+definitions from disk evidence, and turned both delete paths into archiving. Graded on
+`RoomNewFixture` rather than the door, because the recovery path is what this change is about and
+the room is the run with recorded trials on disk. Every item graded. No inference ran, no service
+was deployed.
+
+**Object codes are not unique — FAIL, pre-existing, and this change makes it reachable.** The room
+clip holds `T2 = Monitor` and `T2 = PC Tower`: two different objects under one label, drawn that
+way on the rulers in Viewport 3D (`T2 · 0.440 m`) and listed that way in Objects. `AddTargetForm`
+issues `T${existing.length + 1}`, a position rather than an identity, so any deletion frees a
+number for the next target to take. It was always possible; removing a target is now something the
+interface actually does, and recovery from disk restores the codes as they were recorded. This is
+the same defect as the id-from-name bug one layer up — the code is what a person reads on the
+ruler. Fixed in the main loop by `nextTargetCode`, which takes the highest code ever issued rather
+than counting rows, so a deletion leaves a gap instead of freeing the label. Re-graded in the
+running app: with `T1`–`T3` present the next target came back `T4`. The two `T2`s already stored
+are left as they are — repairing them means editing recorded packets, and this clip's definitions
+are about to be replaced by the fresh study.
+
+**19 — Narrow pane — PASS for controls, measured for the first time on `.pane-status`.** At a
+179 px Objects pane, two row children sit outside it: the counter span (right edge 1326 against
+the pane's 1280) and the `.hint` clip name (1445). Both are text, not controls, and
+`.pane-status` is `white-space: nowrap; overflow: hidden` deliberately — the reason the Blind chip
+was moved out of that row in an earlier pass. No document scroll (`scrollWidth` 1280 = `innerWidth`).
+Recorded because the number is new, not because the item changed.
+
+**7 — Pane status rows — PASS, and one number is now true that was not.** The Objects row read
+`5 targets · 33 trials · RoomNewFixture.mp4` while 16 of those trials were the room's and 17 the
+door's: `ui.observations.length` is the whole store, printed beside one clip's name. It now counts
+this clip's runs and reads `4 targets · 13 trials`.
+
+**10a — Reference comparison — PASS, no drift introduced.** `advanced-measured.png` shows the
+Objects status row as `5 targets · 17 trials` on the door fixture, where the store held only door
+trials, so the scoped counter prints the same figure there. The capture stays valid for this row.
+
+**22 — Measurement headline — not graded live.** With no mask painted, Viewport 3D reads
+`T1 Table  paint this target in Depth 2D to measure it`, the same state the reference capture is
+deliberately frozen in. Painting an honest mask cannot be scripted from a guess, and this change
+touches neither the headline nor the measurement path.
+
+Items 1–6, 8, 9, 11–18, 20, 21, 23–28: PASS, unchanged from 2026-08-12. Measured this pass:
+background `rgb(13,13,15)`; tab strip 26 px; columns 512/512/256 = 40/40/20; no rendered text above
+14 px; the recovery line `Recovered 13 recorded trials and 4 targets from disk` computes
+`rgb(138,138,144)` at 9 px on `.honesty-note`, so item 26 holds — it is not amber and it names what
+happened rather than what to press.
+
 ## 2026-08-12 — recorded evidence in the 3D scene, 1280×800 (working tree on 61cc56e)
 
 Focused pass for the recorded-evidence layer: the **Show evidence** chip (Standard, default on),

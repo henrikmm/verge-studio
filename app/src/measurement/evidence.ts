@@ -90,6 +90,10 @@ export async function listMeasurementEvidence(runId: string): Promise<Measuremen
   return result.measurements;
 }
 
+/**
+ * Discard one trial. It is moved to the archive rather than erased — see `archiveMeasurementEvidence`
+ * in `vite-plugins/runs.mjs` for why. Either way it stops being visible to the app.
+ */
 export async function deleteMeasurementEvidence(runId: string, evidenceId: string): Promise<void> {
   await expectOk(
     await fetch(
@@ -97,4 +101,20 @@ export async function deleteMeasurementEvidence(runId: string, evidenceId: strin
       { method: "DELETE", headers: localApiHeaders() },
     ),
   );
+}
+
+/**
+ * Archive everything recorded against one target on one run.
+ *
+ * The server filters by object id rather than taking a list from here, so it also reaches packets
+ * this session never merged. Returns how many trials were archived.
+ */
+export async function archiveTargetEvidence(runId: string, objectId: string): Promise<number> {
+  const result = (await expectOk(
+    await fetch(
+      `/api/runs/${encodeURIComponent(runId)}/measurements?objectId=${encodeURIComponent(objectId)}`,
+      { method: "DELETE", headers: localApiHeaders() },
+    ),
+  )) as { archived: string[] };
+  return result.archived.length;
 }

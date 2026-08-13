@@ -31,7 +31,15 @@ export default defineConfig({
   // camera convention, and a drift between the two would draw a plausible, wrong picture.
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts", "../geometry/**/*.test.ts", "../scripts/**/*.test.mjs"],
+    // `vite-plugins` joined on 2026-08-13, when deleting became archiving. The local API is the
+    // only thing standing between a delete and evidence nobody can repaint, and it was the one
+    // directory here with no assertions in it at all.
+    include: [
+      "src/**/*.test.ts",
+      "vite-plugins/**/*.test.mjs",
+      "../geometry/**/*.test.ts",
+      "../scripts/**/*.test.mjs",
+    ],
     // Several real-data fixture suites each reconstruct the same million-point cloud.
     // Running them together makes their wall-clock time depend on worker contention and
     // can trip their correctness timeouts even when every assertion passes.

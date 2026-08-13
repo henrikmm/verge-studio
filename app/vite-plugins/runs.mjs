@@ -394,13 +394,23 @@ export async function saveRun(repoRoot, id) {
   return { run: updated, output: `${stdout}${stderr}`.trim().slice(-2000) };
 }
 
-/** Delete a run's bytes and drop it from the registry. Built-ins are not deletable. */
+/**
+ * Delete a run's bytes and drop it from the registry. Built-ins are not deletable.
+ *
+ * The artifacts go for good — they are the 100+ MB this policy exists to control, and a cloud
+ * run can be taken again. The recorded measurements do not: they are the only copy of what a
+ * person painted, and they are kilobytes. So they are archived first, with the run's index
+ * record beside them, and only then does the directory go.
+ */
 export async function deleteRun(id) {
   if (!safeRunId(id)) throw new Error("run id is invalid");
   if (id.startsWith("door-")) throw new Error("built-in fixture runs cannot be deleted");
   const runs = await readIndex();
+  const archived = await archiveMeasurementEvidence(id, { reason: `run ${id} deleted` });
+  await archiveRunRecord(runs.find((run) => run.id === id));
   await rm(join(RUNS_ROOT, id), { recursive: true, force: true });
   await writeIndex(runs.filter((run) => run.id !== id));
+  return { deleted: id, archived: archived.length };
 }
 
 function measurementDirectory(id, builtin) {
@@ -490,24 +500,109 @@ export async function listMeasurementEvidence(id) {
   return rows.sort((a, b) => String(a.observation?.capturedAt).localeCompare(String(b.observation?.capturedAt)));
 }
 
-export async function removeMeasurementEvidence(id, evidenceId) {
-  const run = await recordedRun(id);
-  const directory = measurementDirectory(id, run.builtin);
-  let names = [];
+/**
+ * Recorded evidence is archived, never deleted.
+ *
+ * Every packet here is a thing a person painted once and cannot repaint — the mask, the floor it
+ * was measured against, and the instant. Re-recording it is not possible even with the same run on
+ * disk, because the operator's endpoints were placed by hand. The bytes are trivial (the door
+ * archive is 33 packets in 264 KB), so the only question this policy has to answer is whether a
+ * deleted trial may come back and be counted again. It may not: the archive is outside every path
+ * that reads evidence, so an archived trial is gone from the app exactly as if it had been erased.
+ *
+ * `.archive` sits beside the runs rather than inside one, so it survives the run's deletion.
+ */
+const ARCHIVE_ROOT = join(RUNS_ROOT, ".archive");
+
+/** Keep the run's index record beside its archived trials: what they were measured on. */
+async function archiveRunRecord(run) {
+  if (!run) return;
+  const directory = join(ARCHIVE_ROOT, run.id);
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    join(directory, "run.json"),
+    JSON.stringify({ ...run, archivedAt: new Date().toISOString() }, null, 2),
+  );
+}
+
+/**
+ * Move a run's recorded trials into the archive, all of them or a named subset.
+ *
+ * `evidenceIds` picks out single trials (one discarded misclick); `objectIds` takes everything
+ * recorded against a target being removed. With neither, the whole run is archived — what
+ * deleting a run does before its directory goes.
+ *
+ * Returns the archived evidence ids, so a caller can say how many trials it just put away.
+ */
+export async function archiveMeasurementEvidence(id, { evidenceIds, objectIds, reason } = {}) {
+  if (!safeRunId(id)) throw new Error("run id is invalid");
+  const builtin = id.startsWith("door-");
+  const source = measurementDirectory(id, builtin);
+  let names;
   try {
-    names = (await readdir(directory)).filter((name) => name.endsWith(".json"));
+    names = (await readdir(source)).filter((name) => name.endsWith(".json"));
   } catch {
-    return;
+    return [];
   }
-  await Promise.all(names.map(async (name) => {
-    const path = join(directory, name);
+  const wanted = evidenceIds ? new Set(evidenceIds) : null;
+  const targets = objectIds ? new Set(objectIds) : null;
+  const everything = !wanted && !targets;
+  const destination = join(ARCHIVE_ROOT, id);
+  const archived = [];
+
+  for (const name of names) {
+    const path = join(source, name);
+    let packet;
     try {
-      const packet = JSON.parse(await readFile(path, "utf8"));
-      if (measurementEvidenceId(packet) === evidenceId) await rm(path, { force: true });
+      packet = JSON.parse(await readFile(path, "utf8"));
     } catch {
-      // A corrupt packet is not the requested evidence and is left for explicit repair.
+      // Unreadable, so it matches no filter. Under a filter it is left alone for explicit
+      // repair; when the whole run is going it is moved as-is, because the alternative is the
+      // caller's `rm -rf` destroying the one file nobody can reconstruct.
+      if (everything) {
+        await mkdir(destination, { recursive: true });
+        await rename(path, await freeArchivePath(destination, name));
+      }
+      continue;
     }
-  }));
+    const evidenceId = measurementEvidenceId(packet);
+    if (wanted && !wanted.has(evidenceId)) continue;
+    if (targets && !targets.has(String(packet?.observation?.objectId ?? ""))) continue;
+
+    await mkdir(destination, { recursive: true });
+    const final = await freeArchivePath(destination, measurementFileName(evidenceId));
+    const temp = `${final}.${randomUUID()}.tmp`;
+    await writeFile(
+      temp,
+      JSON.stringify(
+        { ...packet, evidenceId, archivedAt: new Date().toISOString(), archivedReason: reason ?? "unspecified" },
+        null,
+        2,
+      ),
+    );
+    // Write the copy, publish it, and only then drop the original: a crash mid-way leaves the
+    // trial in two places, which is recoverable. The other order loses it.
+    await rename(temp, final);
+    await rm(path, { force: true });
+    archived.push(evidenceId);
+  }
+  return archived;
+}
+
+/** Never overwrite an archived trial: two archives of one evidence id are two separate events. */
+async function freeArchivePath(directory, name) {
+  const candidate = join(directory, name);
+  if (!existsSync(candidate)) return candidate;
+  const stem = name.replace(/\.json$/, "");
+  for (let index = 2; ; index += 1) {
+    const next = join(directory, `${stem}-${index}.json`);
+    if (!existsSync(next)) return next;
+  }
+}
+
+export async function removeMeasurementEvidence(id, evidenceId) {
+  await recordedRun(id);
+  return archiveMeasurementEvidence(id, { evidenceIds: [evidenceId], reason: "trial discarded" });
 }
 
 /**

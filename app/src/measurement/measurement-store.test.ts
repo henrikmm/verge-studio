@@ -91,7 +91,7 @@ describe("measurement store", () => {
     setActiveMeasurementObject("door-leaf");
     expect(getMask("door-leaf", 1)?.data.some(Boolean)).toBe(false);
 
-    const exported = JSON.parse(exportMeasurementSession()) as {
+    const exported = JSON.parse(exportMeasurementSession([BASE.runId])) as {
       workingMasks: Record<string, unknown>;
       observations: MeasurementObservation[];
     };
@@ -403,7 +403,7 @@ describe("measurement store", () => {
     addObservation({ ...BASE, rawM: 1.9 });
     addObservation({ ...BASE, rawM: 2.0 });
 
-    const exported = JSON.parse(exportMeasurementSession()) as {
+    const exported = JSON.parse(exportMeasurementSession([BASE.runId])) as {
       schemaVersion: string;
       definitions: Array<{ id: string; mode: string; definition: string }>;
       observations: MeasurementObservation[];
@@ -542,7 +542,7 @@ describe("measurement store", () => {
       abstained: 0,
       failed: 1,
     });
-    const exported = JSON.parse(exportMeasurementSession()) as { segmentationAttempts: unknown[] };
+    const exported = JSON.parse(exportMeasurementSession([BASE.runId])) as { segmentationAttempts: unknown[] };
     expect(exported.segmentationAttempts).toHaveLength(2);
   });
 
@@ -644,7 +644,7 @@ describe("measurement store", () => {
     setShowEvidence(false);
     expect(getMeasurementUi().showEvidence).toBe(false);
 
-    const exported = JSON.parse(exportMeasurementSession()) as Record<string, unknown>;
+    const exported = JSON.parse(exportMeasurementSession([BASE.runId])) as Record<string, unknown>;
     expect(exported).not.toHaveProperty("showEvidence");
     expect(exported).not.toHaveProperty("focusedTrialId");
 

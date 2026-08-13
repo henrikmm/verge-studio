@@ -13,6 +13,7 @@ import { cloudStatus, invalidateCloudStatus, proxyToService } from "./cloud.mjs"
 import { getJob, getRunningJob, killAllJobs, startJob, subscribeJob } from "./jobs.mjs";
 import {
   RUNS_ROOT,
+  archiveMeasurementEvidence,
   deleteRun,
   listMeasurementEvidence,
   listRuns,
@@ -327,8 +328,7 @@ export function localApi(options = {}) {
               return json(res, 200, await saveRun(REPO_ROOT, id));
             }
             if (req.method === "DELETE" && !runRoute[2]) {
-              await deleteRun(id);
-              return json(res, 200, { deleted: id });
+              return json(res, 200, await deleteRun(id));
             }
           }
 
@@ -345,8 +345,18 @@ export function localApi(options = {}) {
               return json(res, 200, await writeMeasurementEvidence(id, await readJsonBody(req)));
             }
             if (req.method === "DELETE" && evidenceId) {
-              await removeMeasurementEvidence(id, evidenceId);
-              return json(res, 200, { deleted: evidenceId });
+              const archived = await removeMeasurementEvidence(id, evidenceId);
+              return json(res, 200, { archived });
+            }
+            // Everything recorded against one target, for a target being removed. Filtering
+            // here rather than in the browser means it also takes packets this session never
+            // merged — the ones a cleared cache would otherwise leave behind forever.
+            if (req.method === "DELETE" && !evidenceId && url.searchParams.has("objectId")) {
+              const archived = await archiveMeasurementEvidence(id, {
+                objectIds: url.searchParams.getAll("objectId"),
+                reason: `target ${url.searchParams.getAll("objectId").join(", ")} removed`,
+              });
+              return json(res, 200, { archived });
             }
           }
 

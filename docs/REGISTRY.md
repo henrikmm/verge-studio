@@ -571,6 +571,48 @@ Recorded trials were never affected — they are keyed `objectId:runId` and carr
 mask. A 0.5.0 key migrates by finding the clip whose target set owns the subject, falling back to
 the saved active clip when two claim it; verified by staging a real 0.5.0 payload.
 
+### A target's name was its identity, and deleting one kept its trials — fixed 2026-08-13
+
+Removing a target from `RoomNewFixture` and typing the same name again produced a target that
+already had three trials, and asked for the fourth. Three separate defects, one root: a target's
+id was the slugified name, and only trials were durable.
+
+- **`removeTarget` removed the definition and nothing else.** Its trials stayed in the store,
+  invisible with no row to display them, still counted by the export, waiting for any later target
+  that slugified to the same id. Deleting a run had the matching hole — `deleteRun` took the
+  directory and left the `localStorage` rows behind for a run that no longer existed.
+- **The recovery path dropped `packet.target`.** Every evidence packet carries the full definition
+  it was recorded against, and the merge took only the observation, so a cleared browser storage
+  gave a clip with trials and an empty target list. Measured on 2026-08-13: 16 packets on disk for
+  `20260811-161356-d387ec`, five target names among them, nothing on screen. That is what "the
+  objects were lost" was — the readings were never lost at all.
+- **Two clips could hold one id.** `pc-tower` existed in the built-in door set at truth 0.45 m and
+  in the room at 0.44 m. Readings never mixed — they are keyed `objectId:runId` — but the Objects
+  status row printed `ui.observations.length`, the whole store, beside one clip's name (`5 targets
+  · 33 trials · RoomNewFixture.mp4`, of which 16 were the room's and 17 the door's), and
+  `exportMeasurementSession` crossed the active clip's targets with every run id in the store,
+  emitting the door run's trials under the room's code and truth.
+
+New ids are `slug-xxxx` (`newTargetId`), so the slug stays readable and the four random characters
+carry the identity: a re-typed name is a new object, which is the honest reading. Codes follow the
+same rule — `nextTargetCode` takes the highest ever issued, because counting rows had the room
+holding `T2 = Monitor` and `T2 = PC Tower`, two rulers in one scene under one label. Ids already
+recorded are left alone; history is not rewritten.
+
+**Deleting now archives.** Discarding a trial, removing a target and deleting a run all move their
+packets to `~/verge-runs/.archive/<runId>/`, stamped with `archivedAt` and `archivedReason`, and a
+deleted run's index record goes with them as `run.json`. Artifacts are still destroyed — they are
+the 100+ MB the storage policy exists to control and a run can be taken again — but a mask a person
+painted on one afternoon cannot be, and the whole door archive is 33 packets in 264 KB. The archive
+sits outside every path that reads evidence, so an archived trial is gone from the app exactly as
+if it had been erased, and cannot come back and be counted twice.
+
+Verified end to end in the running app, not only in tests: clearing `localStorage` and reloading
+recovered 5 targets and 16 trials from disk; a target named "PC Tower" added beside the existing
+one took id `pc-tower-x8lv` and offered trial 1; removing PC Case archived its 3 packets (16 live
+packets → 13, three files in `.archive` reading 0.4428, 0.4423, 0.4463 with reason `target pc-case
+removed`), and a second reload from empty storage did not bring them back.
+
 ### The run is visible now, and the paid run shows itself — 2026-08-11
 
 Six defects in the load-configure-run path, found by reading the code and confirmed in the browser.

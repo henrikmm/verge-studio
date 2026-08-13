@@ -48,7 +48,7 @@ results), `docs/DESIGN.md` (what the interface must look like and do), `docs/SOU
 | `fixtures/` | Recorded runs used as input by tests and by the app |
 | `donor/` | Verbatim copies from an earlier project, for reference only |
 
-Four places hold run data, and confusing them is how a session loses work:
+Five places hold run data, and confusing them is how a session loses work:
 
 - **`fixtures/`** is the durable evidence. `manifest.json` and `SHA256SUMS` are committed; the
   npz and GLB payloads are gitignored, so **a fresh clone cannot load a fixture run** and cannot
@@ -58,7 +58,13 @@ Four places hold run data, and confusing them is how a session loses work:
 - **`.inspect/`** holds pictures drawn by `scripts/inspect.mjs`. Evidence for the session that
   made them, cheap to redraw, never committed.
 - **`~/verge-runs`** is where Save puts a run — outside the repository on purpose, so a 135 MB
-  artifact can never be staged by accident.
+  artifact can never be staged by accident. Recorded trials live beside their run in
+  `measurements/`, or in `.measurements/<runId>/` for the read-only door fixtures.
+- **`~/verge-runs/.archive/`** is where deleted evidence goes. Discarding a trial, removing a
+  target and deleting a run all move their packets here rather than unlinking them, because a run
+  can be computed again and a hand-painted mask cannot. Nothing in the app reads it, so an
+  archived trial is gone from the interface and can never be counted twice. **Deleting a run still
+  destroys its artifacts** — only the kilobytes of evidence are kept.
 
 ## How the work is done
 
@@ -159,12 +165,14 @@ VERGE_PY=.venv/bin/python ./scripts/verify.sh
 lockfile is the record of what the CI and the development machine both ran. Cloud resource names
 come from `.env.local`, copied from `.env.local.example`; nothing in the app hard-codes them.
 
-**How the tests are arranged.** They sit beside the code they cover, named `*.test.ts` — 41 files
-and 547 tests as of 2026-08-12. There is one runner: `vitest`, from `app/`, and its glob reaches
-`../geometry` and `../scripts` deliberately, so neither can drift from the app on types or on the
-camera convention. File parallelism is off, because several fixture suites each rebuild the same
-million-point cloud and running them together makes their wall-clock time a function of worker
-contention rather than of anything real.
+**How the tests are arranged.** They sit beside the code they cover, named `*.test.ts` (or
+`*.test.mjs`) — 45 files and 589 tests as of 2026-08-13. There is one runner: `vitest`, from
+`app/`, and its glob reaches `../geometry`, `../scripts` and `vite-plugins` deliberately, so none
+of them can drift from the app on types or on the camera convention. `vite-plugins` joined last,
+when deleting a run became archiving it: the local API is what stands between a delete and
+evidence nobody can repaint. File parallelism is off, because several fixture suites each rebuild
+the same million-point cloud and running them together makes their wall-clock time a function of
+worker contention rather than of anything real.
 
 **There are no browser or component tests.** The interface is checked by the design-review
 workflow instead, against this app's own captures in `docs/reference/`. Anything you can see on
