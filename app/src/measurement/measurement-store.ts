@@ -325,13 +325,25 @@ export interface MeasurementUiState {
   segmentationAttempts: SegmentationAttempt[];
 }
 
-export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.6.0";
-const STORAGE_KEY = "verge.m3c.measurement-session/0.6.0";
+export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.7.0";
+const STORAGE_KEY = "verge.m3c.measurement-session/0.7.0";
 /**
- * Older keys, newest first. 0.5.0 keyed masks `subject:frame`, so two clips shared one; 0.4.0
- * keyed trials by a three-value fixture `setting`; 0.3.0 added sittings; 0.2.0 added repeat
- * trials and frozen masks; 0.1.0 kept one row per (object, setting, frame) and destroyed repeat
- * trials on record.
+ * Older keys, newest first — and **0.6.0 is deliberately not among them.**
+ *
+ * Every recorded trial in the project was archived on 2026-08-13 to start a clean study: 61
+ * packets moved to `~/verge-runs/.archive`, leaving nothing live on disk. A browser still holding
+ * its 0.6.0 session would undo that on the next run selection, because the sync effect in the
+ * Objects pane writes any trial disk does not have — and disk deliberately no longer has them.
+ * Migrating that key forward would therefore re-upload archived evidence into the fresh study,
+ * one browser profile at a time, with nothing on screen saying so.
+ *
+ * Dropping it loses no evidence. Trials and their target definitions are recovered from the
+ * packets on disk, which is what makes the browser's copy a cache rather than a record.
+ *
+ * The rest: 0.5.0 keyed masks `subject:frame`, so two clips shared one; 0.4.0 keyed trials by a
+ * three-value fixture `setting`; 0.3.0 added sittings; 0.2.0 added repeat trials and frozen
+ * masks; 0.1.0 kept one row per (object, setting, frame) and destroyed repeat trials on record.
+ * They are kept because a session that old predates the disk evidence that would replace it.
  */
 const LEGACY_STORAGE_KEYS = [
   "verge.m3c.measurement-session/0.5.0",

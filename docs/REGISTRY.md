@@ -613,6 +613,23 @@ one took id `pc-tower-x8lv` and offered trial 1; removing PC Case archived its 3
 packets → 13, three files in `.archive` reading 0.4428, 0.4423, 0.4463 with reason `target pc-case
 removed`), and a second reload from empty storage did not bring them back.
 
+### The measurement history was archived, and the study restarted — 2026-08-13
+
+All 61 recorded trials were moved to `~/verge-runs/.archive` and nothing is live on disk: 33 door
+packets, 16 from `RoomNewFixture`, 6 `diner-table` on `da3Test`, 6 `vegetation` on `testOutdoor`.
+500 KB in total, masks intact — a spot-checked door packet still carries its 224 run-length pairs.
+Everything `MEASUREMENTS.md` reports is derived from these, so the graded numbers there remain
+re-derivable rather than merely asserted.
+
+**The session schema went to 0.7.0 in the same change, and 0.6.0 is not migrated forward.** The
+browser's copy of a session is a cache, not a record — but the Objects pane syncs any trial disk
+does not have, and after this archive disk deliberately has none. A browser still holding its
+0.6.0 session would therefore re-upload 13 archived trials into the fresh study the moment it
+selected the run, one profile at a time, with nothing on screen saying so. Dropping the key loses
+no evidence: definitions and trials both come back from the packets on disk. Verified by selecting
+`RoomNewFixture` on a cleared session — `0 targets · 0 trials`, the point cloud drawn, no rulers,
+and disk still at zero live packets three seconds later.
+
 ### The run is visible now, and the paid run shows itself — 2026-08-11
 
 Six defects in the load-configure-run path, found by reading the code and confirmed in the browser.
