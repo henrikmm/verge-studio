@@ -630,6 +630,24 @@ no evidence: definitions and trials both come back from the packets on disk. Ver
 `RoomNewFixture` on a cleared session — `0 targets · 0 trials`, the point cloud drawn, no rulers,
 and disk still at zero live packets three seconds later.
 
+### Two saved runs are the working set, and five were deleted — 2026-08-13
+
+`~/verge-runs` holds `20260811-161356-d387ec` (`RoomNewFixture.mp4`, 504 px, 112f) and
+`20260810-175959-387f7f` (`TestOutdoor4k60fps2.mp4`, 504 px, 95f), elected by the user as the
+indoor and outdoor scenes the next study is built on. 226 MB, down from 723 MB. Deleted with their
+artifacts: `da3Test.mp4` 81f, `test-demo-door.mp4` 81f, `testOutdoor.mp4` 99f,
+`OutDoorLandscape4k60.mp4` 81f, `plantExemple.mp4` 87f. Each left a `run.json` in its archive
+directory, so an archived trial still names what it was measured on.
+
+**`fixtures/` is a different thing from `~/verge-runs`, and none of this touched it.** The
+regression suite reads `fixtures/door/{252,356,504}` and `fixtures/room/504px-112f` — reconstructions
+committed as manifests with gitignored payloads — and `verify.sh` passed unchanged after the
+deletions, 589 tests. Those two scenes are frozen baselines rather than defaults: their measured
+numbers are what catch a geometry regression, which is exactly the property that would be lost by
+repointing them at a newer clip. The door is also the only scene in the project with tape truth.
+The new working set is therefore untested by `verify.sh` until a fixture is made from it, which
+`scripts/save-run.sh` produces in the required layout.
+
 ### The run is visible now, and the paid run shows itself — 2026-08-11
 
 Six defects in the load-configure-run path, found by reading the code and confirmed in the browser.

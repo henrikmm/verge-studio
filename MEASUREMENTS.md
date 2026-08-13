@@ -5,6 +5,13 @@ Everything else is graded against them; without them there is nothing to be righ
 
 Tape measurements taken by the user, 2026-08-01. **Never overwrite them with predicted values.**
 
+⚠️ **Every graded result below was recorded before 2026-08-13 and its evidence is archived.** On
+that date all 61 recorded trials were moved to `~/verge-runs/.archive/<runId>/` to start a clean
+study, so the app shows no trials and the packets behind these numbers are one directory away
+rather than gone. The committed copy of the 2026-08-04 door study is
+`docs/measurement-trials-2026-08-04.json`, which is inside the repository and was not touched. The
+results below stand as written until the new study replaces them, object by object.
+
 ⚠️ **Scale does not transfer between clips.** Metric scale from this family of models drifts with
 the scene, the depth range and the camera, so a correction factor derived from one clip is
 meaningless in another. Each clip is graded on its own, against references visible in its own
