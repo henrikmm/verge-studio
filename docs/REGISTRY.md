@@ -152,6 +152,25 @@ Around that spine:
   The inspector replayed its stored **2.021077 m** to **0.000 mm**, and all **561 of 561** usable
   points returned inside the recorded mask within one pixel. Recovery therefore depends on neither
   the display trial number nor one still-open page.
+- **A recorded trial's ruler is visible in the scene, not only in the packet.** The endpoints a
+  reading was taken between are frozen into the observation at Record (schema
+  `verge.measurement-evidence/0.3.0`), so they survive a reload and come back off disk with the
+  trial. Viewport 3D draws one per measured object — the trial nearest that object's median —
+  labelled with its code and reading, under a **Show evidence** chip that is in Standard and on by
+  default. Clicking a trial's `ruler` cell in Objects brings that trial's ruler to full strength
+  and dims the others. Free measurement and blind mode draw none; the rules are in
+  `app/src/panes/evidence-overlay.ts`, tested in `evidence-overlay.test.ts`, and stated in
+  DESIGN.md. Verified 2026-08-12 against `door-504px-112f`: three objects recorded, three labelled
+  rulers drawn, the count and the singled-out object reported on screen, all three still drawn
+  after a reload.
+- **Trials recorded before 2026-08-12 have no ruler, and it cannot be recovered.** Replaying a
+  stored mask reproduces the endpoints exactly, but only against the plane the trial used, and the
+  plane was first written to disk on 2026-08-11. Of the 60 packets in `~/verge-runs` on
+  2026-08-12, 9 carry a plane — and all 9 already carried a ruler, under `live.measurement`, where
+  only the CLI ever looked. Those 9 are lifted into the trial on recovery, which is a move and not
+  a re-derivation; the remaining 51 would need a re-fitted floor, which would be a different
+  measurement wearing the trial's number. They read `—` in the trial list and `inspect
+  measurements <run>` reports them under `RULER`.
 - **The whole app runs offline.** The dev server answers the inference request from a stored
   fixture, so the interface can be built and reviewed at zero cost. Anything produced that way is
   labelled as a mock on screen.

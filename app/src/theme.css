@@ -1534,6 +1534,31 @@ input[type="range"]::-moz-range-track {
   text-shadow: 0 1px 2px #000;
 }
 
+/*
+  What the recorded-evidence layer is drawing. Bottom-left, so it never collides with the fit
+  diagnostics at the top, and present in both modes because the switch that drives it is.
+
+  Dim grey, not the measurement hue it names. `--port-measurement` (#e8a95b) sits close enough to
+  `--accent-busy` (#f59e0b) that a single line over a point cloud reads as a warning, and this one
+  is on whenever evidence is shown — which is the desensitising "Amber is a warning" exists to
+  stop. Graded FAIL on 2026-08-12 and changed here. The hue stays where it encodes a data type:
+  on the rulers themselves and on their labels.
+*/
+.evidence-note {
+  position: absolute;
+  bottom: 6px;
+  left: 8px;
+  max-width: calc(100% - 16px);
+  padding: 3px 6px;
+  border-radius: 2px;
+  background: rgba(10, 10, 12, 0.55);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  pointer-events: none;
+  text-shadow: 0 1px 2px #000;
+}
+
 /* Held evidence that no longer matches its inputs — the same amber "stale" the node cards use. */
 .viewport-overlay .overlay-stale {
   color: var(--accent-busy);
@@ -2213,15 +2238,32 @@ canvas {
   color: var(--text-dim);
 }
 
+/*
+  Scrolls rather than clips.
+
+  These rows are a fixed-column grid, and six columns plus their gaps already needed 219 px
+  against the 148 px content box of a 180 px pane — so the discard `×` sat outside the pane,
+  unreachable, and the ruler column added on 2026-08-12 pushed the paint time out beside it.
+  DESIGN's row rule is that a clipped row costs the control; the overflow goes on the list rather
+  than on each row so the columns still line up under one scrollbar instead of six.
+*/
 .trial-list {
   margin: 0;
   padding: 0;
+  overflow-x: auto;
   list-style: none;
 }
 
 .trial-list li {
   display: grid;
-  grid-template-columns: 22px 62px 52px minmax(0, 1fr) 40px 18px;
+  /* #, reading, error, mask, ruler, paint time, discard. */
+  grid-template-columns: 22px 62px 52px minmax(72px, 1fr) 36px 40px 18px;
+  /*
+    `min-content` on a grid is the sum of its columns' minimums, so this tracks the line above by
+    itself — add a column and the floor moves with it. `max-content` would have sized the row to
+    the mask cell's full digest string and made it scroll at every width.
+  */
+  min-width: min-content;
   align-items: center;
   gap: 5px;
   padding: 3px 6px;
@@ -2248,7 +2290,8 @@ canvas {
   The mask cell is a button now, so it has to sit on the same baseline as the `.mono` cells it
   replaces — same font, same truncation, no chrome until it is pointed at.
 */
-.trial-brush {
+.trial-brush,
+.trial-ruler {
   overflow: hidden;
   padding: 0;
   border: 0;
@@ -2265,6 +2308,17 @@ canvas {
 .trial-brush:hover,
 .trial-brush[aria-expanded="true"] {
   color: var(--text);
+}
+
+/*
+  The ruler cell shares the mask cell's chrome-free treatment, and adds one thing: when it is on,
+  it carries the measurement hue — the same colour the ruler it just lit up is drawn in, so the
+  row and the scene are visibly the same claim. The hue is not the only mark: `aria-pressed` is
+  read out, and the weight change is visible in greyscale.
+*/
+.trial-ruler[aria-pressed="true"] {
+  color: var(--port-measurement);
+  font-weight: 600;
 }
 
 /* Spans every column: the preview belongs to the row, not to one of its cells. */

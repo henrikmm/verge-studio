@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { median, nmad } from "../../../geometry";
+import { median, nmad, type Vec3 } from "../../../geometry";
 import { sha256Hex } from "../graph/cache-key";
 import type { RunId } from "../lib/runs";
 
@@ -230,6 +230,20 @@ export interface MeasurementObservation {
   mask?: MaskSnapshot;
   /** First stroke after the last clear/record → Record. Absent when the mask was not painted this session. */
   paintDurationMs?: number;
+  /**
+   * The two endpoints the reading was taken between, in the cloud's world frame — the 3D
+   * evidence for `rawM`, frozen at Record beside the mask.
+   *
+   * Absent on every trial recorded before 2026-08-12, and it cannot be recovered for them.
+   * Replaying a stored mask reproduces the ruler exactly (`inspect measurement`, 0.000 mm on the
+   * door packet), but only against the plane the trial actually used, and that plane was first
+   * written to disk on 2026-08-11. Of the 60 packets in `~/verge-runs`, 9 carry a plane and all
+   * 9 already carry a ruler; the other 51 would have to be replayed against a re-fitted floor,
+   * which is a different measurement wearing this trial's number.
+   */
+  ruler?: { bottom: Vec3; top: Vec3 };
+  /** Which definition the ruler draws: floor-to-top, or the subject's own extent. */
+  rulerKind?: "floor_height" | "extent";
 }
 
 /**
@@ -275,6 +289,26 @@ export interface MeasurementUiState {
   blind: boolean;
   /** Free is the startup context. Only an explicit target click enters object evidence. */
   measurementContext: MeasurementContext;
+  /**
+   * Draw the recorded evidence for this run in the 3D viewport — today the frozen rulers of
+   * every measured object, later whatever else a recording keeps.
+   *
+   * On by default, unlike the floor layers, and for the opposite reason. A fitted floor is a
+   * claim ABOUT the scene, so you turn it on to ask a question. Recorded evidence is the answer
+   * to a question already asked and already recorded: hiding it by default means the first
+   * person to open a run sees numbers with nothing in the scene backing them.
+   *
+   * Not persisted. Its value IS the default, so there is nothing for a reload to restore.
+   */
+  showEvidence: boolean;
+  /**
+   * One recorded trial singled out, by `trialIdentity` — the row the operator clicked.
+   *
+   * Held here rather than in the Objects pane because the viewport is what draws it, and the
+   * two panes have no other way to talk. Not persisted: a highlight is about the last click,
+   * not about the session.
+   */
+  focusedTrialId: string | null;
   /** The operator may choose either existing measurement definition for an ad-hoc check. */
   freeMeasurementMode: MeasurementMode;
   activeObjectId: string;
@@ -587,6 +621,8 @@ const restored = restoreSession();
 const state: MeasurementUiState = {
   blind: false,
   measurementContext: "free",
+  showEvidence: true,
+  focusedTrialId: null,
   freeMeasurementMode: "vertical_extent",
   activeObjectId: first.id,
   clipKey: activeClip,
@@ -720,6 +756,26 @@ export function activeMeasurementSubject(): MeasurementObject {
 
 export function setFreeMeasurement(): void {
   state.measurementContext = "free";
+  // Free is an ad-hoc check against nothing recorded, so there is no trial to be looking at.
+  // Leaving a stale focus here would put one run's ruler over an unrelated painting session.
+  state.focusedTrialId = null;
+  commit();
+}
+
+/** Draw the run's recorded evidence, or stop drawing it. */
+export function setShowEvidence(showEvidence: boolean): void {
+  state.showEvidence = showEvidence;
+  commit();
+}
+
+/**
+ * Single out one recorded trial, by `trialIdentity`, or clear the highlight with `null`.
+ *
+ * Focusing a trial does not hide the others: the point of the highlight is to say which of the
+ * rulers on screen produced the number being read, and that is only answerable in company.
+ */
+export function setFocusedTrial(identity: string | null): void {
+  state.focusedTrialId = identity;
   commit();
 }
 
@@ -734,6 +790,8 @@ export function setActiveMeasurementObject(objectId: string): void {
   state.measurementContext = "object";
   state.activeObjectId = object.id;
   state.canonicalFrame = object.suggestedFrame;
+  // The highlight belongs to a trial of the object being left behind.
+  state.focusedTrialId = null;
   commit();
 }
 
@@ -1137,12 +1195,15 @@ export function mergeObservations(
 export function removeObservation(trial: MeasurementObservation): void {
   const identity = trialIdentity(trial);
   state.observations = state.observations.filter((item) => trialIdentity(item) !== identity);
+  // Otherwise the viewport keeps a highlight pointing at a row that no longer exists.
+  if (state.focusedTrialId === identity) state.focusedTrialId = null;
   commit();
 }
 
 export function clearObservations(): void {
   state.observations = [];
   state.segmentationAttempts = [];
+  state.focusedTrialId = null;
   paintClocks.clear();
   commit();
 }

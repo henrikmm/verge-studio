@@ -45,6 +45,7 @@ import {
   CLOUD_BUDGETS,
   CLOUD_COLOURS,
   CLOUD_SOURCES,
+  FIXTURE_RUN_ID,
   POINT_CLOUD_ID,
   VIEWER_3D_ID,
   type CloudColour,
@@ -54,8 +55,16 @@ import {
   type SelectionValue,
 } from "../graph/nodes";
 import { useAdvanced } from "../lib/ui-mode";
+import { DEFAULT_RUN_ID } from "../graph/nodes/fixture-run";
+import type { RunId } from "../lib/runs";
 import { closestFrame, type DepthFieldValue } from "../measurement/depth-field";
-import { activeMeasurementObject, useMeasurementUi } from "../measurement/measurement-store";
+import {
+  activeMeasurementObject,
+  measurementObjects,
+  setShowEvidence,
+  useMeasurementUi,
+} from "../measurement/measurement-store";
+import { collectRunEvidence } from "./evidence-overlay";
 import {
   ORBIT_RATE_DEG_S,
   angleFacing,
@@ -138,6 +147,7 @@ const PLANE_HUE = "#f3c969"; // --port-plane: everything that IS the fitted plan
 const NEUTRAL_HUE = "#f4f4f6"; // --emph-hi: the camera's own vertical, which is not a port type
 const ATTENTION_HUE = "#f59e0b"; // --accent-busy: the app's one "look at this" hue
 const CAMERA_HUE = "#e879a0"; // --port-camera: the legend's own hue for camera data
+const MEASUREMENT_HUE = "#e8a95b"; // --port-measurement: a ruler, live or recorded
 
 /** How long the view takes to travel between two recorded poses, in milliseconds. */
 const POSE_TWEEN_MS = 150;
@@ -181,6 +191,96 @@ const LAYERS: LayerChoice[] = [
       "The route the camera walked, with the current frame marked and aimed. Shows which part of the cloud a frame could actually see — without having to stand in it.",
   },
 ];
+
+/**
+ * A recorded-evidence label's HEIGHT, as a share of the pane's.
+ *
+ * Height rather than width, because what decides whether a tag can be read is the size of its
+ * characters, and only the height tracks that. Sizing by width was the first attempt: every label
+ * came out the same length whatever it said, so `B1 · 1.308 m` was rendered in letters twice the
+ * size of `B1 · 1.308 m · median of 3`, and the short ones dominated the scene. At 0.032 the text
+ * lands close to the 11 px the pane's own readouts use.
+ */
+const LABEL_HEIGHT_SHARE = 0.032;
+
+/**
+ * A text tag in the scene, for saying which object a recorded ruler belongs to.
+ *
+ * Drawn into a canvas and shown on a sprite, so it always faces the camera without the pane
+ * having to project world coordinates into HTML on every frame.
+ *
+ * `sizeAttenuation` is OFF, so the tag holds a constant share of the pane instead of receding
+ * with what it names. Scene-scaled was the first attempt and it does not work here: a label long
+ * enough to say `B1 · 2.100 m · median of 3` is ten times wider than it is tall, so sizing it to
+ * be legible across a room makes it as long as the door it labels, and sizing it to the door
+ * leaves it a few pixels high at whole-room framing — which is the framing a person seeing the
+ * run for the first time is looking at. `sizeSceneLabels` sets the scale each frame.
+ */
+function labelSprite(text: string, opacity: number): THREE.Sprite {
+  const PAD = 14;
+  const FONT_PX = 34;
+  const font = `600 ${FONT_PX}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("no 2D context for a scene label");
+
+  // Measured before the canvas is resized, because setting width/height resets every context
+  // property including the font — measuring after would size the box for the default 10px sans.
+  context.font = font;
+  const textWidth = context.measureText(text).width;
+  canvas.width = Math.ceil(textWidth + PAD * 2);
+  canvas.height = Math.ceil(FONT_PX + PAD * 2);
+
+  context.font = font;
+  context.textBaseline = "middle";
+  // A backing plate, because the tag sits over a point cloud whose local brightness is whatever
+  // the room happened to be. Near-opaque and near-black, matching the pane's own overlay panels.
+  context.fillStyle = "#0a0a0ce0";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = MEASUREMENT_HUE;
+  context.fillText(text, PAD, canvas.height / 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  // No mipmaps: the tag is read at close to its native size and linear minification keeps small
+  // mono digits sharp, which is the whole point of drawing the value here.
+  texture.minFilter = THREE.LinearFilter;
+  texture.colorSpace = THREE.SRGBColorSpace;
+
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({
+      map: texture,
+      depthTest: false,
+      transparent: true,
+      opacity,
+      sizeAttenuation: false,
+    }),
+  );
+  sprite.userData.labelAspect = canvas.height / canvas.width;
+  sprite.renderOrder = 7;
+  return sprite;
+}
+
+/**
+ * Give every label in `group` the same text height on screen, whatever the camera is doing.
+ *
+ * With `sizeAttenuation` off, three.js multiplies a sprite's scale by its view-space depth before
+ * projecting, so the scale lands in clip space: a sprite of scale `s` spans `s * P11` of the
+ * two-unit NDC height, where `P11` is `projectionMatrix.elements[5]` and carries the field of
+ * view. Reading it from the live camera is what keeps the tags right across a resize, a mode
+ * change and Cinematic's zoom, none of which rebuild the sprites.
+ */
+function sizeSceneLabels(group: THREE.Object3D | null, camera: THREE.PerspectiveCamera): void {
+  if (!group || group.children.length === 0) return;
+  const vertical = camera.projectionMatrix.elements[5];
+  if (!(Math.abs(vertical) > 1e-9)) return;
+  const height = (2 * LABEL_HEIGHT_SHARE) / vertical;
+  for (const child of group.children) {
+    // Height over width, as written on the sprite when its canvas was measured.
+    const aspect = child.userData.labelAspect;
+    if (typeof aspect !== "number" || !(aspect > 1e-9)) continue;
+    child.scale.set(height / aspect, height, 1);
+  }
+}
 
 /** Mutable state the render loop reads. Kept off React so the loop is never rebuilt. */
 interface LoopState {
@@ -294,6 +394,12 @@ export function Viewport3D() {
   const mountedRef = useRef<THREE.Object3D>(null);
   const evidenceRef = useRef<THREE.Group>(null);
   const pathRef = useRef<THREE.Group>(null);
+  /**
+   * Recorded evidence, in its own group for the same reason `pathRef` has one: it is rebuilt on
+   * every click in the Objects trial list, and sharing the evidence group would rebuild a
+   * 350k-point below-plane layer at that rate.
+   */
+  const recordedRef = useRef<THREE.Group>(null);
 
   const [frameMs, setFrameMs] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -351,6 +457,39 @@ export function Viewport3D() {
   const pose = track && descriptor ? track.poses[descriptor.npzIndex] : undefined;
   const fixedRefused = track?.check.kind === "rejected" ? track.check.reason : null;
   const canRideCamera = Boolean(pose) && !fixedRefused;
+
+  /**
+   * The run's recorded evidence — the frozen rulers of every object measured in it.
+   *
+   * The run comes from the Fixture Run node's own parameter, the same way the Objects pane reads
+   * it, so the two panes cannot end up showing evidence from different runs. Which items survive
+   * is decided in `evidence-overlay.ts`, where the rules are tested.
+   */
+  const recordedRunId = String(
+    graph.nodes.find((node) => node.id === FIXTURE_RUN_ID)?.params.runId ?? DEFAULT_RUN_ID,
+  ) as RunId;
+  const evidenceItems = useMemo(
+    () =>
+      collectRunEvidence({
+        observations: ui.observations,
+        targets: measurementObjects(ui.clipKey),
+        runId: recordedRunId,
+        context: ui.measurementContext,
+        showEvidence: ui.showEvidence,
+        focusedTrialId: ui.focusedTrialId,
+        blind: ui.blind,
+      }),
+    [
+      ui.observations,
+      ui.clipKey,
+      recordedRunId,
+      ui.measurementContext,
+      ui.showEvidence,
+      ui.focusedTrialId,
+      ui.blind,
+    ],
+  );
+  const focusedItem = evidenceItems.find((item) => item.focused);
 
   /**
    * Which way is up, from the best evidence available — and it matters more than it sounds.
@@ -473,6 +612,10 @@ export function Viewport3D() {
     path.name = "camera-path";
     scene.add(path);
     pathRef.current = path;
+    const recorded = new THREE.Group();
+    recorded.name = "recorded-evidence";
+    scene.add(recorded);
+    recordedRef.current = recorded;
 
     const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 5000);
     camera.position.set(0, 0, 10);
@@ -541,6 +684,11 @@ export function Viewport3D() {
 
       const w = host.clientWidth;
       const h = host.clientHeight;
+      // Evidence labels hold a constant share of the pane, whatever the camera is doing. Their
+      // size is a property of the projection, so it belongs here and not in the effect that
+      // builds them: baking it in would leave every tag the wrong size after a resize or a
+      // change of view mode. See `labelSprite` for why they are not scene-scaled.
+      sizeSceneLabels(recordedRef.current, camera);
       renderer.setViewport(0, 0, w, h);
       renderer.setScissorTest(false);
       renderer.render(scene, camera);
@@ -577,6 +725,7 @@ export function Viewport3D() {
       renderer.dispose();
       evidenceRef.current = null;
       pathRef.current = null;
+      recordedRef.current = null;
       host.removeChild(renderer.domElement);
     };
   }, []);
@@ -921,7 +1070,7 @@ export function Viewport3D() {
       const vertices = new Float32Array([...measurement.ruler.bottom, ...measurement.ruler.top]);
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
-      const rulerMaterial = new THREE.LineBasicMaterial({ color: "#e8a95b", depthTest: false });
+      const rulerMaterial = new THREE.LineBasicMaterial({ color: MEASUREMENT_HUE, depthTest: false });
       const ruler = new THREE.Line(geometry, rulerMaterial);
       ruler.renderOrder = 5;
       ruler.name = "measurement-ruler";
@@ -938,7 +1087,7 @@ export function Viewport3D() {
       const markers = new THREE.Points(
         markerGeometry,
         new THREE.PointsMaterial({
-          color: "#e8a95b",
+          color: MEASUREMENT_HUE,
           size: 10,
           sizeAttenuation: false,
           depthTest: false,
@@ -960,6 +1109,73 @@ export function Viewport3D() {
     showUpAxes,
     showBelow,
   ]);
+
+  /**
+   * The rulers of trials already recorded — the evidence behind the numbers in Objects.
+   *
+   * Drawn from what each trial FROZE, never recomputed. A stored ruler was measured against the
+   * floor as it was fitted at Record time, and the floor sliders can move that plane afterwards;
+   * re-deriving these endpoints from the current fit would silently restate an old measurement as
+   * a new one. When the two disagree on screen, that disagreement is the finding.
+   */
+  useEffect(() => {
+    const group = recordedRef.current;
+    if (!group) return;
+    for (const child of [...group.children]) {
+      group.remove(child);
+      disposeSubtree(child);
+    }
+    if (!cloud) return;
+
+    for (const item of evidenceItems) {
+      // One hue for all of them: DESIGN's colour rule says hue carries the type of data, so
+      // identity rides the label and emphasis rides opacity — both of which survive greyscale.
+      const opacity = item.focused ? 1 : 0.5;
+      const vertices = new Float32Array([...item.bottom, ...item.top]);
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(vertices, 3));
+      const line = new THREE.Line(
+        geometry,
+        new THREE.LineBasicMaterial({
+          color: MEASUREMENT_HUE,
+          depthTest: false,
+          transparent: true,
+          opacity,
+        }),
+      );
+      line.renderOrder = 5;
+      line.name = `recorded-ruler:${item.id}`;
+      group.add(line);
+
+      const markerGeometry = new THREE.BufferGeometry();
+      markerGeometry.setAttribute("position", new THREE.BufferAttribute(vertices.slice(), 3));
+      const markers = new THREE.Points(
+        markerGeometry,
+        new THREE.PointsMaterial({
+          color: MEASUREMENT_HUE,
+          size: item.focused ? 9 : 6,
+          sizeAttenuation: false,
+          depthTest: false,
+          transparent: true,
+          opacity,
+        }),
+      );
+      markers.renderOrder = 6;
+      markers.name = `recorded-ruler-endpoints:${item.id}`;
+      group.add(markers);
+
+      const label = labelSprite(item.label, opacity);
+      label.position.set(...item.top);
+      // Anchored by its own bottom edge rather than nudged along a world axis. The sprite's
+      // height in metres is not known here — the render loop sets it from the camera — and DA3's
+      // scene is aligned to the first camera, up to 33° off true up on the room fixture, so
+      // there is no world axis that reliably means "above the mark" either. A negative centre
+      // offset leaves a quarter of a label's height of clear air over the endpoint.
+      label.center.set(0.5, -0.25);
+      label.name = `recorded-ruler-label:${item.id}`;
+      group.add(label);
+    }
+  }, [cloud, evidenceItems]);
 
   /**
    * The camera's route, and where it was for the frame on screen.
@@ -1121,6 +1337,32 @@ export function Viewport3D() {
               onClick={() => setCameras((value) => !value)}
             >
               Cameras
+            </button>
+            {/*
+              Standard, and on by default — the only layer in this pane that is either.
+
+              The floor layers are claims ABOUT the scene, so they start off and you turn one on
+              to ask a question. Recorded evidence is the answer to a question already asked, and
+              already recorded: a run holds four measurements, and until this chip existed the
+              scene showed nothing that produced any of them. Advanced is where a person goes to
+              debug a fit; a person meeting this project for the first time never goes there,
+              which is exactly who needs the readings to be visibly attached to the room.
+
+              It is disabled rather than hidden in Free, where nothing is recorded. Hiding it
+              would make the reason it is absent a thing you have to work out.
+            */}
+            <button
+              className={`chip-toggle${ui.showEvidence ? " on" : ""}`}
+              aria-pressed={ui.showEvidence}
+              disabled={ui.measurementContext !== "object"}
+              title={
+                ui.measurementContext !== "object"
+                  ? "Free measurement records nothing, so there is no evidence to show. Choose a target in Objects."
+                  : "Draw the ruler each recorded trial was measured with, one per object, labelled with its reading. Click a trial in Objects to single one out."
+              }
+              onClick={() => setShowEvidence(!ui.showEvidence)}
+            >
+              Show evidence
             </button>
             {advanced && (
               <>
@@ -1411,6 +1653,33 @@ export function Viewport3D() {
               <>
                 <br />
                 <span className="overlay-failed">▲ NO CAMERA TRACK — {trackError}</span>
+              </>
+            )}
+          </div>
+        )}
+        {/*
+          What the scene is showing of the RECORDED evidence — and unlike the block above, this is
+          not Advanced-only.
+
+          It has to be readable wherever the switch that drives it is, and that switch is in
+          Standard. Two states, both of which would otherwise be a chip contradicting an empty
+          scene. The blind one is the reason this is not simply omitted when the count is zero:
+          blind mode suppresses recorded evidence on purpose — a ruler standing in the room gives
+          away the endpoint placement a repeat trial is supposed to reach independently — and
+          DESIGN's third mode rule says a warning is never hidden by Standard.
+
+          Separate from the diagnostics panel rather than folded into it: this describes trials
+          frozen in earlier sittings, which is a different claim from the live fit above, and the
+          two must not read as one paragraph.
+        */}
+        {cloud && ui.measurementContext === "object" && (evidenceItems.length > 0 || (ui.showEvidence && ui.blind)) && (
+          <div className="evidence-note">
+            {ui.showEvidence && ui.blind ? (
+              <span className="overlay-dim">◐ RECORDED EVIDENCE HIDDEN — BLIND</span>
+            ) : (
+              <>
+                RECORDED {evidenceItems.length} RULER{evidenceItems.length === 1 ? "" : "S"}
+                {focusedItem ? <> · {focusedItem.code} SINGLED OUT</> : <> · AS MEASURED</>}
               </>
             )}
           </div>

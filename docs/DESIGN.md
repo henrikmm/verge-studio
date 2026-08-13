@@ -155,6 +155,38 @@ tutorial surface if one is ever built. Three such lines were removed on 2026-08-
 precondition hints and a paragraph about the mock — and the rule is here so they do not come back
 one at a time.
 
+## Recorded evidence is drawn, not just tallied
+
+A reading and the two endpoints it was taken between are one claim. The number belongs in a pane;
+the endpoints belong in the scene, over the thing they were measured on. Four rules, from
+2026-08-12:
+
+1. **A recorded trial owns its evidence.** Record freezes the ruler into the trial beside the
+   mask, and the viewport draws what was frozen. It is never recomputed from the current fit: the
+   floor sliders can move the plane after the fact, and re-deriving old endpoints would restate an
+   old measurement as a new one. Where the two disagree on screen, the disagreement is the finding.
+2. **Show evidence is Standard, and on by default** — the only layer in Viewport 3D that is
+   either. The floor layers are claims *about* the scene, so they start off and you turn one on to
+   ask a question; recorded evidence answers a question already asked and already recorded, and a
+   run whose four readings have nothing visible behind them is unreadable to anyone who did not
+   take them. This is the surface a person meeting the project first looks at, and they never
+   reach Advanced.
+3. **One ruler per object, labelled with its reading**, chosen as the trial nearest that object's
+   median — the same figure Objects reports, so the scene and the pane describe the same trial.
+   The label states how many trials it was chosen from whenever there is more than one, counting
+   only those that kept a ruler. Clicking a trial in Objects singles its ruler out at full
+   strength and dims the rest; it never hides them, because the point of the highlight is to say
+   which of the rulers on screen produced the number being read.
+4. **Free measurement and blind mode draw none of it.** Free records nothing, so there is nothing
+   to expose, and the chip says so rather than disappearing. Blind mode suppresses it on purpose —
+   a ruler standing in the room gives away the endpoint placement a repeat trial is meant to reach
+   independently — and because that leaves a lit chip over an empty scene, the pane says
+   `◐ RECORDED EVIDENCE HIDDEN — BLIND` in both modes.
+
+Evidence is a growing set, not one drawing. Rulers are the first kind; the selection rules live in
+`app/src/panes/evidence-overlay.ts` behind a tagged union so a second kind — a photograph with the
+measured span marked on it — plugs in without touching which trial speaks for an object.
+
 ## Colour
 
 **Hue encodes the type of data, never status.** The port colours below are a legend and are

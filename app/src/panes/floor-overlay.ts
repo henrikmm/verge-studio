@@ -118,6 +118,10 @@ export function collectPointsBelow(
  * `ArrowHelper` is an `Object3D` holding a Line and a Mesh, so the pane's original
  * dispose-the-child loop would have walked straight past both of its buffers and leaked them on
  * every re-render.
+ *
+ * Textures are disposed alongside the material that carries them. `Material.dispose()` does not
+ * touch them — it cannot know whether a texture is shared — and the evidence labels mint a fresh
+ * canvas texture per rebuild, which is once per click in the trial list.
  */
 export function disposeSubtree(root: THREE.Object3D): void {
   root.traverse((node) => {
@@ -125,6 +129,11 @@ export function disposeSubtree(root: THREE.Object3D): void {
     drawable.geometry?.dispose();
     const material = drawable.material;
     if (!material) return;
-    for (const item of Array.isArray(material) ? material : [material]) item.dispose();
+    for (const item of Array.isArray(material) ? material : [material]) {
+      for (const value of Object.values(item)) {
+        if (value instanceof THREE.Texture) value.dispose();
+      }
+      item.dispose();
+    }
   });
 }

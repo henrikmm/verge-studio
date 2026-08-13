@@ -30,8 +30,10 @@ import {
   recordSegmentationAttempt,
   segmentationAttemptStats,
   setActiveMeasurementObject,
+  setFocusedTrial,
   setFreeMeasurement,
   setFreeMeasurementMode,
+  setShowEvidence,
   setMaskData,
   setMeasurementFrame,
   trialIdentity,
@@ -594,5 +596,58 @@ describe("measurement store", () => {
     const remaining = getMeasurementUi().observations;
     expect(remaining.map((item) => item.rawM)).toEqual([1.9, 1.95]);
     expect(trialStats(remaining, "door-leaf", "door-356px-256f").n).toBe(2);
+  });
+
+  it("freezes the ruler into the trial, so the endpoints survive a reload with the reading", () => {
+    const trial = addObservation({
+      ...BASE,
+      rawM: 2.02,
+      ruler: { bottom: [0, 0, 0], top: [0, 2.02, 0] },
+      rulerKind: "extent",
+    });
+
+    expect(trial.ruler?.top).toEqual([0, 2.02, 0]);
+    // What `localStorage` and the disk packet both carry is the observation itself.
+    expect(getMeasurementUi().observations[0].ruler?.top).toEqual([0, 2.02, 0]);
+    expect(getMeasurementUi().observations[0].rulerKind).toBe("extent");
+  });
+
+  it("shows recorded evidence by default and forgets a highlight when its trial goes", () => {
+    expect(getMeasurementUi().showEvidence).toBe(true);
+    expect(getMeasurementUi().focusedTrialId).toBeNull();
+
+    const trial = addObservation({ ...BASE, rawM: 2.02, ruler: { bottom: [0, 0, 0], top: [0, 2, 0] } });
+    setFocusedTrial(trialIdentity(trial));
+    expect(getMeasurementUi().focusedTrialId).toBe(trialIdentity(trial));
+
+    removeObservation(trial);
+    expect(getMeasurementUi().focusedTrialId).toBeNull();
+  });
+
+  it("drops a highlight when the context leaves the object it belonged to", () => {
+    const trial = addObservation({ ...BASE, rawM: 2.02, ruler: { bottom: [0, 0, 0], top: [0, 2, 0] } });
+
+    setFocusedTrial(trialIdentity(trial));
+    setFreeMeasurement();
+    expect(getMeasurementUi().focusedTrialId).toBeNull();
+
+    setActiveMeasurementObject("door-leaf");
+    setFocusedTrial(trialIdentity(trial));
+    setActiveMeasurementObject("table-top");
+    expect(getMeasurementUi().focusedTrialId).toBeNull();
+  });
+
+  // Where the evidence switch is is a fact about this screen, not about the evidence. It stays
+  // out of the export for the same reason it stays out of `persistSession`'s payload: a shared
+  // session file describing which chips were lit would be describing the operator, not the run.
+  it("keeps the evidence switch out of the exported session", () => {
+    setShowEvidence(false);
+    expect(getMeasurementUi().showEvidence).toBe(false);
+
+    const exported = JSON.parse(exportMeasurementSession()) as Record<string, unknown>;
+    expect(exported).not.toHaveProperty("showEvidence");
+    expect(exported).not.toHaveProperty("focusedTrialId");
+
+    setShowEvidence(true);
   });
 });

@@ -29,6 +29,7 @@ import {
   deleteMeasurementEvidence,
   listMeasurementEvidence,
   measurementEvidenceId,
+  recoveredObservation,
   saveMeasurementEvidence,
   type MeasurementEvidencePacket,
 } from "../measurement/evidence";
@@ -53,6 +54,7 @@ import {
   sessionPersistError,
   setActiveMeasurementObject,
   setBlind,
+  setFocusedTrial,
   setFreeMeasurement,
   segmentationAttemptStats,
   trialIdentity,
@@ -516,7 +518,7 @@ export function ObjectsPane() {
         for (const packet of packets) {
           syncedEvidence.current.add(packet.evidenceId ?? measurementEvidenceId(packet.observation));
         }
-        const recovered = mergeObservations(packets.map((packet) => packet.observation));
+        const recovered = mergeObservations(packets.map(recoveredObservation));
         setEvidenceRead((read) => new Set([...read, runIdentifier]));
         if (recovered.length) {
           setEvidenceStatus(
@@ -699,6 +701,11 @@ export function ObjectsPane() {
       floorTiltDeg: ground.fit.tiltDeg,
       floorBelowFraction: ground.fit.belowFraction,
       gravityCoherence: ground.gravity.coherence,
+      // The 3D evidence for the number, frozen beside the mask. It travels inside the
+      // observation rather than only in the packet's `live` block so the recovery path — which
+      // merges observations and drops everything else — brings the ruler back off disk too.
+      ruler: measurement.ruler,
+      rulerKind: measurement.rulerKind,
     });
     const evidenceId = measurementEvidenceId(observation);
     // Mark it before the first await. addObservation schedules the migration effect, and without
@@ -1102,6 +1109,36 @@ export function ObjectsPane() {
                     ) : (
                       <span className="mono">
                         {repeatedMasks.has(trialIdentity(trial)) ? "same mask as an earlier trial" : "no mask evidence"}
+                      </span>
+                    )}
+                    {/*
+                      Light up this trial's ruler in the 3D scene. A reading in this list and the
+                      two endpoints it was taken between are the same evidence; until now only the
+                      number was reachable, and the ruler existed on disk with no way to see it.
+                    */}
+                    {trial.ruler ? (
+                      <button
+                        className="trial-ruler"
+                        aria-pressed={ui.focusedTrialId === trialIdentity(trial)}
+                        title={
+                          ui.focusedTrialId === trialIdentity(trial)
+                            ? "Stop singling out this trial's ruler in Viewport 3D"
+                            : "Show the two endpoints this reading was taken between, in Viewport 3D"
+                        }
+                        onClick={() =>
+                          setFocusedTrial(
+                            ui.focusedTrialId === trialIdentity(trial) ? null : trialIdentity(trial),
+                          )
+                        }
+                      >
+                        ruler
+                      </button>
+                    ) : (
+                      <span
+                        className="mono"
+                        title="Recorded before trials kept their ruler. It cannot be recovered: replaying the mask needs the floor this trial was measured against, and that was not stored either."
+                      >
+                        —
                       </span>
                     )}
                     <span className="mono">{formatDuration(trial.paintDurationMs ?? NaN)}</span>

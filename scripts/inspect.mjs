@@ -877,12 +877,15 @@ async function cmdMeasurements(positional, flags) {
       error,
       mask: observation.mask?.digest ?? null,
       pixels: observation.mask?.paintedPixels ?? 0,
+      // Whether the trial kept the endpoints its reading was taken between. Trials recorded
+      // before 2026-08-12 did not, and it cannot be recovered — see `MeasurementObservation`.
+      ruler: Boolean(observation.ruler ?? packet.live?.measurement?.ruler),
     };
   });
   if (flags.json) return json({ run: run.id, measurements: rows });
   if (!rows.length) return out(`no recorded measurements for ${run.id}`);
   out(table(
-    ["TRIAL", "TARGET", "FRAME", "VALUE", "TRUTH", "ERROR", "MASK", "PIXELS"],
+    ["TRIAL", "TARGET", "FRAME", "VALUE", "TRUTH", "ERROR", "MASK", "PIXELS", "RULER"],
     rows.map((row) => [
       row.id,
       row.target,
@@ -892,6 +895,7 @@ async function cmdMeasurements(positional, flags) {
       row.error === null ? "ungraded" : `${row.error >= 0 ? "+" : ""}${row.error.toFixed(3)}m`,
       row.mask?.slice(0, 8) ?? "missing",
       row.pixels.toLocaleString("en-GB"),
+      row.ruler ? "kept" : "—",
     ]),
   ));
 }
@@ -1078,7 +1082,10 @@ async function cmdMeasurement(positional, flags) {
   const selection = new Uint8Array(combined.length / 3);
   selection.fill(1, s.cloud.points.length / 3);
   const basis = viewBasis(flags.view ?? "iso", s.up.up, s.T.basisFromUp, s.T.normalize, s.T.cross);
-  const replayRuler = packet.live?.measurement?.ruler ?? endpoints.ruler;
+  // The trial's own frozen ruler first (schema 0.3.0), then the packet's `live` copy (0.2.0),
+  // then the one just replayed. The first two are what the operator actually saw; the third was
+  // measured against whatever floor this replay fitted, which is not necessarily that one.
+  const replayRuler = observation.ruler ?? packet.live?.measurement?.ruler ?? endpoints.ruler;
   const overlays = [{ from: replayRuler.bottom, to: replayRuler.top, rgb: [232, 169, 91] }];
   const { image } = renderCloud({
     points: combined,
