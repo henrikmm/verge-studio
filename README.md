@@ -134,7 +134,8 @@ request.
 npm run dev --prefix app
 ```
 
-Open <http://127.0.0.1:5173>. The server binds only to the local computer.
+Open <http://127.0.0.1:5173>, or <http://localhost:5173> — either name reaches it. The server
+binds only to the local computer.
 
 ### 5. Exercise the offline pipeline
 

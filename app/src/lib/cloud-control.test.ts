@@ -611,6 +611,45 @@ describe("local API guard", () => {
     expect(res.body).toContain("nonce");
     expect(getRunningJob("deploy")).toBeNull();
   });
+
+  /**
+   * The 403 users hit on 2026-08-13. `localhost` and `127.0.0.1` are the same machine, and the
+   * browser sends whichever one the address bar holds — so a guard pinned to one spelling
+   * refused the app served to the other, and Deploy failed for anyone who typed `localhost`.
+   */
+  it.each(["http://localhost:5173", "http://[::1]:5173"])(
+    "accepts %s, the same loopback machine spelled another way",
+    async (origin) => {
+      const handler = middleware();
+      // A privileged route that reads no body, so this asserts the guard and nothing else.
+      const req = fakeRequest("/api/shutdown", "POST");
+      req.headers.origin = origin;
+      const res = fakeResponse();
+      await handler(req, res, () => {});
+      expect(res.statusCode).toBe(200);
+    },
+  );
+
+  it("still rejects a loopback origin on a different port", async () => {
+    const handler = middleware();
+    const req = fakeRequest("/api/cloud/deploy", "POST");
+    req.headers.origin = "http://127.0.0.1:5174";
+    const res = fakeResponse();
+    await handler(req, res, () => {});
+    expect(res.statusCode).toBe(403);
+    expect(getRunningJob("deploy")).toBeNull();
+  });
+
+  /** A hostname that merely resolves to loopback still carries its own origin. */
+  it("rejects a remote host that points at the loopback port", async () => {
+    const handler = middleware();
+    const req = fakeRequest("/api/cloud/deploy", "POST");
+    req.headers.origin = "http://attacker.invalid:5173";
+    const res = fakeResponse();
+    await handler(req, res, () => {});
+    expect(res.statusCode).toBe(403);
+    expect(getRunningJob("deploy")).toBeNull();
+  });
 });
 
 /** The plugin's request handler, pulled out of the Vite plugin shape. */

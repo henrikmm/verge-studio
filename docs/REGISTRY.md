@@ -1492,6 +1492,36 @@ override order and bucket variable. The complete verifier passed **41 test files
 then every FastAPI server-contract check. The production build also passed; its existing warning
 is the 1.41 MB main JavaScript chunk, 395.44 kB after gzip.
 
+### The local API guard accepts every loopback spelling, not one — fixed 2026-08-13
+
+**Deploy returned 403 for anyone who opened the app at `http://localhost:5173`.** The guard added
+with the privileged local routes compared the request's `Origin` against a single configured
+string, `http://127.0.0.1:5173`. `localhost` and `127.0.0.1` are the same machine, but they are
+different origins, and a browser sends whichever spelling the address bar holds — so the app
+served to one name could not call its own privileged routes under the other. The README tells the
+reader to open `127.0.0.1`, which is why this survived the porting review: every path anyone
+walked deliberately used the spelling that worked.
+
+The check now asks whether the origin is a loopback host — `localhost`, `127.0.0.1` or `::1` — on
+the dev server's own port, rather than whether it equals one string. That is not a weaker test.
+A remote page's origin carries that page's own hostname however its DNS resolves, so it still
+fails the loopback half; a second dev server on another port still fails the port half. The
+nonce requirement is untouched, and it is the part that actually stops a cross-origin caller,
+since a foreign page cannot read the injected meta tag.
+
+Evidence: `app/vite-plugins/local-api.mjs`, `isLocalOrigin`. Reproduced in the browser pane on
+2026-08-13 — one privileged POST from `http://localhost:5173` returned 403 `local API requires the
+configured loopback origin` while the identical request from `http://127.0.0.1:5173` returned 200,
+same page and same nonce. After the fix the `localhost` request returned 200. Four new tests in
+`app/src/lib/cloud-control.test.ts` pin the two accepted spellings and hold the two rejections,
+including a hostname that resolves to loopback. The complete verifier passed **42 test files and
+571 tests**, then every FastAPI server-contract check.
+
+**A paid deploy was not run.** The button itself was confirmed to work — clicking it raised the
+cost confirmation naming a 1–3 minute build-skip rollout — but the browser pane suppresses native
+dialogs, and driving past that gate was blocked. The guard fix is verified; `POST
+/api/cloud/deploy` reaching Cloud Run end to end is not, and needs one human click.
+
 ### The work is published to GitHub, in two private repositories — 2026-08-11
 
 `henrikmm/verge-studio` is the standalone repository and holds all five branches. A branch also
