@@ -1517,10 +1517,52 @@ same page and same nonce. After the fix the `localhost` request returned 200. Fo
 including a hostname that resolves to loopback. The complete verifier passed **42 test files and
 571 tests**, then every FastAPI server-contract check.
 
-**A paid deploy was not run.** The button itself was confirmed to work — clicking it raised the
-cost confirmation naming a 1–3 minute build-skip rollout — but the browser pane suppresses native
-dialogs, and driving past that gate was blocked. The guard fix is verified; `POST
-/api/cloud/deploy` reaching Cloud Run end to end is not, and needs one human click.
+The whole path was then confirmed by a human click: guard passed, the job started, the log
+streamed, and `deploy.sh` ran to `gcloud run deploy`. It failed there for two unrelated reasons,
+both recorded below.
+
+### The port moved the runtime identity without creating it — fixed 2026-08-13
+
+**Deploy reached Cloud Run and was refused: `Permission 'iam.serviceaccounts.actAs' denied on
+service account verge-runtime@verge-lab.iam.gserviceaccount.com (or it may not exist)`.** It did
+not exist. `gcloud iam service-accounts list` returned only the default compute account.
+
+`c1614b0` gave the service a dedicated runtime identity. Before it, `create-bucket.sh` read
+`RUNTIME_SA="${RUNTIME_SA:-${PROJECT_NUMBER}-compute@developer.gserviceaccount.com}"` under a
+comment saying deploy passed no `--service-account`, so `RUNTIME_SA` named an account that already
+existed and Cloud Run used the default identity. The same commit repointed it at `verge-runtime@`
+**and** added `--service-account="${RUNTIME_SA}"` to `deploy.sh`. Creating that account happens
+only in `create-bucket.sh`, which an existing clone has no reason to re-run — its bucket is
+already there and the script reads as a bucket step. Nothing in `deploy.sh` checks the identity it
+is about to ask for, so the first symptom is GCP's `actAs` error, whose `(or it may not exist)`
+branch is the one that applied.
+
+Resolved by creating the account rather than reverting: the default compute identity typically
+carries project Editor, which is far more than this service needs. `create-bucket.sh` grants it
+`objectCreator` + `objectViewer` scoped to the bucket, and Token Creator on itself for signed URLs.
+
+### The bucket ownership check refused every bucket that existed — fixed 2026-08-13
+
+**`create-bucket.sh` aborted with `REFUSING: gs://verge-lab-runs belongs to project number , not
+819624126369` — an empty number.** `gcloud storage buckets describe` has two schemas. Its own
+names the lifecycle rules `lifecycle_config` and carries no owning project at all; `--raw` returns
+the JSON API's, which has `projectNumber` but calls the rules `lifecycle`. The check, added by
+`c1614b0`, asked for `projectNumber` without `--raw`, so it always read empty and always refused —
+whenever the bucket already existed, which is the only case it runs in.
+
+The call now passes `--raw`, and an empty read is a loud failure rather than a comparison against
+`""`, so a future gcloud dropping the field cannot turn this into a false pass instead. The
+lifecycle verification below it deliberately stays on the non-raw schema, which is where
+`lifecycle_config` lives.
+
+Evidence: gcloud 578.0.0. `--raw` returns `projectNumber: 819624126369`, matching the project, so
+the bucket was correctly owned throughout. After both fixes `create-bucket.sh` completed and
+asserted its own lifecycle rule — `Delete at age=3 days matches prefix 'runs/transient/'`.
+
+**Deployed and verified for real.** `verge-da3` rolled out on the build-skip branch as revision
+`verge-da3-00001-pdt`, serving 100% of traffic. **No inference was run**, so the service was never
+woken and no GPU instance billed. `teardown.sh` deleted it in the same session, leaving 0 Cloud Run
+services and one image, `src-1b57fc4489fcfda7`.
 
 ### The work is published to GitHub, in two private repositories — 2026-08-11
 
