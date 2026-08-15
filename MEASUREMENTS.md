@@ -11,6 +11,13 @@ meaningless in another. Each clip is graded on its own, against references visib
 reconstruction. The results below are the direct evidence for that rule: the same pipeline reads
 3.9–7.0% low on one clip and within 2% on two others.
 
+**Every graded result here is an object's own vertical extent** — its own bottom against its own
+top — and not its height above the fitted ground. All 26 trials are `mode: vertical_extent` with
+`rulerKind: extent`; none uses `top_above_floor`. The ground plane still matters, because it
+supplies the *direction* the extent is measured along, but the floor's own position cancels out of
+a difference between two heights above it. That is why both plants on raised beds measured
+correctly: the bed's height is in both endpoints and therefore in neither result.
+
 **Every number in this file is replayed, not transcribed.** `scripts/collect-evidence.mjs`
 back-projects each recorded mask again, refits nothing, and measures a second time; a row is
 published only if the replay reproduces the stored reading. As of 2026-08-15 all 26 trials
@@ -53,9 +60,10 @@ Run `20260814-174520-eebd17` · 64 frames at 5 fps over 12.8 s · 280×504 px ·
 | T1 | Grass | a row of clumping plants, base of the clump to leaf tips | **0.450 m** |
 | T2 | Plant | base to top | **0.500 m** |
 
-⚠️ **Neither "Grass" target is lawn turf.** Both are clumping ornamental plants with leaf tips a
-person can put a tape against. Turf height — a surface with no single top, which is what
-`docs/TASK.md` item 4 is about — has never been measured here and nothing below speaks to it.
+⚠️ **Neither "Grass" target is a lawn.** Both are clumping ornamental plants with leaf tips a
+person can put a tape against. Lawn height is a different problem — a mown surface has no single
+top to tape, so the number being claimed has to be defined first, which is `docs/TASK.md` item 4.
+Nothing below speaks to it.
 
 **Both grass truths were taped from the base of the clump** (user-confirmed, 2026-08-15), which is
 the same quantity the extent measurement reports. Both clumps sit on raised beds, so a tape from

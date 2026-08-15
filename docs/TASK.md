@@ -61,34 +61,74 @@ if it turns out to need new reconstructions.
       outdoors, and a plane fitted to less evidence can be tilted without looking wrong.
 - [ ] Whatever the candidate, test it against a clip it was not derived from.
 
-### 10. Grade the automatic mask, or stop reporting its numbers
+### 10. Make automatic selection work on a plant
 
-**Why.** Two automatic-mask trials exist, one per target, and they are the two worst results in the
-study (+5.6%, −7.3%). They are also measured by a different estimator than every other row: an
-endpoint adapter supplies 7.4 cm of one 47.5 cm answer and 5.0 cm of a 46.4 cm one. Two trials
-cannot separate the adapter's error from the reconstruction's, so these numbers are currently
-quoted in `MEASUREMENTS.md` with a warning instead of being either trusted or withdrawn.
+**Why.** Measuring a plant's own extent works. Brushed by hand, one clump read +1.9% against tape
+and another rigid outdoor object read +0.2%. The measurement is not the weak part.
 
-**Gate.** Three trials per target on at least two targets, with the full-mask control recorded
-beside each reading, so the adapter's contribution can be stated as a measured quantity rather than
-an observation from two points. Then either the automatic rows join the graded table or they leave
-it.
+Automatic selection is. Its one plant trial read +5.6%, and the reason is not that the mask missed
+blades — it is that **the mask covered the wrong amount of the world.** Clicking on a plant asks
+SlimSAM for "the thing I clicked", and on vegetation the thing it returns is the whole textured
+region: a three-metre row of separate clumps at different distances from the camera.
 
-**Regression.** The brush path must not change. `scripts/collect-evidence.mjs` must still replay
-every trial to within its tolerance, brushed rows included.
+The evidence is already recorded, and it separates the cases cleanly:
 
-**Approval.** `none` — the runs already exist on disk and re-masking is local and free.
+| Trial | What the mask covered | Endpoint pieces, bottom / top | Camera distance, top − bottom | Error |
+|---|---|---|---|---|
+| Garden light, brushed | one rigid object | 1 / 1 | −0.09 m | +0.2% |
+| Grass-Exe1, brushed | **one clump** | 1 / 1 | −0.04 m | +1.9% |
+| Grass, automatic | **a row of clumps** | **7 / 6** | **+0.64 m** | +5.6% |
 
-**Start.** `app/src/graph/nodes/measurement.ts`, the `selection.segmentation` branch, is where the
-adapter lives; `selectEndpointEvidence` in `geometry/measure.ts` is what it calls. The replay
-prints the control automatically — `inspect measurement <run> <trial>` shows an "endpoint adapter"
-line on any automatic trial. REGISTRY section 3, "The inspector was grading a different instrument
-than the app".
+Read the bottom row: the two ends of that "object" are 64 cm apart in distance from the camera, and
+each end is built from six or seven disconnected pieces. It measured the base of a near clump
+against the tip of a further one. That is not a plant's height, and nothing on screen said so.
 
-- [ ] Repaint each automatic target three times from scratch, on `20260814-174520-eebd17`.
-- [ ] Report the adapter's contribution as a distribution, not a single number.
-- [ ] Decide whether a brushed and an automatic reading belong in the same table at all, given
-      they are two estimators. If they do, the table must say which is which.
+A good mask and a bad one are therefore already distinguishable from numbers the code computes —
+just not in the app.
+
+**Gate.** Three things, in order:
+
+1. The app shows, while painting, how many separate pieces each endpoint band is made of and how
+   far apart the two bands sit in camera distance. It warns when a mask looks like the bottom row
+   above. The thresholds come from the table — good masks sit at 1 piece and under 0.1 m.
+2. Automatic selection on the two plant targets produces masks that pass that check, three trials
+   each, repainted from scratch.
+3. Those trials are graded against tape and reported in `MEASUREMENTS.md`, with the full-mask
+   control beside each reading. Either the automatic rows join the graded table or they leave it.
+
+**Regression.** The brush path must not change. `node scripts/collect-evidence.mjs` must still
+replay every trial with no failures, brushed rows included.
+
+**Approval.** `user confirmation` for the wording of the warning, since it is a refusal the
+operator has to act on. Everything else is local and free — the runs are already on disk.
+
+**Start.** `app/src/measurement/segmenter.ts` is the whole segmentation path: SlimSAM-77 on WebGPU,
+click-prompted, decoding three candidate masks and keeping whichever the model scores highest.
+`voxelConnectivity` and the camera-depth numbers in the table above already exist — `inspect
+measurement <run> <trial>` prints them under "endpoint components" and "camera depth", and
+`cmdMeasurement` in `scripts/inspect.mjs` shows how they are computed.
+
+Ideas worth trying, cheapest first:
+
+- [ ] **Pick the candidate by geometry, not by the model's own score.** Three masks are already
+      decoded per click and the app keeps the highest predicted IoU — a guess about mask quality,
+      not about whether the mask is one plant. Back-project all three and prefer the one whose
+      endpoints are single pieces at matching camera distance. No new model, no new download.
+- [ ] **Say why a mask is bad, not just that it is.** The store already tells the operator to add
+      negative clicks when a mask touches the image boundary. Nothing tells them when it is too
+      deep — which is the failure that actually happened here.
+- [ ] **Reject background points after back-projection, not before.** The depth-step filter
+      rejected at most 10 pixels on any trial in the whole study — out of masks up to 22,809
+      pixels — and 0 on four of the five plant trials. Whatever is keeping the wall out of a
+      vegetation mask, it is not that filter. A cut on distance from the mask's own front surface
+      would actually bite.
+- [ ] **Measure one target on three frames and compare.** A plant self-occludes and moves; one
+      frame is one sample of it. This bounds an error the repeat-trial protocol cannot see, because
+      all three trials currently use the same frame.
+- [ ] **Only then consider a bigger model.** SlimSAM-77 is heavily pruned and SAM decodes masks at
+      256×256, so blade-level detail is not representable at any setting. It also appears not to
+      matter: DA3 does not resolve blades either, and the smoothed single clump measured to +1.9%.
+      This is the last lever, not the first.
 
 ### 2. Let the app say "I cannot find the ground"
 
@@ -187,18 +227,19 @@ the measurement and the reason. The browser pane still cannot do this; do not re
 
 ## Later
 
-### 4. Decide what measuring turf means, then build it
+### 4. Decide what measuring a lawn means, then build it
 
-**Why.** Vegetation is the goal this project is aimed at, and turf is the part still missing. A
-lawn is not a door repeated many times: it has no single height to be right or wrong about, so the
-question has to be redefined before any code is written.
+**Why.** There are two different jobs hiding under the word "grass", and only one of them is done.
 
-**What is already answered, as of 2026-08-15.** *Individual plants* are not the open problem. Two
-clumping ornamental plants have been graded against tape — 0.980 m read to +1.9% and 0.450 m to
-+5.6% — because a clump has leaf tips a tape and a brush can both reach. Both stand on raised beds
-and both measured correctly anyway, since an extent is a difference of two heights above one plane.
-What remains unmeasured is the surface case: turf, ground cover, anything whose "top" is a
-statistic rather than a point.
+**Measuring one plant** — a clump with leaf tips you can hold a tape against — works. Two of them
+are graded: 0.980 m read to +1.9%, 0.450 m to +5.6%. Both stand on raised beds and both still came
+out right, because the app measures a thing's own top against its own bottom, so the bed's height
+cancels out. Making that more reliable is task 10, not this one.
+
+**Measuring a lawn** is the job nobody has started. A mown lawn has no single top to put a tape
+on: press harder and you get a smaller number. So the question is not "how tall is it" but "what
+number are we claiming, and how would a person check it" — and that has to be answered before any
+code is written.
 
 Two measured constraints the design has to respect:
 
@@ -224,7 +265,7 @@ code. This is a definition problem before it is an engineering one.
 **Start.** `donor/` has a worked version of the cell-and-percentile approach and is the template.
 `Test_Grass2.mp4` (`20260814-174814-b245bc`) is the best scene evidence on disk: it has a mown lawn
 in the foreground, a graded 0.300 m rigid object standing on that lawn, and a floor fitted to 27.8%
-support. No turf truth has been taken in it.
+support. No lawn height has been taped in it.
 
 - [ ] Agree with the user what number we are claiming and how a person could check it.
 - [ ] Lay a grid on the local ground; take a robust height statistic per cell.

@@ -48,6 +48,11 @@ rather than copied from a record.
 | test-demo-door, indoor | Table | 0.750 m | 0.6971 m | −7.0% | 4.1 mm |
 | test-demo-door, indoor | Tower | 0.450 m | 0.4276 m | −5.0% | 0.9 mm |
 
+**Every row measures an object's own extent** — its own bottom against its own top — not its
+height above the ground. The fitted ground supplies the direction the extent is measured along;
+its position cancels out. Both plants above stand on raised beds and still read correctly for
+exactly that reason.
+
 **Accuracy here is a property of the clip, not a constant of the system.** The same code reads
 3.9–7.0% low on the door clip and within 2% on both clips captured after 2026-08-11. Nothing in the
 measurement path changed between them; the capture did. Until that mechanism is identified, a new
@@ -62,11 +67,14 @@ node scripts/collect-evidence.mjs
 
 ### What this does not establish
 
-- **Turf and ground cover are not measured.** The targets named "grass" above are clumping
-  ornamental plants with leaf tips you can hold a tape against. A lawn has no single top, needs a
-  different definition and a different instrument, and remains future work.
+- **Lawns and ground cover are not measured.** The targets named "grass" above are clumping
+  ornamental plants with leaf tips you can hold a tape against. A mown lawn has no single top to
+  put a tape on, so it needs a different definition and a different instrument. Still future work.
 - **Automatic masks are not a graded instrument.** Two trials, no repeats, and 5–7 cm of each
   answer supplied by an endpoint correction whose own error cannot be separated on that evidence.
+  The known failure is scope, not detail: asked for a plant, the segmenter returned a three-metre
+  row of separate clumps, and the measurement took the base of a near one against the tip of a
+  further one. A hand-brushed single clump on the same kind of plant read +1.9%.
 - **One operator, one phone, one room, one garden.** Nothing here bounds accuracy across cameras,
   people, or a scene nobody has taped. The operator can also see the reading while painting and
   knows most truths, which is a bias route the current evidence cannot rule out.

@@ -688,8 +688,8 @@ its points spread sideways as well as upward, so a few degrees of tilt sweeps di
 the clump into the top and bottom bands. **The vertical's accuracy matters far more for vegetation
 than for furniture**, which is a constraint on TASK item 4 rather than a defect.
 
-Neither target named "grass" is turf. Both are clumping ornamental plants with leaf tips a tape can
-reach, taped from the base of the clump (user-confirmed 2026-08-15). Both stand on raised beds, so
+Neither target named "grass" is a lawn. Both are clumping ornamental plants with leaf tips a tape
+can reach, taped from the base of the clump (user-confirmed 2026-08-15). Both stand on raised beds, so
 their lower endpoint sits 10–17 cm above the fitted floor where the indoor table's sits at 0.000 m
 — correct, because an extent is a difference of two heights above one plane and the bed cancels.
 
@@ -1533,6 +1533,12 @@ Full tables, tape-measure truths and the error analysis live in `MEASUREMENTS.md
 three clips.** All at 504 px and 112 frames. Eight were painted by brush; two came from the
 automatic mask and are single trials.
 
+**All ten are `vertical_extent`** — an object's own bottom against its own top. Not one graded
+result is `top_above_floor`. The fitted plane supplies the direction the extent is measured along
+and nothing else: its position appears in both endpoints and cancels. This is why two plants
+standing on raised beds measured correctly, and it means the ground fit is graded here only as a
+*direction*, never as a datum.
+
 **Accuracy is a property of the clip.** Brushed targets on the two clips captured after 2026-08-11
 land within 2% (+0.2%, +0.3%, −0.3%, +1.3%, +1.9%); the three on the door clip are 3.9–7.0% low.
 Same code, different capture. The mechanism is unidentified, so the practical rule stands: grade
@@ -1808,10 +1814,10 @@ These are stated, not scheduled. Anything being actively worked on is in `TASK.m
   captured after 2026-08-11 (section 3, 2026-08-15). The worst case on record is still the saved
   outdoor run's 1.150 m tree-like target at 31–36 cm high. What produces the difference is
   unidentified, so no clip's accuracy can be asserted before something in it is taped.
-- **Turf has never been measured.** Both targets named "grass" in the study are clumping
-  ornamental plants with reachable leaf tips, taped from the base of the clump. A surface with no
-  single top needs the definition and instrument in TASK item 4, and nothing measured so far
-  speaks to it.
+- **Lawn height has never been measured.** Both targets named "grass" in the study are clumping
+  ornamental plants with reachable leaf tips, taped from the base of the clump. A mown surface has
+  no single top to tape, so it needs the definition and instrument in TASK item 4, and nothing
+  measured so far speaks to it.
 - **The automatic mask is measured by a different estimator than the brush.** `Measure Height`
   narrows a segmentation mask to its top and bottom tenth before taking percentiles; a brush is
   used whole. On the two automatic trials that adapter supplies 7.4 cm and 5.0 cm of answers of
