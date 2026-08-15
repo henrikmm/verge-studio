@@ -32,6 +32,64 @@ written. Unticked boxes are allowed in this file and nowhere else in the reposit
 
 ## Now
 
+### 9. Find out why one clip reads −7% and another +0.3%
+
+**Why.** This is now the largest open question in the project. The door clip's three objects read
+3.9–7.0% low, and five brushed targets on the two clips captured after 2026-08-11 read within 2%.
+No code in the measurement path changed between them. Until the cause is known, **no clip's
+accuracy can be stated before something in it is taped**, which is the single biggest limit on the
+tool being useful to anyone who does not own a tape measure.
+
+**Gate.** A named, measured mechanism that predicts the sign and rough size of the scale error on a
+clip the prediction was not fitted to. "We looked and could not find one" is a real outcome and
+must be written up as such rather than left open.
+
+**Regression.** None to the measurement path; this is an investigation of it. Nothing here may
+change a recorded number — `scripts/collect-evidence.mjs` must replay all 26 trials unchanged.
+
+**Approval.** `none` for the analysis, which is entirely local. `cloud spend + user confirmation`
+if it turns out to need new reconstructions.
+
+**Start.** `.inspect/evidence/manifest.json` has all 26 trials with their floor diagnostics.
+`inspect run <id>` reports sampling fps, duration and resolution for each; the door clip sampled
+2.6 fps over 42.7 s where the outdoor clips sampled 5 fps over 13–19 s. REGISTRY section 3,
+"The −5% scale error was the clip, not the pipeline".
+
+- [ ] List what actually differs between the clips: sampling rate, duration, camera path length,
+      depth range, scene scale, texture. Measure them rather than recalling them.
+- [ ] Check the cheap hypothesis first — the door clip's floor has 10.7% support against 27–34%
+      outdoors, and a plane fitted to less evidence can be tilted without looking wrong.
+- [ ] Whatever the candidate, test it against a clip it was not derived from.
+
+### 10. Grade the automatic mask, or stop reporting its numbers
+
+**Why.** Two automatic-mask trials exist, one per target, and they are the two worst results in the
+study (+5.6%, −7.3%). They are also measured by a different estimator than every other row: an
+endpoint adapter supplies 7.4 cm of one 47.5 cm answer and 5.0 cm of a 46.4 cm one. Two trials
+cannot separate the adapter's error from the reconstruction's, so these numbers are currently
+quoted in `MEASUREMENTS.md` with a warning instead of being either trusted or withdrawn.
+
+**Gate.** Three trials per target on at least two targets, with the full-mask control recorded
+beside each reading, so the adapter's contribution can be stated as a measured quantity rather than
+an observation from two points. Then either the automatic rows join the graded table or they leave
+it.
+
+**Regression.** The brush path must not change. `scripts/collect-evidence.mjs` must still replay
+every trial to within its tolerance, brushed rows included.
+
+**Approval.** `none` — the runs already exist on disk and re-masking is local and free.
+
+**Start.** `app/src/graph/nodes/measurement.ts`, the `selection.segmentation` branch, is where the
+adapter lives; `selectEndpointEvidence` in `geometry/measure.ts` is what it calls. The replay
+prints the control automatically — `inspect measurement <run> <trial>` shows an "endpoint adapter"
+line on any automatic trial. REGISTRY section 3, "The inspector was grading a different instrument
+than the app".
+
+- [ ] Repaint each automatic target three times from scratch, on `20260814-174520-eebd17`.
+- [ ] Report the adapter's contribution as a distribution, not a single number.
+- [ ] Decide whether a brushed and an automatic reading belong in the same table at all, given
+      they are two estimators. If they do, the table must say which is which.
+
 ### 2. Let the app say "I cannot find the ground"
 
 **Why.** When the evidence for a floor is weak, the app picks a winner anyway and draws it exactly
@@ -129,31 +187,51 @@ the measurement and the reason. The browser pane still cannot do this; do not re
 
 ## Later
 
-### 4. Decide what measuring grass means, then build it
+### 4. Decide what measuring turf means, then build it
 
-**Why.** Vegetation is the goal this project is aimed at, and we cannot currently measure it. A
-plant is not a door repeated many times: it has no single height to be right or wrong about, so
-the question has to be redefined before any code is written.
+**Why.** Vegetation is the goal this project is aimed at, and turf is the part still missing. A
+lawn is not a door repeated many times: it has no single height to be right or wrong about, so the
+question has to be redefined before any code is written.
+
+**What is already answered, as of 2026-08-15.** *Individual plants* are not the open problem. Two
+clumping ornamental plants have been graded against tape — 0.980 m read to +1.9% and 0.450 m to
++5.6% — because a clump has leaf tips a tape and a brush can both reach. Both stand on raised beds
+and both measured correctly anyway, since an extent is a difference of two heights above one plane.
+What remains unmeasured is the surface case: turf, ground cover, anything whose "top" is a
+statistic rather than a point.
+
+Two measured constraints the design has to respect:
+
+- **The vertical matters much more here than for furniture.** Measured against the gravity estimate
+  instead of the fitted floor normal, rigid objects move 0.6–4.0 cm and clumping plants move
+  7.3–8.2 cm, with one automatic-mask trial at 24.3 cm. A few degrees of tilt sweeps different
+  parts of a sprawling canopy into the top and bottom bands.
+- **Outdoor ground is the easy half.** Both outdoor clips fitted a better floor than the indoor
+  one — 34.2% and 27.8% support against 10.7%, all stable across eight seeds. The floor under a
+  lawn is not what will make this hard.
 
 **Gate.** The definition and the physical reference protocol are agreed with the user first. Then
 the raster is built and checked against a real reference, reporting its error, how much of the
 area had enough evidence, and how often it abstained.
 
 **Regression.** The existing object measurement path must keep working. This adds a second way to
-measure, and must not disturb the one that is already graded against tape.
+measure, and must not disturb the one that is already graded against tape — `node
+scripts/collect-evidence.mjs` must still replay all 26 trials with no failures.
 
 **Approval.** `user confirmation` of what is being measured and how it will be checked, before any
 code. This is a definition problem before it is an engineering one.
 
 **Start.** `donor/` has a worked version of the cell-and-percentile approach and is the template.
-The outdoor clip on disk (`20260806-193346-26d16e`) is useful scene evidence, but its current
-1.150 m truth belongs to a large tree-like endpoint target. It is not grass truth and must not be
-relabelled as one.
+`Test_Grass2.mp4` (`20260814-174814-b245bc`) is the best scene evidence on disk: it has a mown lawn
+in the foreground, a graded 0.300 m rigid object standing on that lawn, and a floor fitted to 27.8%
+support. No turf truth has been taken in it.
 
 - [ ] Agree with the user what number we are claiming and how a person could check it.
 - [ ] Lay a grid on the local ground; take a robust height statistic per cell.
 - [ ] Gate each cell on coverage and confidence, and abstain where the evidence is thin. Do not
       try to find individual plants.
+- [ ] Decide which vertical the cell statistic is taken along, and justify it against the 7–24 cm
+      sensitivity measured above. This is a decision, not a default.
 - [ ] Output a heat map, not a list of objects.
 - [ ] Check it against the physical reference and report error, coverage and abstention rate.
 

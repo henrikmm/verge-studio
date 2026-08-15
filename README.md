@@ -26,10 +26,53 @@ service are for personal and research use and do not permit commercial use.
   three days; a saved run is copied to `~/verge-runs`.
 - The complete interface can be exercised against a bundled mock reconstruction with no cloud
   account, GPU or cost. A mock is labelled clearly and is never evidence about the loaded clip.
+- Every recorded trial keeps its own mask, so a measurement can be replayed and re-graded later
+  without the operator, the app or the cloud. `scripts/collect-evidence.mjs` replays all of them.
 
-The present evidence does **not** establish accuracy across rooms, phones, camera paths, floor
-visibility or outdoor terrain. Grass measurement is future work. Automatic selection has one
-successful door attempt, not a measured failure or abstention rate.
+## How accurate is it?
+
+Ten targets across four reconstructions have been graded against a tape measure, three
+independently repainted trials each unless marked. Every row is replayed from its frozen mask
+rather than copied from a record.
+
+| Clip | Target | Truth | Result | Error | Spread |
+|---|---|---:|---:|---:|---:|
+| RoomNewFixture, indoor | PC tower | 0.440 m | 0.4455 m | **+1.3%** | 6.2 mm |
+| RoomNewFixture, indoor | Table | 0.730 m | 0.7324 m | **+0.3%** | 11.1 mm |
+| RoomNewFixture, indoor | Monitor | 0.430 m | 0.4286 m | **−0.3%** | 3.1 mm |
+| Test_Grass2, outdoor | Clumping plant | 0.980 m | 0.9983 m | **+1.9%** | 15.5 mm |
+| Test_Grass2, outdoor | Garden light | 0.300 m | 0.3005 m | **+0.2%** | 7.2 mm |
+| Test_Grass, outdoor | Clumping plants *(automatic mask, 1 trial)* | 0.450 m | 0.4751 m | +5.6% | — |
+| Test_Grass, outdoor | Plant *(automatic mask, 1 trial)* | 0.500 m | 0.4635 m | −7.3% | — |
+| test-demo-door, indoor | Door leaf | 2.100 m | 2.0184 m | −3.9% | 5.9 mm |
+| test-demo-door, indoor | Table | 0.750 m | 0.6971 m | −7.0% | 4.1 mm |
+| test-demo-door, indoor | Tower | 0.450 m | 0.4276 m | −5.0% | 0.9 mm |
+
+**Accuracy here is a property of the clip, not a constant of the system.** The same code reads
+3.9–7.0% low on the door clip and within 2% on both clips captured after 2026-08-11. Nothing in the
+measurement path changed between them; the capture did. Until that mechanism is identified, a new
+clip's accuracy cannot be predicted before taping something in it.
+
+The spread column is repeatability within one sitting, **not measurement uncertainty**. Reproduce
+the whole table, images included, in about a minute:
+
+```bash
+node scripts/collect-evidence.mjs
+```
+
+### What this does not establish
+
+- **Turf and ground cover are not measured.** The targets named "grass" above are clumping
+  ornamental plants with leaf tips you can hold a tape against. A lawn has no single top, needs a
+  different definition and a different instrument, and remains future work.
+- **Automatic masks are not a graded instrument.** Two trials, no repeats, and 5–7 cm of each
+  answer supplied by an endpoint correction whose own error cannot be separated on that evidence.
+- **One operator, one phone, one room, one garden.** Nothing here bounds accuracy across cameras,
+  people, or a scene nobody has taped. The operator can also see the reading while painting and
+  knows most truths, which is a bias route the current evidence cannot rule out.
+
+[MEASUREMENTS.md](MEASUREMENTS.md) has the tape truths, the per-trial numbers, the floor
+diagnostics and the limitations in full.
 
 ## A measurement you can inspect
 
@@ -40,23 +83,9 @@ frame; the second image is the matching selection and ruler in the reconstructed
 |---|---|
 | ![Pink endpoint marks at the top and bottom of a door](docs/evidence/door-endpoint-marks.png) | ![The same selected points joined by a ruler in the reconstructed scene](docs/evidence/door-3d-ruler.png) |
 
-That trial reads **2.021 m** against a **2.100 m** tape measurement. It is one selected trial, not
-a general accuracy claim. The frozen provenance, hashes and reproduction command are in
+That trial reads **2.021 m** against a **2.100 m** tape measurement. The frozen provenance, hashes
+and reproduction command are in
 [`docs/evidence/door-measurement-replay.manifest.json`](docs/evidence/door-measurement-replay.manifest.json).
-
-The primary indoor benchmark used three independently repainted trials per object at 504 px and
-112 frames:
-
-| Object | Tape truth | Mean result | Error | Same-sitting spread |
-|---|---:|---:|---:|---:|
-| Door | 2.100 m | 2.0197 m | -3.8% | 5.9 mm |
-| Table | 0.750 m | 0.6983 m | -6.9% | 4.1 mm |
-| Tower | 0.450 m | 0.4275 m | -5.0% | 0.9 mm |
-
-The 1-6 mm spread is repeatability within one sitting, **not measurement uncertainty**. A separate
-mask-free surface measurement found the same tabletop within 1.1 mm of the brush result, while
-both remained about 5 cm below the tape truth. See [MEASUREMENTS.md](MEASUREMENTS.md) for the full
-protocol, raw limitations and the settings comparison.
 
 ## Supported computers
 
@@ -354,7 +383,7 @@ region or request quota in a region where Cloud Run GPUs are available. No scrip
 | `server/` | FastAPI wrapper around DA3 and the GPU container image |
 | `geometry/` | Ground fitting, scale checks, back-projection and measurement |
 | `fixtures/` | Small tracked mock data plus manifests for larger local evidence |
-| `scripts/` | Verification, inspection, frame extraction and cloud lifecycle tools |
+| `scripts/` | Verification, inspection, evidence collection, frame extraction and cloud lifecycle |
 | `docs/evidence/` | Cleared review images and their machine-readable provenance |
 | `donor/` | Read-only predecessor references; application code never imports them |
 

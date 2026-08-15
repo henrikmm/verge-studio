@@ -648,6 +648,96 @@ repointing them at a newer clip. The door is also the only scene in the project 
 The new working set is therefore untested by `verify.sh` until a fixture is made from it, which
 `scripts/save-run.sh` produces in the required layout.
 
+### The −5% scale error was the clip, not the pipeline — 2026-08-15
+
+The door study concluded that the model's raw metric scale ran a few percent short: three objects
+at −3.9%, −7.0% and −5.0%, consistent enough to look like a system constant. It is not one. Five
+brushed targets on two clips captured after 2026-08-11 read **+0.2%, +0.3%, −0.3%, +1.3% and
++1.9%**, the largest absolute error being 18.3 mm on a 0.980 m plant. No code in the measurement
+path changed between the two studies; the capture did.
+
+This is the strongest evidence yet for the rule `MEASUREMENTS.md` already stated — that scale does
+not transfer between clips — and it inverts the practical reading of it. A per-clip correction is
+still the right model, but a well-captured clip may need none at all. **What produces the
+difference is not identified**, which means it is not controlled either: a new clip's accuracy
+cannot be predicted before something in it is taped.
+
+Evidence: `.inspect/evidence/manifest.json`, 26 trials over 10 targets, rebuilt by
+`scripts/collect-evidence.mjs`. Truths confirmed against the operator's tape on 2026-08-15 — three
+values quoted from memory in that conversation (PC tower 0.430, monitor 0.428, plant 0.463) were
+wrong, and the stored `truthM` in each packet was right. Two of the three would have set a truth
+equal to the reading it was grading.
+
+### Outdoor is not the failure mode; unstructured vegetation is — 2026-08-15
+
+Both outdoor clips fit a better floor than the indoor one: 34.2% and 27.8% support against 10.7%,
+all three stable across eight RANSAC seeds (height spread 0.4, 6.9 and 6.5 mm). A rigid outdoor
+object — a 0.300 m garden light on a lawn — measured to **+0.5 mm**. Outdoor scenes with a large
+flat ground are, on this evidence, easier than a cluttered room.
+
+What is hard is what stands on the ground. Measuring every trial a second time against the gravity
+estimate instead of the fitted floor normal separates the two cleanly:
+
+| Target class | Reading minus gravity control |
+|---|---:|
+| Rigid objects, indoor and outdoor (12 trials) | 0.6–4.0 cm |
+| Clumping plants (4 trials) | 7.3–8.2 cm, and one at **24.3 cm** |
+
+A rigid object has the same extent whichever direction is called up. A sprawling plant does not —
+its points spread sideways as well as upward, so a few degrees of tilt sweeps different parts of
+the clump into the top and bottom bands. **The vertical's accuracy matters far more for vegetation
+than for furniture**, which is a constraint on TASK item 4 rather than a defect.
+
+Neither target named "grass" is turf. Both are clumping ornamental plants with leaf tips a tape can
+reach, taped from the base of the clump (user-confirmed 2026-08-15). Both stand on raised beds, so
+their lower endpoint sits 10–17 cm above the fitted floor where the indoor table's sits at 0.000 m
+— correct, because an extent is a difference of two heights above one plane and the bed cancels.
+
+### The inspector was grading a different instrument than the app — fixed 2026-08-15
+
+`inspect measurement` replays a frozen mask and reports the difference against the stored reading;
+for every brushed trial it read 0.000 mm, which is what made it trustworthy. Run for the first time
+across the automatic-mask trials, it disagreed by **74.1 mm and 50.2 mm**.
+
+The app measures an automatic mask differently. A segmentation mask covers the object densely, so
+2nd and 98th percentiles over all of it sit inside the real ends; `Measure Height` therefore keeps
+only the top and bottom tenth by height and takes its percentiles within those tails
+(`app/src/graph/nodes/measurement.ts`, guarded by `selection.segmentation`). A brush is already
+sparse endpoint evidence and gets no such treatment. The inspector implemented only the brush path,
+so it silently reported the app's number as wrong by the exact size of the adapter.
+
+Fixed by exporting `selectEndpointEvidence` through `scripts/inspect/bridge.ts` and applying it on
+replay when the recorded mask carries a `segmentation` origin. All 26 trials now reproduce to
+0.0002 mm. The replay also prints the full-mask control beside the reading, because the adapter
+supplies **7.4 cm of a 47.5 cm answer and 5.0 cm of a 46.4 cm one** — a majority of each result's
+distance from the unadapted number, which belongs in front of anyone grading it.
+
+The general lesson is the one this repository already states about inspectors: a second
+implementation of a measurement is only worth having if it tracks the first, and the way it fails
+is by being right about a calculation nobody performs.
+
+### Collecting the whole study is one command — 2026-08-15
+
+`scripts/collect-evidence.mjs` replays every recorded trial on this disk, writes three images each
+(the mask on its source frame, the selection in the whole cloud, the ruler framed in elevation with
+the fitted floor drawn across it), and emits `manifest.json` and a `SUMMARY.md` table grouped by
+clip and target. 26 trials in 54 s, local and free.
+
+It is a check and not just a report: a row is published only if the replay reproduces the stored
+reading, so a defect in the measurement path fails the collection instead of quietly changing a
+published number. That is how the endpoint-adapter mismatch above was found — first run, first
+automatic trial.
+
+`renderCloud` gained a `focus` window for it. The inspector's framing is derived from the data so
+two pictures of a cloud are comparable, which is also what makes a 0.3 m ruler eight pixels tall in
+a 20 m garden. `--focus` moves the window and not the camera, and the framed image is drawn in
+elevation so the fitted plane's own line is drawn across it.
+
+⚠️ **`inspect measurement` names its images after the run and the trial index**, so two targets in
+one run both write `…-measurement-1-mask.png` and the second overwrites the first. The harness
+copies each image out under the trial's own id immediately; a hand-run loop over one run's trials
+still loses all but the last of each index.
+
 ### The run is visible now, and the paid run shows itself — 2026-08-11
 
 Six defects in the load-configure-run path, found by reading the code and confirmed in the browser.
@@ -1439,20 +1529,31 @@ It held 113.6 MiB at teardown, about 1.1 cents a month, and empties itself in th
 
 Full tables, tape-measure truths and the error analysis live in `MEASUREMENTS.md`. The summary:
 
-**On the primary clip, at 504 px and 112 frames**, the pipeline measures a 2.10 m door, a 0.75 m
-table and a 0.45 m computer tower with a raw average error of about 0.037 m across the two
-holdout objects. Fitting a line through predicted-against-true separates a scale error of about
-3% from the remaining scatter of about 0.008 m.
+**Ten targets from 0.30 m to 2.10 m have been graded against tape, across four reconstructions of
+three clips.** All at 504 px and 112 frames. Eight were painted by brush; two came from the
+automatic mask and are single trials.
+
+**Accuracy is a property of the clip.** Brushed targets on the two clips captured after 2026-08-11
+land within 2% (+0.2%, +0.3%, −0.3%, +1.3%, +1.9%); the three on the door clip are 3.9–7.0% low.
+Same code, different capture. The mechanism is unidentified, so the practical rule stands: grade
+each clip against a reference visible in its own reconstruction.
 
 **Repeatability within one sitting is excellent and was a surprise.** The same person repainting
-the same endpoints reproduces them to **1 to 6 mm** — 15 to 90 times smaller than the error
-against the tape measure. The study was designed on the assumption that operator placement was
-the missing noise term. It is not; what remains is systematic bias, which is correctable.
+the same endpoints reproduces them to **0.9 to 15.5 mm** — on the door clip, 15 to 90 times smaller
+than the error against the tape measure. The study was designed on the assumption that operator
+placement was the missing noise term. It is not.
 
 **Between sittings is a different and larger number.** Two objects moved 23 and 24 times their
 within-sitting spread when compared against masks painted in an earlier session. The cause was
 identified — one mask's lower edge never reached the bottom of the door — so it is one mistake
-rather than scatter. It still shows that back-to-back repeats cannot measure this.
+rather than scatter. It still shows that back-to-back repeats cannot measure this. The one partial
+counter-example: the `RoomNewFixture` monitor was recorded two days after the other targets in its
+run and produced that clip's smallest spread, 3.1 mm.
+
+**The operator's bias is not ruled out.** The person painting can see the reading update and knows
+most truths. The mask-free control on the door clip shows the brush was not where that clip's error
+lived, and the two rigid-object targets have little freedom to be painted wrongly, but the clean
+test — a mask painted by someone blind to the truth — has not been done on the new clips.
 
 **The dangerous case is a wrong answer that looks healthy.** The 1.887 m door came with a
 plausible spread, a supported floor and a good fit error. No reported statistic distinguished it
@@ -1485,6 +1586,12 @@ cloud run followed by `scripts/save-run.sh`:
 | Door clip reconstructions at three settings | `fixtures/door/` | 342 MB + 11 MB of frames |
 | Room clip reconstructions at three settings | `fixtures/room/` | 346 MB |
 | Saved cloud runs | `~/verge-runs/` | varies |
+| Recorded trials, with their masks | `~/verge-runs/<id>/measurements/` | ~7 KB each |
+| The replayed study: 26 trials, 78 images, manifest and table | `.inspect/evidence/` | rebuilt in 54 s |
+
+`.inspect/evidence/` is never committed and never needs to be: `node scripts/collect-evidence.mjs`
+rebuilds all of it from the trial packets, which are small enough to survive anywhere the runs do.
+The packets are the evidence; the images are a view of them.
 
 The door fixture is the primary one: same room as the room fixture, but it contains the door,
 which at 2.10 m is the long reference the calibration needs. Scale does not transfer between
@@ -1696,10 +1803,20 @@ These are stated, not scheduled. Anything being actively worked on is in `TASK.m
   abstains, the reconstruction has no flat surface sharp enough to measure and the reason is
   usually resolution: nothing at 252 px yields one. It measures surfaces, never objects, so it
   cannot check the door leaf, the tower or the monitor — the three graded objects it cannot reach.
-- **Accuracy does not transfer across scenes.** `da3Test` measures its 0.760 m table within 5–6 mm,
-  while the saved outdoor run measures a 1.150 m tree-like target 31–36 cm high. The brush mapping,
-  floor direction and brush width have been ruled out as the main cause; one outdoor truth cannot
-  separate local reconstruction scale/shape from target-endpoint identity.
+- **Accuracy does not transfer across scenes**, and the spread is now measured rather than
+  suspected: the same code reads 3.9–7.0% low on the door clip and within 2% on the two clips
+  captured after 2026-08-11 (section 3, 2026-08-15). The worst case on record is still the saved
+  outdoor run's 1.150 m tree-like target at 31–36 cm high. What produces the difference is
+  unidentified, so no clip's accuracy can be asserted before something in it is taped.
+- **Turf has never been measured.** Both targets named "grass" in the study are clumping
+  ornamental plants with reachable leaf tips, taped from the base of the clump. A surface with no
+  single top needs the definition and instrument in TASK item 4, and nothing measured so far
+  speaks to it.
+- **The automatic mask is measured by a different estimator than the brush.** `Measure Height`
+  narrows a segmentation mask to its top and bottom tenth before taking percentiles; a brush is
+  used whole. On the two automatic trials that adapter supplies 7.4 cm and 5.0 cm of answers of
+  47.5 cm and 46.4 cm. Two trials cannot separate the adapter's error from the reconstruction's,
+  so neither automatic row is a graded result.
 - **DA3's exported cloud remains a biased 7% sample of the reconstruction.** Its pooled confidence
   floor can remove whole frames. The app keeps that cloud as a named comparison, while the rebuilt
   display now uses every finite, non-edge depth candidate. Measurements deliberately use a fixed
