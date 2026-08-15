@@ -287,4 +287,43 @@ describe("renderCloud", () => {
       draw({ points: Float32Array.from([NaN, NaN, NaN]), heights: Float64Array.from([0]) }),
     ).toThrow(/no finite points/);
   });
+
+  // The focus window exists so a 0.3 m ruler is legible inside a 20 m scene. What makes it
+  // trustworthy is that it moves the WINDOW and not the camera: the same world point must land in
+  // the same place relative to the geometry around it, or a framed picture would be a different
+  // measurement rather than a closer look at the same one.
+  describe("focus", () => {
+    it("frames the requested window instead of the cloud's own extent", () => {
+      const wide = draw({ colour: "flat" });
+      const near = draw({ colour: "flat", focus: { centre: [0, 1, 0], radius: 0.6 } });
+      expect(near.bounds.maxU - near.bounds.minU).toBeCloseTo(1.2, 6);
+      expect(wide.bounds.maxU - wide.bounds.minU).toBeGreaterThan(3.9);
+    });
+
+    it("keeps the projection, so the box stays where the geometry puts it", () => {
+      // The box occupies |x| < 0.5 on a 4 m floor. Framed on a 0.6 m window around it, the same
+      // points must fill much more of the picture — and nothing outside the window may be drawn.
+      const wide = draw({ colour: "flat" });
+      const near = draw({ colour: "flat", focus: { centre: [0, 1, 0], radius: 0.6 } });
+      expect(near.drawn).toBeLessThan(wide.drawn);
+      expect(near.drawn).toBeGreaterThan(0);
+    });
+
+    it("overrides the floor band rather than compounding two crops", () => {
+      const banded = draw({ colour: "flat", floorBand: [-0.3, 0.9] });
+      const focused = draw({
+        colour: "flat",
+        floorBand: [-0.3, 0.9],
+        focus: { centre: [0, 1, 0], radius: 0.6 },
+      });
+      // A banded render stretches vertically and reports the band as its extent; a focused one
+      // must report the square window it was asked for, whatever the band said.
+      expect(focused.bounds.maxV - focused.bounds.minV).toBeCloseTo(1.2, 6);
+      expect(banded.bounds.maxV - banded.bounds.minV).not.toBeCloseTo(1.2, 6);
+    });
+
+    it("refuses a radius that would divide by zero rather than drawing an empty frame", () => {
+      expect(() => draw({ focus: { centre: [0, 0, 0], radius: 0 } })).toThrow(/radius must be positive/);
+    });
+  });
 });
