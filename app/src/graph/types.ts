@@ -32,9 +32,13 @@ export const PORT_COLORS: Record<PortType, string> = {
 };
 
 /**
- * Node header hues, ~35% saturation per DESIGN.md's reading of the Sentinel
- * reference: purple for sources/generators, teal for analysis, magenta for the
- * geometry stage, muted blue for sinks.
+ * Node header hues at roughly 35% saturation: purple for sources and generators, teal for
+ * analysis, magenta for the geometry stage, muted blue for sinks.
+ *
+ * The saturation ceiling is the load-bearing part. These headers sit beside the type-coloured
+ * port dots, which are a legend and have to stay the most saturated thing on the card; a header
+ * that competes with them turns the legend into decoration. Category is a grouping cue, not a
+ * state, so it is allowed colour at all — see the colour section of DESIGN.md.
  */
 export type NodeCategory = "source" | "analysis" | "geometry" | "sink";
 

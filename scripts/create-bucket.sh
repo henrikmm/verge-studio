@@ -35,8 +35,19 @@ else
 fi
 
 echo "== bucket =="
+# --raw is load-bearing. `gcloud storage buckets describe` has two schemas: its own, which
+# names the lifecycle rules `lifecycle_config` and omits the owning project entirely, and the
+# JSON API's, which carries `projectNumber`. Asking for projectNumber without --raw returned
+# empty on every gcloud tested (578.0.0), so this check compared "" against the real number and
+# refused every bucket that already existed -- the failure mode it was written to prevent. The
+# lifecycle verification below deliberately stays on the non-raw schema for the same reason.
 if BUCKET_PROJECT_NUMBER="$(gcloud storage buckets describe "gs://${BUCKET}" \
-    --project="${PROJECT_ID}" --format='value(projectNumber)' 2>/dev/null)"; then
+    --project="${PROJECT_ID}" --raw --format='value(projectNumber)' 2>/dev/null)"; then
+  if [[ -z "${BUCKET_PROJECT_NUMBER}" ]]; then
+    echo "REFUSING: could not read the owning project of gs://${BUCKET}." >&2
+    echo "gcloud returned no projectNumber; do not assume the bucket is yours." >&2
+    exit 1
+  fi
   if [[ "${BUCKET_PROJECT_NUMBER}" != "${PROJECT_NUMBER}" ]]; then
     echo "REFUSING: gs://${BUCKET} belongs to project number ${BUCKET_PROJECT_NUMBER}, not ${PROJECT_NUMBER}." >&2
     echo "Choose a globally unique VERGE_OUTPUT_BUCKET that belongs to PROJECT_ID." >&2

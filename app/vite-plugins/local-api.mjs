@@ -13,6 +13,7 @@ import { cloudStatus, invalidateCloudStatus, proxyToService } from "./cloud.mjs"
 import { getJob, getRunningJob, killAllJobs, startJob, subscribeJob } from "./jobs.mjs";
 import {
   RUNS_ROOT,
+  archiveMeasurementEvidence,
   deleteRun,
   listMeasurementEvidence,
   listRuns,
@@ -190,6 +191,45 @@ function requestOrigin(req) {
   }
 }
 
+const DEFAULT_PORT = 5173;
+
+/** The port an origin string addresses, or null if it is not a usable origin. */
+function originPort(value) {
+  try {
+    const port = new URL(value).port;
+    return port ? Number(port) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * May this origin drive a privileged route?
+ *
+ * The test is "a loopback host on this dev server's own port", not equality with one string.
+ * `localhost`, `127.0.0.1` and `[::1]` are the same machine spelled three ways, and the browser
+ * sends whichever spelling the address bar holds — so pinning a single one rejected the app
+ * whenever it was opened by another name. That is a 403 on Deploy for anyone who typed
+ * `localhost`, observed 2026-08-13 against `http://localhost:5173`.
+ *
+ * Widening this does not weaken it. A remote page's origin carries that page's own hostname
+ * however its DNS resolves, so it fails the loopback test; a second dev server on another port
+ * fails the port test. Both were rejected before and are rejected now.
+ */
+function isLocalOrigin(value, port) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  // URL keeps IPv6 literals in brackets; compare the address itself.
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  const loopback = host === "localhost" || host === "127.0.0.1" || host === "::1";
+  return loopback && Number(url.port || (url.protocol === "https:" ? 443 : 80)) === port;
+}
+
 function reject(res, detail) {
   return json(res, 403, { detail });
 }
@@ -202,7 +242,10 @@ export function localApi(options = {}) {
       return [{ tag: "meta", attrs: { name: "verge-dev-nonce", content: nonce }, injectTo: "head" }];
     },
     configureServer(server) {
-      const localOrigin = options.origin ?? server.config?.server?.origin ?? "http://127.0.0.1:5173";
+      const configuredOrigin = options.origin ?? server.config?.server?.origin ?? "";
+      // Whatever the address bar says, it has to be this server's own port.
+      const localPort =
+        originPort(configuredOrigin) ?? server.config?.server?.port ?? DEFAULT_PORT;
       // No gcloud child may outlive the dev server. A deploy orphaned by Ctrl-C would keep
       // rolling out a revision nobody is watching, and a half-applied deploy is worse than
       // none — the operator would have no log and no way to know it happened.
@@ -224,8 +267,8 @@ export function localApi(options = {}) {
 
         const privileged = url.pathname.startsWith("/api/cloud/svc/") || MUTATING_METHODS.has(req.method);
         if (privileged) {
-          if (requestOrigin(req) !== localOrigin) {
-            return reject(res, "local API requires the configured loopback origin");
+          if (!isLocalOrigin(requestOrigin(req), localPort)) {
+            return reject(res, `local API requires a loopback origin on port ${localPort}`);
           }
           if (req.headers["x-verge-dev-nonce"] !== nonce) {
             return reject(res, "local API request is missing this dev session's nonce");
@@ -285,8 +328,7 @@ export function localApi(options = {}) {
               return json(res, 200, await saveRun(REPO_ROOT, id));
             }
             if (req.method === "DELETE" && !runRoute[2]) {
-              await deleteRun(id);
-              return json(res, 200, { deleted: id });
+              return json(res, 200, await deleteRun(id));
             }
           }
 
@@ -303,8 +345,18 @@ export function localApi(options = {}) {
               return json(res, 200, await writeMeasurementEvidence(id, await readJsonBody(req)));
             }
             if (req.method === "DELETE" && evidenceId) {
-              await removeMeasurementEvidence(id, evidenceId);
-              return json(res, 200, { deleted: evidenceId });
+              const archived = await removeMeasurementEvidence(id, evidenceId);
+              return json(res, 200, { archived });
+            }
+            // Everything recorded against one target, for a target being removed. Filtering
+            // here rather than in the browser means it also takes packets this session never
+            // merged — the ones a cleared cache would otherwise leave behind forever.
+            if (req.method === "DELETE" && !evidenceId && url.searchParams.has("objectId")) {
+              const archived = await archiveMeasurementEvidence(id, {
+                objectIds: url.searchParams.getAll("objectId"),
+                reason: `target ${url.searchParams.getAll("objectId").join(", ")} removed`,
+              });
+              return json(res, 200, { archived });
             }
           }
 

@@ -152,6 +152,25 @@ Around that spine:
   The inspector replayed its stored **2.021077 m** to **0.000 mm**, and all **561 of 561** usable
   points returned inside the recorded mask within one pixel. Recovery therefore depends on neither
   the display trial number nor one still-open page.
+- **A recorded trial's ruler is visible in the scene, not only in the packet.** The endpoints a
+  reading was taken between are frozen into the observation at Record (schema
+  `verge.measurement-evidence/0.3.0`), so they survive a reload and come back off disk with the
+  trial. Viewport 3D draws one per measured object — the trial nearest that object's median —
+  labelled with its code and reading, under a **Show evidence** chip that is in Standard and on by
+  default. Clicking a trial's `ruler` cell in Objects brings that trial's ruler to full strength
+  and dims the others. Free measurement and blind mode draw none; the rules are in
+  `app/src/panes/evidence-overlay.ts`, tested in `evidence-overlay.test.ts`, and stated in
+  DESIGN.md. Verified 2026-08-12 against `door-504px-112f`: three objects recorded, three labelled
+  rulers drawn, the count and the singled-out object reported on screen, all three still drawn
+  after a reload.
+- **Trials recorded before 2026-08-12 have no ruler, and it cannot be recovered.** Replaying a
+  stored mask reproduces the endpoints exactly, but only against the plane the trial used, and the
+  plane was first written to disk on 2026-08-11. Of the 60 packets in `~/verge-runs` on
+  2026-08-12, 9 carry a plane — and all 9 already carried a ruler, under `live.measurement`, where
+  only the CLI ever looked. Those 9 are lifted into the trial on recovery, which is a move and not
+  a re-derivation; the remaining 51 would need a re-fitted floor, which would be a different
+  measurement wearing the trial's number. They read `—` in the trial list and `inspect
+  measurements <run>` reports them under `RULER`.
 - **The whole app runs offline.** The dev server answers the inference request from a stored
   fixture, so the interface can be built and reviewed at zero cost. Anything produced that way is
   labelled as a mock on screen.
@@ -258,6 +277,19 @@ because hundreds of measurement cells would turn the canvas into confetti.
 ---
 
 ## 3. Measured facts — do not re-derive these
+
+**How an entry here shrinks.** This section is the only part of the registry that grows without
+bound, and about a fifth of it was the story of a defect: how it was found, what the broken code
+did, which theories failed on the way. Git holds all of that. Once a fix has held, such an entry
+keeps the **rule** that stops it coming back, the **number** that proves it mattered, and the one
+line saying it was exercised — and loses the forensics. Applied on 2026-08-12 to three entries
+about the app's own plumbing.
+
+**It does not apply to a measurement.** The confidence-cut and ground-fit entries below are titled
+like defect stories and are nothing of the kind: they are sweeps, tables and thresholds that a
+future session would otherwise pay to re-derive. Compressing on the word "fixed" in a heading
+would have destroyed the two most load-bearing entries in this file. The test is what the body
+holds, not what the title says.
 
 ### The GPU's memory ceiling
 
@@ -442,29 +474,23 @@ the default layout is built. Two consequences worth knowing:
 - The share is a share, not a size. At 1280 px it is 256 px, too narrow for the Inspector group's
   three tabs — Runs sits behind an overflow chevron. TASK 6 carries the minimum width.
 
-### The brush died whenever a switch left the frame alone — fixed 2026-08-11
+### A mask is created from the mask's identity, never from an image load — fixed 2026-08-11
 
-Selecting Ad hoc after a named target, or a target whose suggested frame was already on screen,
-left the brush painting nothing. No error on screen, the cursor unchanged, every stroke lost.
+Masks are keyed by `clip/subject:frame`, and whatever creates one must depend on that whole key.
+Creating it from the RGB image's `onload` instead meant any switch that left the frame alone —
+Ad hoc after a named target, a new target whose suggested frame was already on screen — produced
+no mask, and every stroke was lost in silence. It is an effect on `[image, object.id,
+canonicalFrame]` now, and `paintAt` also ensures one from the canvas's own pixel size, which
+covers a click landing mid-load.
 
-Masks are keyed `subject:frame`, and the only thing that created one was the RGB image's `onload`
-handler in `app/src/panes/depth-2d.tsx`. A switch that does not change the frame never reloads the
-image, so no mask was made for the new key and `paintMaskStroke` threw from inside the pointer
-handler — where React has no error boundary, so the throw reached `window.onerror` and nowhere
-else. Confirmed in the browser on `door-504px-112f`: B1 painted 24,121 px at frame 1, then Ad hoc
-at the same frame painted 0 px and logged six `mask canvas has not been initialised` errors, one
-per pointer event.
+Two lessons outlive the bug. **A throw inside a React pointer handler has no error boundary**: it
+reaches `window.onerror` and nowhere else, so the app looks fine while doing nothing — this cost
+the diagnosis, not the fix. And the defect read as intermittent only because startup is Ad hoc at
+frame 1, which is the one key the image load did create, so the paths an operator repeats were
+the paths that worked.
 
-It looked intermittent because two things hid it. Startup is Ad hoc at frame 1 and the first image
-load creates exactly that key, and any target painted in an earlier session comes back from
-`localStorage`. So the paths an operator repeats were the paths that worked.
-
-The mask now follows the mask's own identity — an effect on `[image, object.id, canonicalFrame]` —
-and `paintAt` ensures one from the canvas's own pixel size, which also covers a click landing
-inside a frame's image load. `ensureMask` returns the existing record untouched when the size
-matches, so the paint path allocates nothing. Five more ways in: adding a target (its suggested
-frame is the frame on screen, so it was always dead on arrival), deleting the active target,
-loading a run whose clip has no targets, and clicking during a frame change.
+Confirmed in the browser on `door-504px-112f`: B1 painted 24,121 px at frame 1 while Ad hoc at the
+same frame painted 0.
 
 ### Recorded evidence is read back, and a trial's brush can be looked at — 2026-08-11
 
@@ -509,65 +535,208 @@ frozen mask produces a trial that repeats the code rather than the measuring.
 
 ### A trial's brush is now recoverable, and four ways it was not — fixed 2026-08-11
 
-A recorded trial is meant to be re-openable forever, brush strokes included. Auditing the record
-path end to end turned up four defects, three of which could destroy or confuse that evidence.
-All four are fixed, and the pipeline was then run end to end in the browser.
+A recorded trial is meant to be re-openable forever, brush strokes included. Four rules hold that
+together, each of which was broken once and is now pinned by tests:
 
-**The mask was looked up under a frame the operator never painted on.** A run holds 112 of the 256
-canonical frames, so `closestFrame` snaps: ask for 231, get 233. `brush-selection` read the mask at
-the REQUESTED frame while `capture` recorded `selection.frame.canonicalIndex`, the SNAPPED one, and
-`addObservation` then looked for the mask under that. The two agreed only because Depth 2D writes
-the snapped frame back into the store — so with that pane closed, a trial kept its numbers and lost
-its brush. The server refuses evidence with no frozen mask, so the trial also never reached disk;
-the pane said "Recorded locally, but disk evidence failed" and the trial stayed local and blind. The
-node now reads the mask at `descriptor.canonicalIndex`, the frame actually displayed and painted.
+- **Read the mask at the frame actually displayed**, `descriptor.canonicalIndex`, never the one
+  requested. A run holds 112 of the 256 canonical frames, so `closestFrame` snaps — ask for 231,
+  get 233 — and the two only ever agreed because Depth 2D writes the snapped frame back. With
+  that pane closed a trial kept its numbers and lost its brush, and the server refuses evidence
+  with no frozen mask, so it never reached disk either.
+- **A trial's id is permanent.** Its evidence file on disk is named from a digest of that id, so
+  renumbering by position orphans the file and writes a second copy beside it. **A gap in the
+  numbering is the honest record of a deletion**, not something to tidy up.
+- **Number a new trial from the highest index ever used**, not from the survivors, or a discarded
+  trial's number is reissued and one evidence file overwrites another.
+- **A `localStorage` write inside a debounce needs a `catch`.** Every trial carries its mask as
+  run-length pairs, so the payload grows with the work; a quota error thrown where nothing was
+  listening simply stopped the session being saved. It surfaces in the Objects pane with the
+  payload size.
 
-**Trial numbers were reissued on every reload.** `migrateObservations` renumbered by position, so
-discarding trial 2 of 3 and reloading brought the old trial 3 back as trial 2 with a new id. The
-evidence file on disk is named from a digest of that id, so the renamed row no longer matched its
-own file: the pane saw an unknown trial and wrote a second copy, orphaning the first. Ids are now
-kept when they carry a `#`; only 0.1.0 ids, which are a different shape and not even unique, are
-reissued. A gap in the numbering is the honest record of a deletion.
-
-**A new trial could take a discarded one's number.** `addObservation` counted survivors, so after
-discarding trial 2 of 3 the next trial was numbered 3 — same id, same evidence id, one file
-overwriting the other. It counts from the highest index ever used in the group.
-
-**A failed save was silent.** `persistSession` called `setItem` inside a debounce timer with no
-`catch`, so a quota error threw where nothing was listening and the session simply stopped being
-saved. Every trial carries its mask as run-length pairs, so the payload grows with the work. The
-failure is now caught and shown in the Objects pane with the payload size.
-
-Verified in the browser on `door-504px-112f`, B1 at frame 1: painted 27,784 px, hid and reopened
-Depth 2D (which remounts it) — brush and frame intact; recorded trial 1 → `Recorded #1 on disk`,
-and the file holds the frozen mask at 27,784 px, 1,022 RLE runs, 576×1024, digest `7f70ce43`;
-reloaded — the trial, its digest and the working brush all came back; discarded it — the row went,
-the file went (34 → 33), the six saved runs untouched; cleared the brush — 0 px, and still 0 after
-another reload. No console errors throughout.
-
-**What this did not fix, and the entry above did:** the app never read disk evidence back, so the
-33 files under `~/verge-runs/.measurements/door-504px-112f` were invisible to it — this session's
-browser profile showed `0 trials` beside 33 stored packets.
+Exercised end to end in the browser on `door-504px-112f`, B1 at frame 1: 27,784 px painted,
+recorded, reloaded and discarded, with the frozen mask on disk at 1,022 RLE runs and digest
+`7f70ce43`, and the file count going 34 → 33 on the discard.
 
 ### Masks carry the clip they were painted on — fixed 2026-08-11
 
-Mask keys were `subject:frame` with no clip in them, so two clips sharing a subject id shared one
-mask. Measured 2026-08-11: 18,507 px painted on `RoomNewFixture.mp4` at frame 1 stayed selected
-after switching to `door-504px-112f` and reported 0.759 m, then 0.763 m — one scene's brush strokes
-measuring another scene's point cloud, with nothing on screen saying the selection was made
-elsewhere.
+Mask keys are `clip/subject:frame`, session schema 0.6.0. Without the clip in the key, two clips
+sharing a subject id shared one mask: measured 2026-08-11, 18,507 px painted on
+`RoomNewFixture.mp4` stayed selected after switching to `door-504px-112f` and reported 0.759 m,
+then 0.763 m — one scene's strokes measuring another scene's cloud, with nothing on screen saying
+so. Ad hoc collided every time, its id being the constant `__free__`; named targets collide
+whenever two clips hold a target with the same name, because slug de-duplication runs within one
+clip's set only.
 
-Ad hoc collided always, because its id is the constant `__free__`. Named targets collide whenever
-two clips hold a target with the same name: `AddTargetForm` slugifies the name and de-duplicates
-within one clip's set only, so `doorway` in two clips was one mask. Its own comment already stated
-the rule the key broke — "Ids key masks and trials, so a collision would merge two different
-objects' evidence".
+Recorded trials were never affected — they are keyed `objectId:runId` and carry their own frozen
+mask. A 0.5.0 key migrates by finding the clip whose target set owns the subject, falling back to
+the saved active clip when two claim it; verified by staging a real 0.5.0 payload.
 
-Keys are now `clip/subject:frame` and the session schema is 0.6.0. Recorded trials were never
-affected: they are keyed `objectId:runId` and carry their own frozen mask snapshot. A 0.5.0 key is
-migrated by finding the clip whose target set owns the subject, falling back to the session's saved
-active clip when two clips claim it. Verified in the browser by staging a real 0.5.0 payload:
-`door-leaf:1` came back as `builtin-door/door-leaf:1` with its runs and revision unchanged.
+### A target's name was its identity, and deleting one kept its trials — fixed 2026-08-13
+
+Removing a target from `RoomNewFixture` and typing the same name again produced a target that
+already had three trials, and asked for the fourth. Three separate defects, one root: a target's
+id was the slugified name, and only trials were durable.
+
+- **`removeTarget` removed the definition and nothing else.** Its trials stayed in the store,
+  invisible with no row to display them, still counted by the export, waiting for any later target
+  that slugified to the same id. Deleting a run had the matching hole — `deleteRun` took the
+  directory and left the `localStorage` rows behind for a run that no longer existed.
+- **The recovery path dropped `packet.target`.** Every evidence packet carries the full definition
+  it was recorded against, and the merge took only the observation, so a cleared browser storage
+  gave a clip with trials and an empty target list. Measured on 2026-08-13: 16 packets on disk for
+  `20260811-161356-d387ec`, five target names among them, nothing on screen. That is what "the
+  objects were lost" was — the readings were never lost at all.
+- **Two clips could hold one id.** `pc-tower` existed in the built-in door set at truth 0.45 m and
+  in the room at 0.44 m. Readings never mixed — they are keyed `objectId:runId` — but the Objects
+  status row printed `ui.observations.length`, the whole store, beside one clip's name (`5 targets
+  · 33 trials · RoomNewFixture.mp4`, of which 16 were the room's and 17 the door's), and
+  `exportMeasurementSession` crossed the active clip's targets with every run id in the store,
+  emitting the door run's trials under the room's code and truth.
+
+New ids are `slug-xxxx` (`newTargetId`), so the slug stays readable and the four random characters
+carry the identity: a re-typed name is a new object, which is the honest reading. Codes follow the
+same rule — `nextTargetCode` takes the highest ever issued, because counting rows had the room
+holding `T2 = Monitor` and `T2 = PC Tower`, two rulers in one scene under one label. Ids already
+recorded are left alone; history is not rewritten.
+
+**Deleting now archives.** Discarding a trial, removing a target and deleting a run all move their
+packets to `~/verge-runs/.archive/<runId>/`, stamped with `archivedAt` and `archivedReason`, and a
+deleted run's index record goes with them as `run.json`. Artifacts are still destroyed — they are
+the 100+ MB the storage policy exists to control and a run can be taken again — but a mask a person
+painted on one afternoon cannot be, and the whole door archive is 33 packets in 264 KB. The archive
+sits outside every path that reads evidence, so an archived trial is gone from the app exactly as
+if it had been erased, and cannot come back and be counted twice.
+
+Verified end to end in the running app, not only in tests: clearing `localStorage` and reloading
+recovered 5 targets and 16 trials from disk; a target named "PC Tower" added beside the existing
+one took id `pc-tower-x8lv` and offered trial 1; removing PC Case archived its 3 packets (16 live
+packets → 13, three files in `.archive` reading 0.4428, 0.4423, 0.4463 with reason `target pc-case
+removed`), and a second reload from empty storage did not bring them back.
+
+### The measurement history was archived, and the study restarted — 2026-08-13
+
+All 61 recorded trials were moved to `~/verge-runs/.archive` and nothing is live on disk: 33 door
+packets, 16 from `RoomNewFixture`, 6 `diner-table` on `da3Test`, 6 `vegetation` on `testOutdoor`.
+500 KB in total, masks intact — a spot-checked door packet still carries its 224 run-length pairs.
+Everything `MEASUREMENTS.md` reports is derived from these, so the graded numbers there remain
+re-derivable rather than merely asserted.
+
+**The session schema went to 0.7.0 in the same change, and 0.6.0 is not migrated forward.** The
+browser's copy of a session is a cache, not a record — but the Objects pane syncs any trial disk
+does not have, and after this archive disk deliberately has none. A browser still holding its
+0.6.0 session would therefore re-upload 13 archived trials into the fresh study the moment it
+selected the run, one profile at a time, with nothing on screen saying so. Dropping the key loses
+no evidence: definitions and trials both come back from the packets on disk. Verified by selecting
+`RoomNewFixture` on a cleared session — `0 targets · 0 trials`, the point cloud drawn, no rulers,
+and disk still at zero live packets three seconds later.
+
+### Two saved runs are the working set, and five were deleted — 2026-08-13
+
+`~/verge-runs` holds `20260811-161356-d387ec` (`RoomNewFixture.mp4`, 504 px, 112f) and
+`20260810-175959-387f7f` (`TestOutdoor4k60fps2.mp4`, 504 px, 95f), elected by the user as the
+indoor and outdoor scenes the next study is built on. 226 MB, down from 723 MB. Deleted with their
+artifacts: `da3Test.mp4` 81f, `test-demo-door.mp4` 81f, `testOutdoor.mp4` 99f,
+`OutDoorLandscape4k60.mp4` 81f, `plantExemple.mp4` 87f. Each left a `run.json` in its archive
+directory, so an archived trial still names what it was measured on.
+
+**`fixtures/` is a different thing from `~/verge-runs`, and none of this touched it.** The
+regression suite reads `fixtures/door/{252,356,504}` and `fixtures/room/504px-112f` — reconstructions
+committed as manifests with gitignored payloads — and `verify.sh` passed unchanged after the
+deletions, 589 tests. Those two scenes are frozen baselines rather than defaults: their measured
+numbers are what catch a geometry regression, which is exactly the property that would be lost by
+repointing them at a newer clip. The door is also the only scene in the project with tape truth.
+The new working set is therefore untested by `verify.sh` until a fixture is made from it, which
+`scripts/save-run.sh` produces in the required layout.
+
+### The −5% scale error was the clip, not the pipeline — 2026-08-15
+
+The door study concluded that the model's raw metric scale ran a few percent short: three objects
+at −3.9%, −7.0% and −5.0%, consistent enough to look like a system constant. It is not one. Five
+brushed targets on two clips captured after 2026-08-11 read **+0.2%, +0.3%, −0.3%, +1.3% and
++1.9%**, the largest absolute error being 18.3 mm on a 0.980 m plant. No code in the measurement
+path changed between the two studies; the capture did.
+
+This is the strongest evidence yet for the rule `MEASUREMENTS.md` already stated — that scale does
+not transfer between clips — and it inverts the practical reading of it. A per-clip correction is
+still the right model, but a well-captured clip may need none at all. **What produces the
+difference is not identified**, which means it is not controlled either: a new clip's accuracy
+cannot be predicted before something in it is taped.
+
+Evidence: `.inspect/evidence/manifest.json`, 26 trials over 10 targets, rebuilt by
+`scripts/collect-evidence.mjs`. Truths confirmed against the operator's tape on 2026-08-15 — three
+values quoted from memory in that conversation (PC tower 0.430, monitor 0.428, plant 0.463) were
+wrong, and the stored `truthM` in each packet was right. Two of the three would have set a truth
+equal to the reading it was grading.
+
+### Outdoor is not the failure mode; unstructured vegetation is — 2026-08-15
+
+Both outdoor clips fit a better floor than the indoor one: 34.2% and 27.8% support against 10.7%,
+all three stable across eight RANSAC seeds (height spread 0.4, 6.9 and 6.5 mm). A rigid outdoor
+object — a 0.300 m garden light on a lawn — measured to **+0.5 mm**. Outdoor scenes with a large
+flat ground are, on this evidence, easier than a cluttered room.
+
+What is hard is what stands on the ground. Measuring every trial a second time against the gravity
+estimate instead of the fitted floor normal separates the two cleanly:
+
+| Target class | Reading minus gravity control |
+|---|---:|
+| Rigid objects, indoor and outdoor (12 trials) | 0.6–4.0 cm |
+| Clumping plants (4 trials) | 7.3–8.2 cm, and one at **24.3 cm** |
+
+A rigid object has the same extent whichever direction is called up. A sprawling plant does not —
+its points spread sideways as well as upward, so a few degrees of tilt sweeps different parts of
+the clump into the top and bottom bands. **The vertical's accuracy matters far more for vegetation
+than for furniture**, which is a constraint on TASK item 4 rather than a defect.
+
+Neither target named "grass" is a lawn. Both are clumping ornamental plants with leaf tips a tape
+can reach, taped from the base of the clump (user-confirmed 2026-08-15). Both stand on raised beds, so
+their lower endpoint sits 10–17 cm above the fitted floor where the indoor table's sits at 0.000 m
+— correct, because an extent is a difference of two heights above one plane and the bed cancels.
+
+### The inspector was grading a different instrument than the app — fixed 2026-08-15
+
+`inspect measurement` replays a frozen mask and reports the difference against the stored reading;
+for every brushed trial it read 0.000 mm, which is what made it trustworthy. Run for the first time
+across the automatic-mask trials, it disagreed by **74.1 mm and 50.2 mm**.
+
+The app measures an automatic mask differently. A segmentation mask covers the object densely, so
+2nd and 98th percentiles over all of it sit inside the real ends; `Measure Height` therefore keeps
+only the top and bottom tenth by height and takes its percentiles within those tails
+(`app/src/graph/nodes/measurement.ts`, guarded by `selection.segmentation`). A brush is already
+sparse endpoint evidence and gets no such treatment. The inspector implemented only the brush path,
+so it silently reported the app's number as wrong by the exact size of the adapter.
+
+Fixed by exporting `selectEndpointEvidence` through `scripts/inspect/bridge.ts` and applying it on
+replay when the recorded mask carries a `segmentation` origin. All 26 trials now reproduce to
+0.0002 mm. The replay also prints the full-mask control beside the reading, because the adapter
+supplies **7.4 cm of a 47.5 cm answer and 5.0 cm of a 46.4 cm one** — a majority of each result's
+distance from the unadapted number, which belongs in front of anyone grading it.
+
+The general lesson is the one this repository already states about inspectors: a second
+implementation of a measurement is only worth having if it tracks the first, and the way it fails
+is by being right about a calculation nobody performs.
+
+### Collecting the whole study is one command — 2026-08-15
+
+`scripts/collect-evidence.mjs` replays every recorded trial on this disk, writes three images each
+(the mask on its source frame, the selection in the whole cloud, the ruler framed in elevation with
+the fitted floor drawn across it), and emits `manifest.json` and a `SUMMARY.md` table grouped by
+clip and target. 26 trials in 54 s, local and free.
+
+It is a check and not just a report: a row is published only if the replay reproduces the stored
+reading, so a defect in the measurement path fails the collection instead of quietly changing a
+published number. That is how the endpoint-adapter mismatch above was found — first run, first
+automatic trial.
+
+`renderCloud` gained a `focus` window for it. The inspector's framing is derived from the data so
+two pictures of a cloud are comparable, which is also what makes a 0.3 m ruler eight pixels tall in
+a 20 m garden. `--focus` moves the window and not the camera, and the framed image is drawn in
+elevation so the fitted plane's own line is drawn across it.
+
+⚠️ **`inspect measurement` names its images after the run and the trial index**, so two targets in
+one run both write `…-measurement-1-mask.png` and the second overwrites the first. The harness
+copies each image out under the trial's own id immediately; a hand-run loop over one run's trials
+still loses all but the last of each index.
 
 ### The run is visible now, and the paid run shows itself — 2026-08-11
 
@@ -660,25 +829,15 @@ services list` returned nothing and one image was left in the repository. **One 
 observed on hardware**: `waking` never appeared, because connecting had already woken the
 container, so only the rehearsal has exercised it against a 503.
 
-**Reviewed with the user on 2026-08-11, and four conventions came out of it.**
-
-- **Amber is a warning, never a hint.** Three lines of instruction were written in
-  `--accent-busy` — "Drop a video above, or press Browse", "Press Extract frames", and a
-  paragraph about the mock. Amber in this app means something is wrong or being spent; spending
-  it on a tutorial teaches the reader to ignore the colour. A row now states what is true and the
-  section's `?` says what to do.
-- **A `?` per row is the clutter the `?` was introduced to remove.** Five of them had appeared in
-  one pane. A control is now explained by hovering **its own label**, which carries a dotted
-  underline and opens the same panel on hover, on click and on keyboard focus. `?` is reserved for
-  a section, one or two at most.
-- **Every pane states its share of the window.** The split was in fact exactly 40/40/20
-  (512/512/256 at 1280 px), but Dockview persists whatever you drag it to and nothing on screen
-  said so, which made a correct layout indistinguishable from a drifted one.
-- **The mock is no longer a run target by default.** It answers with the roadside fixture whatever
-  it receives, so its only honest job is as a development fixture. With no service deployed Run is
-  now disabled and says "not deployed" rather than producing a scene the operator never filmed —
-  the 2026-08-05 misdiagnosis, closed at the source. An Advanced switch restores it for building
-  the interface without a GPU, which is what it is genuinely for.
+**Reviewed with the user on 2026-08-11, and four interface conventions came out of it**: amber is
+a warning and never a hint, a control is explained by hovering its own label rather than by a `?`
+per row, every pane states its share of the window, and the mock is not a run target unless an
+Advanced switch says so. All four are specified in `docs/DESIGN.md` — they are rules the interface
+obeys from now on, so that is where they live, and the checklist grades them as items 26, 27, 28
+and 15. What belongs here is only the count: five `?` had appeared in one pane, three lines of
+`--accent-busy` were tutorial text, and the split was in fact exactly 40/40/20 (512/512/256 at
+1280 px) but nothing on screen said so, which made a correct layout indistinguishable from a
+drifted one.
 
 The Source control moved with them. It was a dropdown offering "recorded evidence" beside "live
 DA3 output", which put "which past run am I looking at?" inside the panel for configuring the next
@@ -693,27 +852,38 @@ explained. Pressing Run twice with nothing changed reported a failure — it is 
 run, and now says so. `app/vite.config.ts` honours `PORT`, because `strictPort` meant the app could
 not start at all beside another Vite project holding 5173.
 
-### Drag cannot be automated in the browser pane — 2026-08-11
+### Drag can be automated, but not from inside the page — corrected 2026-08-12
 
-**Every drag interaction in this app relies on `setPointerCapture`, and pointer capture refuses
-untrusted events.** So no synthetic pointer event, no synthetic mouse event, and not the browser
-tool's own `left_click_drag` can drive one. Ordinary `onClick` buttons in the same app work
-normally, which is what makes this look like a pane defect when it is not.
-
-Three interactions were tried and all three failed identically:
+**Every drag in this app relies on `setPointerCapture`, and pointer capture refuses untrusted
+events.** Anything the page can synthesise is untrusted, so no synthetic pointer event, no
+synthetic mouse event and not the browser tool's own `left_click_drag` drives one. Ordinary
+`onClick` buttons in the same app work normally, which is what makes this look like a defect in
+our canvas when it is not. Measured 2026-08-11, three interactions failing identically:
 
 | Interaction | Owner | Result |
 |---|---|---|
 | Viewport 3D orbit | our code | no camera change |
-| Dockview resize sash | third-party | no width change (measured 512/512/256 before and after) |
+| Dockview resize sash | third-party | no width change (512/512/256 before and after) |
 | Dockview tab strip | third-party | no tab change |
 
-Dockview ships working drag in every application that uses it. A failure in **its** sash is
-therefore the harness's, and that is what rules our own canvas out as the cause.
+Dockview ships working drag in every application that uses it, so a failure in **its** sash was
+what ruled our own canvas out as the cause.
 
-**Consequence for the design review.** Acceptance item 5 (orbit) cannot be graded automatically.
-It needs the human-gateway protocol in AGENTS.md: prepare the state, ask for the one drag, record
-the answer. Do not re-derive this — it cost a pass through three separate theories.
+**What was wrong was the scope of the conclusion.** The entry read "drag cannot be automated",
+and the true statement is narrower: input injected *from within the page* cannot be. Chrome's
+DevTools protocol injects at the browser level and its events are trusted, so
+`Input.dispatchMouseEvent` drives all three. Measured 2026-08-12:
+
+- `scripts/capture-reference.mjs` drags the Dockview sash from 512 px to 187 px, which is how the
+  `narrow-pane.png` capture exists at all.
+- A ten-step drag across Viewport 3D's canvas orbits the camera. Two screenshots either side of
+  it show the room from a different angle and the axis gizmo rotated to match, with both elapsed
+  clocks unchanged at 774.0 ms — so the difference is the camera, not a readout ticking.
+
+**Consequence for the design review.** Acceptance item 5 (orbit) no longer needs the human-gateway
+protocol, but it does need a script: the browser pane still cannot do it, and nothing has changed
+about why. Grading it automatically means driving Chrome over CDP the way the capture script does.
+That is TASK.md's job and is not wired in yet.
 
 ### Inference settings, and why each one
 
@@ -1359,20 +1529,37 @@ It held 113.6 MiB at teardown, about 1.1 cents a month, and empties itself in th
 
 Full tables, tape-measure truths and the error analysis live in `MEASUREMENTS.md`. The summary:
 
-**On the primary clip, at 504 px and 112 frames**, the pipeline measures a 2.10 m door, a 0.75 m
-table and a 0.45 m computer tower with a raw average error of about 0.037 m across the two
-holdout objects. Fitting a line through predicted-against-true separates a scale error of about
-3% from the remaining scatter of about 0.008 m.
+**Ten targets from 0.30 m to 2.10 m have been graded against tape, across four reconstructions of
+three clips.** All at 504 px and 112 frames. Eight were painted by brush; two came from the
+automatic mask and are single trials.
+
+**All ten are `vertical_extent`** — an object's own bottom against its own top. Not one graded
+result is `top_above_floor`. The fitted plane supplies the direction the extent is measured along
+and nothing else: its position appears in both endpoints and cancels. This is why two plants
+standing on raised beds measured correctly, and it means the ground fit is graded here only as a
+*direction*, never as a datum.
+
+**Accuracy is a property of the clip.** Brushed targets on the two clips captured after 2026-08-11
+land within 2% (+0.2%, +0.3%, −0.3%, +1.3%, +1.9%); the three on the door clip are 3.9–7.0% low.
+Same code, different capture. The mechanism is unidentified, so the practical rule stands: grade
+each clip against a reference visible in its own reconstruction.
 
 **Repeatability within one sitting is excellent and was a surprise.** The same person repainting
-the same endpoints reproduces them to **1 to 6 mm** — 15 to 90 times smaller than the error
-against the tape measure. The study was designed on the assumption that operator placement was
-the missing noise term. It is not; what remains is systematic bias, which is correctable.
+the same endpoints reproduces them to **0.9 to 15.5 mm** — on the door clip, 15 to 90 times smaller
+than the error against the tape measure. The study was designed on the assumption that operator
+placement was the missing noise term. It is not.
 
 **Between sittings is a different and larger number.** Two objects moved 23 and 24 times their
 within-sitting spread when compared against masks painted in an earlier session. The cause was
 identified — one mask's lower edge never reached the bottom of the door — so it is one mistake
-rather than scatter. It still shows that back-to-back repeats cannot measure this.
+rather than scatter. It still shows that back-to-back repeats cannot measure this. The one partial
+counter-example: the `RoomNewFixture` monitor was recorded two days after the other targets in its
+run and produced that clip's smallest spread, 3.1 mm.
+
+**The operator's bias is not ruled out.** The person painting can see the reading update and knows
+most truths. The mask-free control on the door clip shows the brush was not where that clip's error
+lived, and the two rigid-object targets have little freedom to be painted wrongly, but the clean
+test — a mask painted by someone blind to the truth — has not been done on the new clips.
 
 **The dangerous case is a wrong answer that looks healthy.** The 1.887 m door came with a
 plausible spread, a supported floor and a good fit error. No reported statistic distinguished it
@@ -1405,6 +1592,12 @@ cloud run followed by `scripts/save-run.sh`:
 | Door clip reconstructions at three settings | `fixtures/door/` | 342 MB + 11 MB of frames |
 | Room clip reconstructions at three settings | `fixtures/room/` | 346 MB |
 | Saved cloud runs | `~/verge-runs/` | varies |
+| Recorded trials, with their masks | `~/verge-runs/<id>/measurements/` | ~7 KB each |
+| The replayed study: 26 trials, 78 images, manifest and table | `.inspect/evidence/` | rebuilt in 54 s |
+
+`.inspect/evidence/` is never committed and never needs to be: `node scripts/collect-evidence.mjs`
+rebuilds all of it from the trial packets, which are small enough to survive anywhere the runs do.
+The packets are the evidence; the images are a view of them.
 
 The door fixture is the primary one: same room as the room fixture, but it contains the door,
 which at 2.10 m is the long reference the calibration needs. Scale does not transfer between
@@ -1489,6 +1682,78 @@ override order and bucket variable. The complete verifier passed **41 test files
 then every FastAPI server-contract check. The production build also passed; its existing warning
 is the 1.41 MB main JavaScript chunk, 395.44 kB after gzip.
 
+### The local API guard accepts every loopback spelling, not one — fixed 2026-08-13
+
+**Deploy returned 403 for anyone who opened the app at `http://localhost:5173`.** The guard added
+with the privileged local routes compared the request's `Origin` against a single configured
+string, `http://127.0.0.1:5173`. `localhost` and `127.0.0.1` are the same machine, but they are
+different origins, and a browser sends whichever spelling the address bar holds — so the app
+served to one name could not call its own privileged routes under the other. The README tells the
+reader to open `127.0.0.1`, which is why this survived the porting review: every path anyone
+walked deliberately used the spelling that worked.
+
+The check now asks whether the origin is a loopback host — `localhost`, `127.0.0.1` or `::1` — on
+the dev server's own port, rather than whether it equals one string. That is not a weaker test.
+A remote page's origin carries that page's own hostname however its DNS resolves, so it still
+fails the loopback half; a second dev server on another port still fails the port half. The
+nonce requirement is untouched, and it is the part that actually stops a cross-origin caller,
+since a foreign page cannot read the injected meta tag.
+
+Evidence: `app/vite-plugins/local-api.mjs`, `isLocalOrigin`. Reproduced in the browser pane on
+2026-08-13 — one privileged POST from `http://localhost:5173` returned 403 `local API requires the
+configured loopback origin` while the identical request from `http://127.0.0.1:5173` returned 200,
+same page and same nonce. After the fix the `localhost` request returned 200. Four new tests in
+`app/src/lib/cloud-control.test.ts` pin the two accepted spellings and hold the two rejections,
+including a hostname that resolves to loopback. The complete verifier passed **42 test files and
+571 tests**, then every FastAPI server-contract check.
+
+The whole path was then confirmed by a human click: guard passed, the job started, the log
+streamed, and `deploy.sh` ran to `gcloud run deploy`. It failed there for two unrelated reasons,
+both recorded below.
+
+### The port moved the runtime identity without creating it — fixed 2026-08-13
+
+**Deploy reached Cloud Run and was refused: `Permission 'iam.serviceaccounts.actAs' denied on
+service account verge-runtime@verge-lab.iam.gserviceaccount.com (or it may not exist)`.** It did
+not exist. `gcloud iam service-accounts list` returned only the default compute account.
+
+`c1614b0` gave the service a dedicated runtime identity. Before it, `create-bucket.sh` read
+`RUNTIME_SA="${RUNTIME_SA:-${PROJECT_NUMBER}-compute@developer.gserviceaccount.com}"` under a
+comment saying deploy passed no `--service-account`, so `RUNTIME_SA` named an account that already
+existed and Cloud Run used the default identity. The same commit repointed it at `verge-runtime@`
+**and** added `--service-account="${RUNTIME_SA}"` to `deploy.sh`. Creating that account happens
+only in `create-bucket.sh`, which an existing clone has no reason to re-run — its bucket is
+already there and the script reads as a bucket step. Nothing in `deploy.sh` checks the identity it
+is about to ask for, so the first symptom is GCP's `actAs` error, whose `(or it may not exist)`
+branch is the one that applied.
+
+Resolved by creating the account rather than reverting: the default compute identity typically
+carries project Editor, which is far more than this service needs. `create-bucket.sh` grants it
+`objectCreator` + `objectViewer` scoped to the bucket, and Token Creator on itself for signed URLs.
+
+### The bucket ownership check refused every bucket that existed — fixed 2026-08-13
+
+**`create-bucket.sh` aborted with `REFUSING: gs://verge-lab-runs belongs to project number , not
+819624126369` — an empty number.** `gcloud storage buckets describe` has two schemas. Its own
+names the lifecycle rules `lifecycle_config` and carries no owning project at all; `--raw` returns
+the JSON API's, which has `projectNumber` but calls the rules `lifecycle`. The check, added by
+`c1614b0`, asked for `projectNumber` without `--raw`, so it always read empty and always refused —
+whenever the bucket already existed, which is the only case it runs in.
+
+The call now passes `--raw`, and an empty read is a loud failure rather than a comparison against
+`""`, so a future gcloud dropping the field cannot turn this into a false pass instead. The
+lifecycle verification below it deliberately stays on the non-raw schema, which is where
+`lifecycle_config` lives.
+
+Evidence: gcloud 578.0.0. `--raw` returns `projectNumber: 819624126369`, matching the project, so
+the bucket was correctly owned throughout. After both fixes `create-bucket.sh` completed and
+asserted its own lifecycle rule — `Delete at age=3 days matches prefix 'runs/transient/'`.
+
+**Deployed and verified for real.** `verge-da3` rolled out on the build-skip branch as revision
+`verge-da3-00001-pdt`, serving 100% of traffic. **No inference was run**, so the service was never
+woken and no GPU instance billed. `teardown.sh` deleted it in the same session, leaving 0 Cloud Run
+services and one image, `src-1b57fc4489fcfda7`.
+
 ### The work is published to GitHub, in two private repositories — 2026-08-11
 
 `henrikmm/verge-studio` is the standalone repository and holds all five branches. A branch also
@@ -1544,10 +1809,20 @@ These are stated, not scheduled. Anything being actively worked on is in `TASK.m
   abstains, the reconstruction has no flat surface sharp enough to measure and the reason is
   usually resolution: nothing at 252 px yields one. It measures surfaces, never objects, so it
   cannot check the door leaf, the tower or the monitor — the three graded objects it cannot reach.
-- **Accuracy does not transfer across scenes.** `da3Test` measures its 0.760 m table within 5–6 mm,
-  while the saved outdoor run measures a 1.150 m tree-like target 31–36 cm high. The brush mapping,
-  floor direction and brush width have been ruled out as the main cause; one outdoor truth cannot
-  separate local reconstruction scale/shape from target-endpoint identity.
+- **Accuracy does not transfer across scenes**, and the spread is now measured rather than
+  suspected: the same code reads 3.9–7.0% low on the door clip and within 2% on the two clips
+  captured after 2026-08-11 (section 3, 2026-08-15). The worst case on record is still the saved
+  outdoor run's 1.150 m tree-like target at 31–36 cm high. What produces the difference is
+  unidentified, so no clip's accuracy can be asserted before something in it is taped.
+- **Lawn height has never been measured.** Both targets named "grass" in the study are clumping
+  ornamental plants with reachable leaf tips, taped from the base of the clump. A mown surface has
+  no single top to tape, so it needs the definition and instrument in TASK item 4, and nothing
+  measured so far speaks to it.
+- **The automatic mask is measured by a different estimator than the brush.** `Measure Height`
+  narrows a segmentation mask to its top and bottom tenth before taking percentiles; a brush is
+  used whole. On the two automatic trials that adapter supplies 7.4 cm and 5.0 cm of answers of
+  47.5 cm and 46.4 cm. Two trials cannot separate the adapter's error from the reconstruction's,
+  so neither automatic row is a graded result.
 - **DA3's exported cloud remains a biased 7% sample of the reconstruction.** Its pooled confidence
   floor can remove whole frames. The app keeps that cloud as a named comparison, while the rebuilt
   display now uses every finite, non-edge depth candidate. Measurements deliberately use a fixed

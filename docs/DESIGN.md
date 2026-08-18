@@ -3,12 +3,51 @@
 What the interface must look like and do. The acceptance checklist at the end is what the
 design-review workflow grades against.
 
-Visual reference: Spencer Sterling's **Sentinel**, captured in `reference/`:
+## The reference is this app
 
-- `sentinel-streamdiff-brush-canvas.png` — viewport panes, properties, terminal, graph
-- `sentinel-scientific-organism.png` — many tabs per group, denser inspector, graph banner
+`reference/` holds five captures of **Verge Studio**, at 1280×800 on the door fixture, taken
+2026-08-12. They replaced two screenshots of somebody else's application, which had been the
+visual target since the project started and had outlived the job: item 10 passed against them
+seven consecutive times, and every write-up spent its space explaining which of our differences
+were deliberate. A target you have already reached grades nothing.
 
-Lineage: TouchDesigner and ComfyUI. Dense, dark, professional, everything observable.
+| Capture | What it pins |
+|---|---|
+| `empty-state.png` | first run — five panes, nothing loaded, no work started |
+| `default-standard.png` | the app doing its job — recorded run, depth map, point cloud |
+| `advanced-measured.png` | Advanced — a graded target, its uncertainty budget, floor layers |
+| `graph.png` | the pipeline — node cards, type-coloured ports and wires, the banner |
+| `narrow-pane.png` | a pane at 180 px, which is the only width clipped controls appear at |
+
+Redraw them with `node scripts/capture-reference.mjs`, which drives each state by name against a
+running dev server, so a re-capture changes the pixels and nothing else. **Replace them only when
+the change was deliberate and the user has agreed to it.** A baseline made of our own screenshots
+ratchets: each pass approves an image slightly unlike the last, and after a few rounds the
+standard is whatever the most recent session happened to capture. That is what item 10b guards.
+
+One capture is deliberately incomplete. `advanced-measured.png` shows the result strip reading
+`paint this target in Depth 2D to measure it`, because painting a mask is a drag and no honest
+one can be scripted from a guess. A wrong number baked into the baseline would teach the wrong
+thing, so the populated headline is graded live under item 22 instead.
+
+### What we inherited, and what is ours
+
+The density came from TouchDesigner, ComfyUI and Spencer Sterling's Sentinel: dark surfaces, tab
+strips under 28 px, thumbnails on node cards, red slider thumbs, mono numerals, a warm graph
+canvas distinct from the pane bodies. That part is settled and is not up for redesign.
+
+What is ours is the layer on top, and it is there because this app claims to have measured
+something. Five rules carry it, each specified in full further down. A reviewer protects these
+first, and a change that trades one of them for a tidier screen is a change to argue about rather
+than to make:
+
+1. **No hue carries status.** Sentinel says *Running* in green; we say it with a glyph on a
+   neutral brightness ramp, so state survives a greyscale screenshot. See **Colour**.
+2. **Every readout states where its number came from** — `RECORDED RUN · Door · 504 px · 112f`,
+   `cloud: local fixture`, `VRAM (interpolated)`. See **Honesty rules**.
+3. **The measurement is the headline**, in chrome reserved for it that never covers the scene.
+4. **Standard is the app doing its job**; the debugging surface is behind one switch.
+5. **Explanation lives behind a `?`**, never as a paragraph in a pane body.
 
 ## Principles
 
@@ -115,6 +154,38 @@ A row says **what is true**. What to do about it belongs behind the section's `?
 tutorial surface if one is ever built. Three such lines were removed on 2026-08-11 — two
 precondition hints and a paragraph about the mock — and the rule is here so they do not come back
 one at a time.
+
+## Recorded evidence is drawn, not just tallied
+
+A reading and the two endpoints it was taken between are one claim. The number belongs in a pane;
+the endpoints belong in the scene, over the thing they were measured on. Four rules, from
+2026-08-12:
+
+1. **A recorded trial owns its evidence.** Record freezes the ruler into the trial beside the
+   mask, and the viewport draws what was frozen. It is never recomputed from the current fit: the
+   floor sliders can move the plane after the fact, and re-deriving old endpoints would restate an
+   old measurement as a new one. Where the two disagree on screen, the disagreement is the finding.
+2. **Show evidence is Standard, and on by default** — the only layer in Viewport 3D that is
+   either. The floor layers are claims *about* the scene, so they start off and you turn one on to
+   ask a question; recorded evidence answers a question already asked and already recorded, and a
+   run whose four readings have nothing visible behind them is unreadable to anyone who did not
+   take them. This is the surface a person meeting the project first looks at, and they never
+   reach Advanced.
+3. **One ruler per object, labelled with its reading**, chosen as the trial nearest that object's
+   median — the same figure Objects reports, so the scene and the pane describe the same trial.
+   The label states how many trials it was chosen from whenever there is more than one, counting
+   only those that kept a ruler. Clicking a trial in Objects singles its ruler out at full
+   strength and dims the rest; it never hides them, because the point of the highlight is to say
+   which of the rulers on screen produced the number being read.
+4. **Free measurement and blind mode draw none of it.** Free records nothing, so there is nothing
+   to expose, and the chip says so rather than disappearing. Blind mode suppresses it on purpose —
+   a ruler standing in the room gives away the endpoint placement a repeat trial is meant to reach
+   independently — and because that leaves a lit chip over an empty scene, the pane says
+   `◐ RECORDED EVIDENCE HIDDEN — BLIND` in both modes.
+
+Evidence is a growing set, not one drawing. Rulers are the first kind; the selection rules live in
+`app/src/panes/evidence-overlay.ts` behind a tagged union so a second kind — a photograph with the
+measured span marked on it — plugs in without touching which trial speaks for an object.
 
 ## Colour
 
@@ -305,7 +376,13 @@ Design constraints, not copy guidelines.
 8. No horizontal window scroll at 1280×800; gaps between panes are 4 px or less.
 9. Fonts: interface text 12 px or smaller, numeric readouts in mono, nothing above 14 px except
    empty-state hints.
-10. Side-by-side squint test against `reference/`: comparable darkness, density and contrast.
+10. **Compared against `reference/`, in two halves that fail independently.**
+    **10a** — side by side with the capture of the *same state*, darkness, density and contrast
+    are comparable, and every visible difference is named and was intended.
+    **10b** — items 2, 15, 20, 21 and 22 are the same comparison graded from the running app,
+    with no image involved: they are the five rules under "What we inherited, and what is ours".
+    They cannot drift with the captures, so when 10a passes and any of them fails, they win and
+    the captures are the thing that is wrong.
 11. The inspector exposes every inference parameter with mixed control types, each showing its
     current value in mono at the right.
 12. Memory is visible in both the inspector and the status bar, and the bar moves during a run.

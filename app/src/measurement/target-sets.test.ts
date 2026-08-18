@@ -73,7 +73,7 @@ describe("target sets are per clip", () => {
   });
 
   it("refuses to delete a built-in target", () => {
-    removeTarget("door-leaf", BUILTIN_DOOR_CLIP);
+    removeTarget("door-leaf", { runIds: [], clip: BUILTIN_DOOR_CLIP });
     expect(measurementObjects(BUILTIN_DOOR_CLIP).some((item) => item.id === "door-leaf")).toBe(true);
   });
 
@@ -89,7 +89,7 @@ describe("target sets are per clip", () => {
       suggestedFrame: 5,
       maskInstruction: "Paint the sign.",
     });
-    removeTarget("sign", "clip-z");
+    removeTarget("sign", { runIds: [], clip: "clip-z" });
     expect(measurementObjects("clip-z")).toEqual([]);
   });
 });

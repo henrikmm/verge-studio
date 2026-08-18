@@ -102,6 +102,7 @@ export function renderCloud(options) {
     floorBand = null,
     stride = 1,
     overlays = [],
+    focus = null,
   } = options;
 
   const image = canvas(width, height);
@@ -145,6 +146,22 @@ export function renderCloud(options) {
 
   if (!Number.isFinite(minU)) throw new Error("cloud has no finite points");
 
+  // A focus window frames a square of world metres around one point instead of around the cloud.
+  // A measurement is a metre inside a twenty-metre scene, so the derived framing that makes two
+  // pictures of a cloud comparable is exactly what makes a ruler invisible. This keeps the
+  // projection identical and moves only the window, so the picture is still a measurement of the
+  // scene and not a separate camera.
+  if (focus) {
+    const { centre, radius } = focus;
+    if (!(radius > 0)) throw new Error("focus radius must be positive");
+    const cu = centre[0] * right[0] + centre[1] * right[1] + centre[2] * right[2];
+    const cv = centre[0] * screenUp[0] + centre[1] * screenUp[1] + centre[2] * screenUp[2];
+    minU = cu - radius;
+    maxU = cu + radius;
+    minV = cv - radius;
+    maxV = cv + radius;
+  }
+
   // The floor band view crops to a slice around the FITTED PLANE and stretches it vertically.
   // Centring on the cloud's own mid-height instead — which is what this did first — lands the
   // crop halfway up the walls and shows no floor at all. The plane's screen position comes from
@@ -152,7 +169,7 @@ export function renderCloud(options) {
   let vLow = minV;
   let vHigh = maxV;
   let planeV = null;
-  if (floorBand && heights) {
+  if (floorBand && heights && !focus) {
     for (let i = 0; i < count; i++) {
       if (Number.isFinite(w[i]) && Number.isFinite(heights[i])) {
         planeV = v[i] - heights[i];

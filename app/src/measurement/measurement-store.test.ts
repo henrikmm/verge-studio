@@ -30,8 +30,10 @@ import {
   recordSegmentationAttempt,
   segmentationAttemptStats,
   setActiveMeasurementObject,
+  setFocusedTrial,
   setFreeMeasurement,
   setFreeMeasurementMode,
+  setShowEvidence,
   setMaskData,
   setMeasurementFrame,
   trialIdentity,
@@ -89,7 +91,7 @@ describe("measurement store", () => {
     setActiveMeasurementObject("door-leaf");
     expect(getMask("door-leaf", 1)?.data.some(Boolean)).toBe(false);
 
-    const exported = JSON.parse(exportMeasurementSession()) as {
+    const exported = JSON.parse(exportMeasurementSession([BASE.runId])) as {
       workingMasks: Record<string, unknown>;
       observations: MeasurementObservation[];
     };
@@ -401,14 +403,14 @@ describe("measurement store", () => {
     addObservation({ ...BASE, rawM: 1.9 });
     addObservation({ ...BASE, rawM: 2.0 });
 
-    const exported = JSON.parse(exportMeasurementSession()) as {
+    const exported = JSON.parse(exportMeasurementSession([BASE.runId])) as {
       schemaVersion: string;
       definitions: Array<{ id: string; mode: string; definition: string }>;
       observations: MeasurementObservation[];
       repeatability: Array<{ objectId: string; setting: string; n: number; rangeM: number }>;
       workingMasks: Record<string, { paintedPixels: number; runs: number[] }>;
     };
-    expect(exported.schemaVersion).toBe("verge.measurement-session/0.6.0");
+    expect(exported.schemaVersion).toBe("verge.measurement-session/0.7.0");
     expect(exported.definitions.find((item) => item.id === "door-leaf")).toMatchObject({
       mode: "vertical_extent",
       definition: "physical leaf, bottom edge to top edge",
@@ -540,7 +542,7 @@ describe("measurement store", () => {
       abstained: 0,
       failed: 1,
     });
-    const exported = JSON.parse(exportMeasurementSession()) as { segmentationAttempts: unknown[] };
+    const exported = JSON.parse(exportMeasurementSession([BASE.runId])) as { segmentationAttempts: unknown[] };
     expect(exported.segmentationAttempts).toHaveLength(2);
   });
 
@@ -594,5 +596,58 @@ describe("measurement store", () => {
     const remaining = getMeasurementUi().observations;
     expect(remaining.map((item) => item.rawM)).toEqual([1.9, 1.95]);
     expect(trialStats(remaining, "door-leaf", "door-356px-256f").n).toBe(2);
+  });
+
+  it("freezes the ruler into the trial, so the endpoints survive a reload with the reading", () => {
+    const trial = addObservation({
+      ...BASE,
+      rawM: 2.02,
+      ruler: { bottom: [0, 0, 0], top: [0, 2.02, 0] },
+      rulerKind: "extent",
+    });
+
+    expect(trial.ruler?.top).toEqual([0, 2.02, 0]);
+    // What `localStorage` and the disk packet both carry is the observation itself.
+    expect(getMeasurementUi().observations[0].ruler?.top).toEqual([0, 2.02, 0]);
+    expect(getMeasurementUi().observations[0].rulerKind).toBe("extent");
+  });
+
+  it("shows recorded evidence by default and forgets a highlight when its trial goes", () => {
+    expect(getMeasurementUi().showEvidence).toBe(true);
+    expect(getMeasurementUi().focusedTrialId).toBeNull();
+
+    const trial = addObservation({ ...BASE, rawM: 2.02, ruler: { bottom: [0, 0, 0], top: [0, 2, 0] } });
+    setFocusedTrial(trialIdentity(trial));
+    expect(getMeasurementUi().focusedTrialId).toBe(trialIdentity(trial));
+
+    removeObservation(trial);
+    expect(getMeasurementUi().focusedTrialId).toBeNull();
+  });
+
+  it("drops a highlight when the context leaves the object it belonged to", () => {
+    const trial = addObservation({ ...BASE, rawM: 2.02, ruler: { bottom: [0, 0, 0], top: [0, 2, 0] } });
+
+    setFocusedTrial(trialIdentity(trial));
+    setFreeMeasurement();
+    expect(getMeasurementUi().focusedTrialId).toBeNull();
+
+    setActiveMeasurementObject("door-leaf");
+    setFocusedTrial(trialIdentity(trial));
+    setActiveMeasurementObject("table-top");
+    expect(getMeasurementUi().focusedTrialId).toBeNull();
+  });
+
+  // Where the evidence switch is is a fact about this screen, not about the evidence. It stays
+  // out of the export for the same reason it stays out of `persistSession`'s payload: a shared
+  // session file describing which chips were lit would be describing the operator, not the run.
+  it("keeps the evidence switch out of the exported session", () => {
+    setShowEvidence(false);
+    expect(getMeasurementUi().showEvidence).toBe(false);
+
+    const exported = JSON.parse(exportMeasurementSession([BASE.runId])) as Record<string, unknown>;
+    expect(exported).not.toHaveProperty("showEvidence");
+    expect(exported).not.toHaveProperty("focusedTrialId");
+
+    setShowEvidence(true);
   });
 });

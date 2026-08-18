@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { median, nmad } from "../../../geometry";
+import { median, nmad, type Vec3 } from "../../../geometry";
 import { sha256Hex } from "../graph/cache-key";
 import type { RunId } from "../lib/runs";
 
@@ -230,6 +230,20 @@ export interface MeasurementObservation {
   mask?: MaskSnapshot;
   /** First stroke after the last clear/record → Record. Absent when the mask was not painted this session. */
   paintDurationMs?: number;
+  /**
+   * The two endpoints the reading was taken between, in the cloud's world frame — the 3D
+   * evidence for `rawM`, frozen at Record beside the mask.
+   *
+   * Absent on every trial recorded before 2026-08-12, and it cannot be recovered for them.
+   * Replaying a stored mask reproduces the ruler exactly (`inspect measurement`, 0.000 mm on the
+   * door packet), but only against the plane the trial actually used, and that plane was first
+   * written to disk on 2026-08-11. Of the 60 packets in `~/verge-runs`, 9 carry a plane and all
+   * 9 already carry a ruler; the other 51 would have to be replayed against a re-fitted floor,
+   * which is a different measurement wearing this trial's number.
+   */
+  ruler?: { bottom: Vec3; top: Vec3 };
+  /** Which definition the ruler draws: floor-to-top, or the subject's own extent. */
+  rulerKind?: "floor_height" | "extent";
 }
 
 /**
@@ -275,6 +289,26 @@ export interface MeasurementUiState {
   blind: boolean;
   /** Free is the startup context. Only an explicit target click enters object evidence. */
   measurementContext: MeasurementContext;
+  /**
+   * Draw the recorded evidence for this run in the 3D viewport — today the frozen rulers of
+   * every measured object, later whatever else a recording keeps.
+   *
+   * On by default, unlike the floor layers, and for the opposite reason. A fitted floor is a
+   * claim ABOUT the scene, so you turn it on to ask a question. Recorded evidence is the answer
+   * to a question already asked and already recorded: hiding it by default means the first
+   * person to open a run sees numbers with nothing in the scene backing them.
+   *
+   * Not persisted. Its value IS the default, so there is nothing for a reload to restore.
+   */
+  showEvidence: boolean;
+  /**
+   * One recorded trial singled out, by `trialIdentity` — the row the operator clicked.
+   *
+   * Held here rather than in the Objects pane because the viewport is what draws it, and the
+   * two panes have no other way to talk. Not persisted: a highlight is about the last click,
+   * not about the session.
+   */
+  focusedTrialId: string | null;
   /** The operator may choose either existing measurement definition for an ad-hoc check. */
   freeMeasurementMode: MeasurementMode;
   activeObjectId: string;
@@ -291,13 +325,25 @@ export interface MeasurementUiState {
   segmentationAttempts: SegmentationAttempt[];
 }
 
-export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.6.0";
-const STORAGE_KEY = "verge.m3c.measurement-session/0.6.0";
+export const SESSION_SCHEMA_VERSION = "verge.measurement-session/0.7.0";
+const STORAGE_KEY = "verge.m3c.measurement-session/0.7.0";
 /**
- * Older keys, newest first. 0.5.0 keyed masks `subject:frame`, so two clips shared one; 0.4.0
- * keyed trials by a three-value fixture `setting`; 0.3.0 added sittings; 0.2.0 added repeat
- * trials and frozen masks; 0.1.0 kept one row per (object, setting, frame) and destroyed repeat
- * trials on record.
+ * Older keys, newest first — and **0.6.0 is deliberately not among them.**
+ *
+ * Every recorded trial in the project was archived on 2026-08-13 to start a clean study: 61
+ * packets moved to `~/verge-runs/.archive`, leaving nothing live on disk. A browser still holding
+ * its 0.6.0 session would undo that on the next run selection, because the sync effect in the
+ * Objects pane writes any trial disk does not have — and disk deliberately no longer has them.
+ * Migrating that key forward would therefore re-upload archived evidence into the fresh study,
+ * one browser profile at a time, with nothing on screen saying so.
+ *
+ * Dropping it loses no evidence. Trials and their target definitions are recovered from the
+ * packets on disk, which is what makes the browser's copy a cache rather than a record.
+ *
+ * The rest: 0.5.0 keyed masks `subject:frame`, so two clips shared one; 0.4.0 keyed trials by a
+ * three-value fixture `setting`; 0.3.0 added sittings; 0.2.0 added repeat trials and frozen
+ * masks; 0.1.0 kept one row per (object, setting, frame) and destroyed repeat trials on record.
+ * They are kept because a session that old predates the disk evidence that would replace it.
  */
 const LEGACY_STORAGE_KEYS = [
   "verge.m3c.measurement-session/0.5.0",
@@ -385,17 +431,132 @@ export function addTarget(target: Omit<MeasurementObject, "builtin">, clip = act
   commit();
 }
 
-export function removeTarget(id: string, clip = activeClip): void {
+/**
+ * An id for a new target, which its NAME does not determine.
+ *
+ * Ids were the slugified name, and that made a name into an identity. Two consequences, both
+ * measured on 2026-08-13: removing "PC Tower" from `RoomNewFixture` and typing the name again
+ * regenerated `pc-tower`, so three trials nobody could see re-attached to the new target and the
+ * next recording was numbered 4; and the door's built-in `pc-tower` (truth 0.45 m) shared its id
+ * with the room's (truth 0.44 m), two different physical objects under one key.
+ *
+ * The slug stays in front because it is what a person reads in an export or a file name. The four
+ * random characters after it are the identity. A re-typed name is therefore a NEW object, which is
+ * the honest reading: the trials of the deleted one were painted on a target that no longer exists.
+ */
+export function newTargetId(name: string, existing: readonly MeasurementObject[]): string {
+  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  const stem = slug || "target";
+  // Bounded, not `for(;;)`. A collision needs the same four characters out of ~1.7 million, so
+  // the retry is already the unreachable branch — but an unbounded loop whose exit depends on a
+  // generator staying random is a hang waiting for the one edit that makes it constant. It hung
+  // this file's own test suite on 2026-08-13.
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const id = `${stem}-${Math.random().toString(36).slice(2, 6)}`;
+    if (!existing.some((item) => item.id === id)) return id;
+  }
+  return `${stem}-${Date.now().toString(36)}`;
+}
+
+/**
+ * The next free short code for a clip's targets.
+ *
+ * The code is the label a person actually reads — on the ruler drawn in the 3D scene, in the
+ * Objects list, in the trial table. It was `T${existing.length + 1}`, which is a position rather
+ * than a name: on 2026-08-13 the room clip held `T2 = Monitor` and `T2 = PC Tower` at once,
+ * because removing an earlier target freed the number for the next one to take, and two rulers in
+ * one scene were both labelled T2.
+ *
+ * Taking the highest code ever issued rather than counting rows means a deletion leaves a gap in
+ * the sequence. That is the same choice `addObservation` makes about trial numbers, for the same
+ * reason: a gap is the honest record of something removed, and reusing the number quietly makes
+ * one label mean two things.
+ */
+export function nextTargetCode(existing: readonly MeasurementObject[]): string {
+  const highest = existing.reduce((best, item) => {
+    const match = /^T(\d+)$/.exec(item.code ?? "");
+    return match ? Math.max(best, Number(match[1])) : best;
+  }, 0);
+  return `T${highest + 1}`;
+}
+
+/**
+ * Take in target definitions recovered from disk evidence, without disturbing the live ones.
+ *
+ * A definition lived only in `localStorage`, while the trials recorded against it lived on disk as
+ * well. Clearing the browser's storage therefore produced a clip with recorded trials and no rows
+ * to show them in — the state that looked like lost work on `RoomNewFixture`, where 16 packets sat
+ * on disk under five target names the app could no longer name.
+ *
+ * A definition already here WINS. The disk copy was serialised when the trial was recorded, so it
+ * is the older one, and a truth corrected since must not be undone by reading an old packet.
+ */
+export function ensureTargets(clip: string, targets: readonly MeasurementObject[]): MeasurementObject[] {
+  const set = targetSets[clip] ?? (targetSets[clip] = []);
+  const added: MeasurementObject[] = [];
+  for (const target of targets) {
+    if (!target?.id || set.some((item) => item.id === target.id)) continue;
+    // Only the door set ships with the app. A recovered definition is operator-authored by
+    // construction, and marking it built-in would make it undeletable.
+    const restored = { ...target, builtin: clip === BUILTIN_DOOR_CLIP ? target.builtin : false };
+    set.push(restored);
+    added.push(restored);
+  }
+  if (added.length) commit();
+  return added;
+}
+
+/**
+ * Remove a target and every trial recorded against it, on the runs named.
+ *
+ * Removing the definition alone was the whole of this operation until 2026-08-13, and it left the
+ * trials in the store with nothing to display them: invisible, still counted by the export, and
+ * ready to re-attach to any later target that happened to slugify to the same id.
+ *
+ * `runIds` is the caller's list of runs belonging to this clip — the store does not know about
+ * runs. It is required rather than defaulted so that a caller which has not thought about scope
+ * cannot silently take another clip's trials with it, which is a live risk for the ids minted
+ * before `newTargetId`: the door and the room both hold a `pc-tower`.
+ */
+export function removeTarget(
+  id: string,
+  { runIds, clip = activeClip }: { runIds: readonly RunId[]; clip?: string },
+): MeasurementObservation[] {
   const targets = targetSets[clip];
-  if (!targets) return;
+  if (!targets) return [];
   const target = targets.find((item) => item.id === id);
-  if (!target || target.builtin) return;
+  if (!target || target.builtin) return [];
   targetSets[clip] = targets.filter((item) => item.id !== id);
+
+  const scope = new Set(runIds);
+  const removed = state.observations.filter((item) => item.objectId === id && scope.has(item.runId));
+  const dropped = new Set(removed.map(trialIdentity));
+  state.observations = state.observations.filter((item) => !dropped.has(trialIdentity(item)));
+  if (state.focusedTrialId && dropped.has(state.focusedTrialId)) state.focusedTrialId = null;
+
   if (state.activeObjectId === id) {
     state.activeObjectId = "";
     state.measurementContext = "free";
   }
   commit();
+  return removed;
+}
+
+/**
+ * Drop every trial belonging to a deleted run.
+ *
+ * A run's rows outlived the run itself: nothing removed them, no run remained to select them
+ * under, and `exportMeasurementSession` still counted them. Their disk packets are archived by the
+ * delete, so this is the session catching up with what happened on disk, not a second deletion.
+ */
+export function removeObservationsForRun(runId: RunId): MeasurementObservation[] {
+  const removed = state.observations.filter((item) => item.runId === runId);
+  if (!removed.length) return [];
+  const dropped = new Set(removed.map(trialIdentity));
+  state.observations = state.observations.filter((item) => !dropped.has(trialIdentity(item)));
+  if (state.focusedTrialId && dropped.has(state.focusedTrialId)) state.focusedTrialId = null;
+  commit();
+  return removed;
 }
 
 const first = DOOR_TARGETS[0];
@@ -587,6 +748,8 @@ const restored = restoreSession();
 const state: MeasurementUiState = {
   blind: false,
   measurementContext: "free",
+  showEvidence: true,
+  focusedTrialId: null,
   freeMeasurementMode: "vertical_extent",
   activeObjectId: first.id,
   clipKey: activeClip,
@@ -720,6 +883,26 @@ export function activeMeasurementSubject(): MeasurementObject {
 
 export function setFreeMeasurement(): void {
   state.measurementContext = "free";
+  // Free is an ad-hoc check against nothing recorded, so there is no trial to be looking at.
+  // Leaving a stale focus here would put one run's ruler over an unrelated painting session.
+  state.focusedTrialId = null;
+  commit();
+}
+
+/** Draw the run's recorded evidence, or stop drawing it. */
+export function setShowEvidence(showEvidence: boolean): void {
+  state.showEvidence = showEvidence;
+  commit();
+}
+
+/**
+ * Single out one recorded trial, by `trialIdentity`, or clear the highlight with `null`.
+ *
+ * Focusing a trial does not hide the others: the point of the highlight is to say which of the
+ * rulers on screen produced the number being read, and that is only answerable in company.
+ */
+export function setFocusedTrial(identity: string | null): void {
+  state.focusedTrialId = identity;
   commit();
 }
 
@@ -734,6 +917,8 @@ export function setActiveMeasurementObject(objectId: string): void {
   state.measurementContext = "object";
   state.activeObjectId = object.id;
   state.canonicalFrame = object.suggestedFrame;
+  // The highlight belongs to a trial of the object being left behind.
+  state.focusedTrialId = null;
   commit();
 }
 
@@ -1137,12 +1322,15 @@ export function mergeObservations(
 export function removeObservation(trial: MeasurementObservation): void {
   const identity = trialIdentity(trial);
   state.observations = state.observations.filter((item) => trialIdentity(item) !== identity);
+  // Otherwise the viewport keeps a highlight pointing at a row that no longer exists.
+  if (state.focusedTrialId === identity) state.focusedTrialId = null;
   commit();
 }
 
 export function clearObservations(): void {
   state.observations = [];
   state.segmentationAttempts = [];
+  state.focusedTrialId = null;
   paintClocks.clear();
   commit();
 }
@@ -1246,25 +1434,41 @@ export function trialStats(
   };
 }
 
-export function exportMeasurementSession(): string {
+/**
+ * The session as a file, scoped to ONE clip's runs.
+ *
+ * `clipRunIds` is required because the repeatability block used to be built from the active clip's
+ * targets crossed with every run id in the store. Where two clips held a target with the same id —
+ * `pc-tower` existed in the door set and in `RoomNewFixture` until 2026-08-13 — that emitted the
+ * door run's trials under the room's code and the room's truth. On-screen readings were never
+ * affected; they have always been keyed by object AND run. The exported file was the one place two
+ * clips could be read as one.
+ */
+export function exportMeasurementSession(clipRunIds: readonly RunId[]): string {
   const workingMasks = Object.fromEntries(
-    Object.entries(state.masks).filter(([key]) => !isFreeMaskKey(key)).map(([key, mask]) => [
-      key,
-      {
-        width: mask.width,
-        height: mask.height,
-        revision: mask.revision,
-        source: mask.source,
-        segmentation: mask.segmentation,
-        paintedPixels: mask.data.reduce((a, b) => a + b, 0),
-        runs: encodeMask(mask),
-      },
-    ]),
+    Object.entries(state.masks)
+      .filter(([key]) => !isFreeMaskKey(key) && key.startsWith(`${activeClip}/`))
+      .map(([key, mask]) => [
+        key,
+        {
+          width: mask.width,
+          height: mask.height,
+          revision: mask.revision,
+          source: mask.source,
+          segmentation: mask.segmentation,
+          paintedPixels: mask.data.reduce((a, b) => a + b, 0),
+          runs: encodeMask(mask),
+        },
+      ]),
   );
-  const runIds = [...new Set(state.observations.map((item) => item.runId))];
+  const scope = new Set(clipRunIds);
+  const runIds = [...new Set(state.observations.map((item) => item.runId))].filter((runId) =>
+    scope.has(runId),
+  );
+  const observations = state.observations.filter((item) => scope.has(item.runId));
   const repeatability = measurementObjects().flatMap((object) =>
     runIds
-      .map((runId) => ({ objectId: object.id, code: object.code, runId, ...trialStats(state.observations, object.id, runId) }))
+      .map((runId) => ({ objectId: object.id, code: object.code, runId, ...trialStats(observations, object.id, runId) }))
       .filter((row) => row.n > 0),
   );
   return JSON.stringify(
@@ -1272,12 +1476,15 @@ export function exportMeasurementSession(): string {
       schemaVersion: SESSION_SCHEMA_VERSION,
       exportedAt: new Date().toISOString(),
       exportedBySitting: SITTING_ID,
+      // The file states its own scope, so a reader never has to infer which clip it describes.
+      clipKey: activeClip,
+      runIds,
       // Which sittings the trials came from, so a reader can tell a repeatability claim from
       // three measurements taken in the same five minutes.
-      sittings: [...new Set(state.observations.map((item) => item.sittingId ?? LEGACY_SITTING_ID))],
+      sittings: [...new Set(observations.map((item) => item.sittingId ?? LEGACY_SITTING_ID))],
       definitions: measurementObjects(),
       // Every trial, each carrying the mask it was measured from. This is the evidence.
-      observations: state.observations,
+      observations,
       segmentationAttempts: state.segmentationAttempts,
       repeatability,
       // The live selection state, kept for convenience. It is NOT evidence: it moves as you edit.

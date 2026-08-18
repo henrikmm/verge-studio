@@ -26,9 +26,11 @@ import { useRuns } from "../lib/runs-store";
 import { useAdvanced } from "../lib/ui-mode";
 import {
   MEASUREMENT_EVIDENCE_SCHEMA,
+  archiveTargetEvidence,
   deleteMeasurementEvidence,
   listMeasurementEvidence,
   measurementEvidenceId,
+  recoveredObservation,
   saveMeasurementEvidence,
   type MeasurementEvidencePacket,
 } from "../measurement/evidence";
@@ -37,8 +39,11 @@ import {
   BUILTIN_DOOR_CLIP,
   MIN_TRIALS_FOR_SPREAD,
   addTarget,
+  ensureTargets,
   measurementObjects,
   measurementObjectForClip,
+  newTargetId,
+  nextTargetCode,
   removeTarget,
   setActiveClip,
   activeMeasurementObject,
@@ -53,6 +58,7 @@ import {
   sessionPersistError,
   setActiveMeasurementObject,
   setBlind,
+  setFocusedTrial,
   setFreeMeasurement,
   segmentationAttemptStats,
   trialIdentity,
@@ -304,8 +310,8 @@ function selectFree(canonicalFrame: number): void {
   void runAuto();
 }
 
-function downloadSession(): void {
-  const blob = new Blob([exportMeasurementSession()], { type: "application/json" });
+function downloadSession(clipRunIds: readonly RunId[]): void {
+  const blob = new Blob([exportMeasurementSession(clipRunIds)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -436,15 +442,11 @@ function AddTargetForm({
         <button
           disabled={name.trim() === "" || truthInvalid}
           onClick={() => {
-            const base = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-            let id = base || `target-${existing.length + 1}`;
-            // Ids key masks and trials, so a collision would merge two different objects'
-            // evidence. Suffix until unique rather than refusing the name.
-            let suffix = 2;
-            while (existing.some((item) => item.id === id)) id = `${base}-${suffix++}`;
             onAdd({
-              id,
-              code: `T${existing.length + 1}`,
+              // Deliberately not the name. See `newTargetId`: a name that decided the id made
+              // re-typing a deleted target's name resurrect its trials.
+              id: newTargetId(name, existing),
+              code: nextTargetCode(existing),
               name: name.trim(),
               definition: definition.trim() || "operator-defined target",
               truthM: parsedTruth,
@@ -495,10 +497,35 @@ export function ObjectsPane() {
   const activeRun = runs.runs.find((item) => item.id === runId);
 
   /**
-   * Read a run's recorded trials off disk when it is selected.
+   * Every run made from the SAME clip as the active one.
+   *
+   * Targets belong to a clip, trials belong to a run, and one clip can have several runs — the
+   * door's three resolutions are one target set over three runs. Anything that acts on a target
+   * as a whole (removing it, exporting it) needs that list, and must not reach past it: two clips
+   * can hold targets with the same id among the ids minted before `newTargetId`.
+   */
+  const clipRunIds = useMemo(
+    () =>
+      activeRun
+        ? runs.runs.filter((item) => item.clipSha256 === activeRun.clipSha256).map((item) => item.id)
+        : [],
+    [activeRun, runs.runs],
+  );
+  const clipTrialCount = useMemo(
+    () => ui.observations.filter((item) => clipRunIds.includes(item.runId)).length,
+    [clipRunIds, ui.observations],
+  );
+
+  /**
+   * Read a run's recorded trials off disk when it is selected, and the targets they belong to.
    *
    * The packets on disk are the copy that survives a cleared cache or a different machine, and
    * until now nothing read them: a fresh profile showed 0 trials beside 33 stored packets.
+   *
+   * Recovering the TARGETS as well is what makes that recovery visible. Each packet carries the
+   * full definition it was recorded against, and dropping it left a clip holding trials with no
+   * row to show them under — `RoomNewFixture` on 2026-08-13, 16 packets on disk and an empty
+   * target list on screen, which is what "the objects were lost" was.
    *
    * Every packet is marked synced BEFORE the merge, whether or not it turns out to be new. The
    * effect below writes any trial it has not seen, so without this, opening a run would post all
@@ -509,6 +536,7 @@ export function ObjectsPane() {
     if (loadedEvidence.current.has(activeRun.id)) return;
     loadedEvidence.current.add(activeRun.id);
     const runIdentifier = activeRun.id;
+    const clipKey = activeRun.clipSha256;
     let cancelled = false;
     void listMeasurementEvidence(runIdentifier)
       .then((packets) => {
@@ -516,12 +544,20 @@ export function ObjectsPane() {
         for (const packet of packets) {
           syncedEvidence.current.add(packet.evidenceId ?? measurementEvidenceId(packet.observation));
         }
-        const recovered = mergeObservations(packets.map((packet) => packet.observation));
+        const restored = ensureTargets(
+          clipKey,
+          packets.map((packet) => packet.target).filter((target): target is MeasurementObject => !!target),
+        );
+        const recovered = mergeObservations(packets.map(recoveredObservation));
         setEvidenceRead((read) => new Set([...read, runIdentifier]));
-        if (recovered.length) {
-          setEvidenceStatus(
-            `Recovered ${recovered.length} recorded trial${recovered.length === 1 ? "" : "s"} from disk`,
-          );
+        if (recovered.length || restored.length) {
+          const parts = [
+            recovered.length
+              ? `${recovered.length} recorded trial${recovered.length === 1 ? "" : "s"}`
+              : "",
+            restored.length ? `${restored.length} target${restored.length === 1 ? "" : "s"}` : "",
+          ].filter(Boolean);
+          setEvidenceStatus(`Recovered ${parts.join(" and ")} from disk`);
         }
       })
       .catch((reason) => {
@@ -699,6 +735,11 @@ export function ObjectsPane() {
       floorTiltDeg: ground.fit.tiltDeg,
       floorBelowFraction: ground.fit.belowFraction,
       gravityCoherence: ground.gravity.coherence,
+      // The 3D evidence for the number, frozen beside the mask. It travels inside the
+      // observation rather than only in the packet's `live` block so the recovery path — which
+      // merges observations and drops everything else — brings the ruler back off disk too.
+      ruler: measurement.ruler,
+      rulerKind: measurement.rulerKind,
     });
     const evidenceId = measurementEvidenceId(observation);
     // Mark it before the first await. addObservation schedules the migration effect, and without
@@ -754,6 +795,50 @@ export function ObjectsPane() {
   };
 
   /**
+   * Remove a target, and with it every trial recorded against it on this CLIP's runs.
+   *
+   * Both halves matter. Removing the definition alone left the trials in the store, invisible and
+   * still counted, and a later target that slugified to the same id adopted them. Removing them
+   * without archiving would destroy a recording nobody can repaint. So: say how many are going,
+   * archive them on disk, then drop the rows.
+   *
+   * A clip's targets span all of its runs — the same room reconstructed at two resolutions is two
+   * runs and one target set — so this reaches every run of the clip, and nothing outside it.
+   */
+  const dropTarget = async (target: MeasurementObject) => {
+    // The button is not rendered for a built-in, and `removeTarget` refuses one anyway — but the
+    // archiving below runs first, so without this a built-in would have its evidence put away and
+    // then keep its row, which is the one outcome neither branch intends.
+    if (target.builtin) return;
+    const scope = clipRunIds;
+    const doomed = ui.observations.filter(
+      (item) => item.objectId === target.id && scope.includes(item.runId),
+    );
+    const confirmation = doomed.length
+      ? `Remove ${target.name} and its ${doomed.length} recorded trial${doomed.length === 1 ? "" : "s"}?\n\nThe trials are archived to ~/verge-runs/.archive and stop counting here. Re-adding this name later creates a NEW target — they will not come back.`
+      : `Remove ${target.name}?\n\nIt has no recorded trials.`;
+    if (!window.confirm(confirmation)) return;
+
+    let archived = 0;
+    try {
+      for (const run of scope) archived += await archiveTargetEvidence(run, target.id);
+    } catch (reason) {
+      // Stop before touching the store. Dropping the rows while their packets are still on disk
+      // would make the next selection of this run recover them, which looks exactly like the
+      // resurrection bug this whole change removes.
+      setEvidenceStatus(`Could not archive this target's evidence: ${reason instanceof Error ? reason.message : String(reason)}`);
+      return;
+    }
+    const removed = removeTarget(target.id, { runIds: scope, clip: ui.clipKey });
+    for (const trial of removed) syncedEvidence.current.delete(measurementEvidenceId(trial));
+    setEvidenceStatus(
+      archived || removed.length
+        ? `Removed ${target.name}; archived ${archived} trial${archived === 1 ? "" : "s"}`
+        : `Removed ${target.name}`,
+    );
+  };
+
+  /**
    * Local rebuild only — it does NOT rerun DA3, reload the video or bill anything.
    *
    * The old label said "Recompute from source", which read as if it went back to the GPU. It
@@ -778,7 +863,10 @@ export function ObjectsPane() {
           {ui.blind ? "BLIND" : ui.measurementContext === "free" ? "Free" : "Evidence"}
         </span>
         <span>
-          {targets.length} target{targets.length === 1 ? "" : "s"} · {ui.observations.length} trials
+          {/* Both halves count the same clip. The trial half was `ui.observations.length`, the
+              whole store — so this read "5 targets · 33 trials · RoomNewFixture.mp4" while 16 of
+              those trials were the room's and 17 were the door's. */}
+          {targets.length} target{targets.length === 1 ? "" : "s"} · {clipTrialCount} trials
         </span>
         <span className="hint">{activeRun?.clipName || "no clip"}</span>
         <PaneShare />
@@ -893,8 +981,8 @@ export function ObjectsPane() {
             {!object.builtin && (
               <button
                 className="trial-drop"
-                title="Remove this target. Trials already recorded against it stay in the store."
-                onClick={() => removeTarget(object.id)}
+                title="Remove this target and archive every trial recorded against it."
+                onClick={() => void dropTarget(object)}
               >
                 ×
               </button>
@@ -1104,6 +1192,36 @@ export function ObjectsPane() {
                         {repeatedMasks.has(trialIdentity(trial)) ? "same mask as an earlier trial" : "no mask evidence"}
                       </span>
                     )}
+                    {/*
+                      Light up this trial's ruler in the 3D scene. A reading in this list and the
+                      two endpoints it was taken between are the same evidence; until now only the
+                      number was reachable, and the ruler existed on disk with no way to see it.
+                    */}
+                    {trial.ruler ? (
+                      <button
+                        className="trial-ruler"
+                        aria-pressed={ui.focusedTrialId === trialIdentity(trial)}
+                        title={
+                          ui.focusedTrialId === trialIdentity(trial)
+                            ? "Stop singling out this trial's ruler in Viewport 3D"
+                            : "Show the two endpoints this reading was taken between, in Viewport 3D"
+                        }
+                        onClick={() =>
+                          setFocusedTrial(
+                            ui.focusedTrialId === trialIdentity(trial) ? null : trialIdentity(trial),
+                          )
+                        }
+                      >
+                        ruler
+                      </button>
+                    ) : (
+                      <span
+                        className="mono"
+                        title="Recorded before trials kept their ruler. It cannot be recovered: replaying the mask needs the floor this trial was measured against, and that was not stored either."
+                      >
+                        —
+                      </span>
+                    )}
                     <span className="mono">{formatDuration(trial.paintDurationMs ?? NaN)}</span>
                     <button className="trial-drop" title="Discard this trial" onClick={() => void discardTrial(trial)}>×</button>
                     {shownBrush === trialIdentity(trial) && trial.mask && (
@@ -1253,7 +1371,7 @@ export function ObjectsPane() {
               Fitted over {errorModelPoints.length} object{errorModelPoints.length === 1 ? "" : "s"} from{" "}
               {currentRunObservations.length} trial{currentRunObservations.length === 1 ? "" : "s"}.
             </small>
-            <div className="evidence-actions"><button onClick={downloadSession}>Export evidence JSON</button></div>
+            <div className="evidence-actions"><button onClick={() => downloadSession(clipRunIds)}>Export evidence JSON</button></div>
           </section>
         )}
       </div>

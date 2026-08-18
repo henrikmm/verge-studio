@@ -3,7 +3,14 @@ import type { GroundPlaneValue, MeasurementValue, SelectionValue } from "../grap
 import type { MeasurementObject, MeasurementObservation } from "./measurement-store";
 import { localApiHeaders } from "../lib/local-api";
 
-export const MEASUREMENT_EVIDENCE_SCHEMA = "verge.measurement-evidence/0.2.0";
+/**
+ * 0.3.0 froze the ruler into `observation` itself. It was already written under `live.measurement`
+ * by an explicit Record, but the recovery path merges observations and drops everything else, so
+ * the endpoints came back off disk nowhere. Readers are tolerant in both directions: nothing
+ * validates this string, older packets simply have no ruler, and `inspect` prefers whichever copy
+ * a packet carries.
+ */
+export const MEASUREMENT_EVIDENCE_SCHEMA = "verge.measurement-evidence/0.3.0";
 
 /** Stable across reloads and unique across browser sittings, unlike the human trial number. */
 export function measurementEvidenceId(observation: MeasurementObservation): string {
@@ -42,6 +49,22 @@ export interface MeasurementEvidencePacket {
   };
 }
 
+/**
+ * The trial inside a packet, with its ruler wherever that packet happens to keep it.
+ *
+ * Schema 0.3.0 freezes the endpoints into the observation, which is the part the recovery path
+ * merges. Packets written under 0.2.0 have the same endpoints one level out, under
+ * `live.measurement` — frozen at the same instant by the same Record, and merely stored somewhere
+ * nothing looked. Lifting them is not a re-derivation: no geometry runs here, and a packet with
+ * neither copy stays without one, because recomputing a ruler needs the floor of the session that
+ * recorded it. Of the 60 packets in `~/verge-runs` on 2026-08-12, this recovers 9.
+ */
+export function recoveredObservation(packet: MeasurementEvidencePacket): MeasurementObservation {
+  const stored = packet.live?.measurement;
+  if (packet.observation.ruler || !stored?.ruler) return packet.observation;
+  return { ...packet.observation, ruler: stored.ruler, rulerKind: stored.rulerKind };
+}
+
 async function expectOk(response: Response): Promise<unknown> {
   if (!response.ok) {
     const detail = await response.text().catch(() => response.statusText);
@@ -67,6 +90,10 @@ export async function listMeasurementEvidence(runId: string): Promise<Measuremen
   return result.measurements;
 }
 
+/**
+ * Discard one trial. It is moved to the archive rather than erased — see `archiveMeasurementEvidence`
+ * in `vite-plugins/runs.mjs` for why. Either way it stops being visible to the app.
+ */
 export async function deleteMeasurementEvidence(runId: string, evidenceId: string): Promise<void> {
   await expectOk(
     await fetch(
@@ -74,4 +101,20 @@ export async function deleteMeasurementEvidence(runId: string, evidenceId: strin
       { method: "DELETE", headers: localApiHeaders() },
     ),
   );
+}
+
+/**
+ * Archive everything recorded against one target on one run.
+ *
+ * The server filters by object id rather than taking a list from here, so it also reaches packets
+ * this session never merged. Returns how many trials were archived.
+ */
+export async function archiveTargetEvidence(runId: string, objectId: string): Promise<number> {
+  const result = (await expectOk(
+    await fetch(
+      `/api/runs/${encodeURIComponent(runId)}/measurements?objectId=${encodeURIComponent(objectId)}`,
+      { method: "DELETE", headers: localApiHeaders() },
+    ),
+  )) as { archived: string[] };
+  return result.archived.length;
 }

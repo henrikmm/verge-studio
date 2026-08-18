@@ -34,6 +34,7 @@ export {
   nmad,
   percentile,
   percentileOfSorted,
+  selectEndpointEvidence,
   voxelConnectivity,
 } from "../../geometry/measure";
 export {

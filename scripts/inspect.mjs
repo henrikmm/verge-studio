@@ -88,6 +88,8 @@ OPTIONS
   --columns <n> --max <n>    contact sheet shape (default 8 columns, 48 frames)
   --confidence               shade the depth image by DA3's confidence
   --mask-erode <px>         measurement replay: shrink the saved brush before back-projection
+  --focus [m]                measurement replay: also draw the cloud framed on the ruler, with
+                             this margin around it in metres (default 0.75)
   --voxel <m>                coverage: how close a cloud point must be to count (default 0.08)
   --cloud <glb|npz>          which cloud to work on. npz rebuilds it from the depth maps,
                              taking the confidence floor PER FRAME the way DA3 takes it once
@@ -877,12 +879,15 @@ async function cmdMeasurements(positional, flags) {
       error,
       mask: observation.mask?.digest ?? null,
       pixels: observation.mask?.paintedPixels ?? 0,
+      // Whether the trial kept the endpoints its reading was taken between. Trials recorded
+      // before 2026-08-12 did not, and it cannot be recovered — see `MeasurementObservation`.
+      ruler: Boolean(observation.ruler ?? packet.live?.measurement?.ruler),
     };
   });
   if (flags.json) return json({ run: run.id, measurements: rows });
   if (!rows.length) return out(`no recorded measurements for ${run.id}`);
   out(table(
-    ["TRIAL", "TARGET", "FRAME", "VALUE", "TRUTH", "ERROR", "MASK", "PIXELS"],
+    ["TRIAL", "TARGET", "FRAME", "VALUE", "TRUTH", "ERROR", "MASK", "PIXELS", "RULER"],
     rows.map((row) => [
       row.id,
       row.target,
@@ -892,6 +897,7 @@ async function cmdMeasurements(positional, flags) {
       row.error === null ? "ungraded" : `${row.error >= 0 ? "+" : ""}${row.error.toFixed(3)}m`,
       row.mask?.slice(0, 8) ?? "missing",
       row.pixels.toLocaleString("en-GB"),
+      row.ruler ? "kept" : "—",
     ]),
   ));
 }
@@ -973,10 +979,27 @@ async function cmdMeasurement(positional, flags) {
   const replayPlane = packet.live?.ground?.plane ?? s.floor.plane;
   const replayPlaneRmse = packet.live?.ground?.rmseM ?? s.floor.rmse;
   const mode = packet.live?.measurement?.mode ?? packet.target?.mode ?? "vertical_extent";
+  // The app measures an AUTOMATIC mask differently from a painted one, and the replay has to know
+  // that or it silently grades a different instrument. A segmentation mask covers the whole object
+  // densely, so 2nd/98th percentiles over all of it sit well inside the real ends; `Measure Height`
+  // therefore keeps only the top and bottom tenth by height and takes the percentiles within those
+  // (`app/src/graph/nodes/measurement.ts`, guarded by `selection.segmentation`). A brush is already
+  // sparse endpoint evidence and gets no such treatment. Measured on the two automatic trials on
+  // this disk, the difference is 5.0 cm and 7.4 cm — big enough to change every conclusion drawn
+  // from them, and invisible until the replay reproduced the wrong one.
+  const automatic = mode === "vertical_extent" && Boolean(observation.mask?.segmentation);
+  const measurementPoints = automatic
+    ? s.T.selectEndpointEvidence(points, replayPlane, { tailFraction: 0.1, minPointsPerEnd: 40 }).points
+    : points;
   const replay = mode === "top_above_floor"
     ? s.T.measureHeight(points, replayPlane, { percentile: 98, minPoints: 80, planeRmse: replayPlaneRmse })
-    : s.T.measureVerticalExtent(points, replayPlane, { lowerPercentile: 2, upperPercentile: 98, minPoints: 80 });
+    : s.T.measureVerticalExtent(measurementPoints, replayPlane, { lowerPercentile: 2, upperPercentile: 98, minPoints: 80 });
   const replayValue = replay.height;
+  // What the same mask reads with no endpoint adapter. On an automatic trial this is the honest
+  // "before" number, and the gap between the two is how much of the reading the adapter supplied.
+  const fullMaskControl = automatic
+    ? s.T.measureVerticalExtent(points, replayPlane, { lowerPercentile: 2, upperPercentile: 98, minPoints: 80 }).height
+    : null;
   const gravityControl = mode === "vertical_extent" && s.gravity
     ? s.T.measureVerticalExtent(points, { normal: s.gravity.up, offset: 0 }, {
         lowerPercentile: 2,
@@ -986,7 +1009,7 @@ async function cmdMeasurement(positional, flags) {
     : null;
   const bottomHeight = mode === "top_above_floor" ? 0 : replay.bottom;
   const topHeight = mode === "top_above_floor" ? replay.height : replay.top;
-  const endpoints = s.T.endpointGeometry(points, replayPlane, bottomHeight, topHeight);
+  const endpoints = s.T.endpointGeometry(measurementPoints, replayPlane, bottomHeight, topHeight);
   const selectedHeights = s.T.heightsAbovePlane(points, replayPlane);
   const bottomDepths = [];
   const topDepths = [];
@@ -1078,7 +1101,10 @@ async function cmdMeasurement(positional, flags) {
   const selection = new Uint8Array(combined.length / 3);
   selection.fill(1, s.cloud.points.length / 3);
   const basis = viewBasis(flags.view ?? "iso", s.up.up, s.T.basisFromUp, s.T.normalize, s.T.cross);
-  const replayRuler = packet.live?.measurement?.ruler ?? endpoints.ruler;
+  // The trial's own frozen ruler first (schema 0.3.0), then the packet's `live` copy (0.2.0),
+  // then the one just replayed. The first two are what the operator actually saw; the third was
+  // measured against whatever floor this replay fitted, which is not necessarily that one.
+  const replayRuler = observation.ruler ?? packet.live?.measurement?.ruler ?? endpoints.ruler;
   const overlays = [{ from: replayRuler.bottom, to: replayRuler.top, rgb: [232, 169, 91] }];
   const { image } = renderCloud({
     points: combined,
@@ -1094,6 +1120,55 @@ async function cmdMeasurement(positional, flags) {
   });
   const cloudPath = await writePng(image, outPath(flags, run, `measurement-${observation.trialIndex}-3d`));
 
+  // The wide picture proves the selection sits in the right part of the scene; it cannot show
+  // whether the ruler's ends sit on the object, because a 0.3 m light in a 20 m garden is eight
+  // pixels tall. `--focus` reframes the same projection around the ruler's midpoint so the
+  // endpoints are legible. Both are written: the first is context, the second is the evidence.
+  let focusPath = null;
+  if (flags.focus !== undefined) {
+    const rulerLength = Math.hypot(
+      replayRuler.top[0] - replayRuler.bottom[0],
+      replayRuler.top[1] - replayRuler.bottom[1],
+      replayRuler.top[2] - replayRuler.bottom[2],
+    );
+    const margin = flags.focus === true ? 0.75 : Number(flags.focus);
+    if (!Number.isFinite(margin) || margin <= 0) {
+      throw new Error(`--focus takes a margin in metres, got "${flags.focus}"`);
+    }
+    const centre = [0, 1, 2].map((axis) => (replayRuler.bottom[axis] + replayRuler.top[axis]) / 2);
+    // Elevation rather than the wide picture's three-quarter, because the question this image
+    // answers is where the two ends sit vertically — and an elevation also earns the fitted
+    // plane's own line across the scene, which is the datum the number is measured from.
+    const focusBasis = viewBasis("front", s.up.up, s.T.basisFromUp, s.T.normalize, s.T.cross);
+    let combinedColors = null;
+    if (s.cloud.colors) {
+      combinedColors = new Uint8Array(combined.length / 3 * 4);
+      combinedColors.set(s.cloud.colors.subarray(0, s.cloud.points.length / 3 * 4));
+    }
+    let combinedHeights = null;
+    if (s.heights) {
+      combinedHeights = new Float64Array(combined.length / 3);
+      combinedHeights.set(s.heights.subarray(0, s.cloud.points.length / 3));
+      combinedHeights.set(s.T.heightsAbovePlane(points, replayPlane), s.cloud.points.length / 3);
+    }
+    const { image: focused } = renderCloud({
+      points: combined,
+      colors: combinedColors,
+      heights: combinedHeights,
+      selection,
+      view: focusBasis,
+      colour: combinedColors ? "rgb" : "flat",
+      width: Number(flags.size ?? 900),
+      height: Number(flags.size ?? 900),
+      turbo: s.T.turbo,
+      overlays,
+      focus: { centre, radius: rulerLength / 2 + margin },
+      title: `${run.id}  ${observation.id}  RULER, FRAMED`,
+      subtitle: `${points.length / 3} POINTS  REPLAY ${replayValue.toFixed(3)} M  STORED ${observation.rawM.toFixed(3)} M`,
+    });
+    focusPath = await writePng(focused, outPath(flags, run, `measurement-${observation.trialIndex}-3d-focus`));
+  }
+
   const facts = {
     run: run.id,
     trial: observation.id,
@@ -1102,6 +1177,11 @@ async function cmdMeasurement(positional, flags) {
     stored: `${observation.rawM.toFixed(6)} m`,
     replay: `${replayValue.toFixed(6)} m`,
     difference: `${((replayValue - observation.rawM) * 1000).toFixed(3)} mm`,
+    ...(fullMaskControl === null
+      ? {}
+      : {
+          "endpoint adapter": `automatic mask · full-mask control ${fullMaskControl.toFixed(3)} m · adapter supplies ${((replayValue - fullMaskControl) * 100).toFixed(1)} cm`,
+        }),
     ...(gravityControl === null
       ? {}
       : { "gravity control": `${gravityControl.toFixed(3)} m · ${(gravityControl - replayValue >= 0 ? "+" : "")}${((gravityControl - replayValue) * 100).toFixed(1)} cm vs floor normal` }),
@@ -1117,6 +1197,7 @@ async function cmdMeasurement(positional, flags) {
     "camera depth": `bottom ${bottomDepth.toFixed(3)} m (p10-p90 ${bottomDepthSpread.toFixed(3)}) · top ${topDepth.toFixed(3)} m (p10-p90 ${topDepthSpread.toFixed(3)}) · delta ${(topDepth - bottomDepth).toFixed(3)} m`,
     photograph: maskPath ?? "source frame unavailable",
     cloud: cloudPath,
+    ...(focusPath ? { "cloud, framed": focusPath } : {}),
   };
   if (flags.json) return json({
     ...facts,
@@ -1141,6 +1222,9 @@ async function cmdMeasurement(positional, flags) {
       bottomRulerOffsetM: bottomRulerOffset,
       topRulerOffsetM: topRulerOffset,
       gravityControlM: gravityControl,
+      automaticMask: automatic,
+      fullMaskControlM: fullMaskControl,
+      endpointAdapterDeltaM: fullMaskControl === null ? null : replayValue - fullMaskControl,
     },
   });
   out(pairs(facts));

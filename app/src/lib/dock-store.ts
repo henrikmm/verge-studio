@@ -59,9 +59,10 @@ function positionFor(anchor: PaneAnchor | undefined): AddPanelPositionOptions | 
 }
 
 /**
- * Inspector and Objects share one group on purpose — they are companion panels, and the
- * Sentinel reference groups many tabs per view. Note the consequence: `maximize()` is
- * group-level, so focusing either one focuses the pair with that tab active.
+ * Inspector and Objects share one group on purpose: they are companion panels, and stacking
+ * tabs rather than splitting the column is what keeps a 256 px side column readable at all.
+ * Note the consequence — `maximize()` is group-level, so focusing either one focuses the pair
+ * with that tab active.
  */
 export const PANES: readonly PaneDef[] = [
   { id: "depth", component: "depth-2d", title: "Depth 2D", anchors: [{}] },

@@ -3,180 +3,197 @@
 The only numbers in this project that do not come from a model are the tape measurements below.
 Everything else is graded against them; without them there is nothing to be right or wrong about.
 
-Tape measurements taken by the user, 2026-08-01. **Never overwrite them with predicted values.**
+Tape measurements taken by the user. **Never overwrite them with predicted values.**
 
 ⚠️ **Scale does not transfer between clips.** Metric scale from this family of models drifts with
 the scene, the depth range and the camera, so a correction factor derived from one clip is
 meaningless in another. Each clip is graded on its own, against references visible in its own
-reconstruction.
+reconstruction. The results below are the direct evidence for that rule: the same pipeline reads
+3.9–7.0% low on one clip and within 2% on two others.
+
+**Every graded result here is an object's own vertical extent** — its own bottom against its own
+top — and not its height above the fitted ground. All 26 trials are `mode: vertical_extent` with
+`rulerKind: extent`; none uses `top_above_floor`. The ground plane still matters, because it
+supplies the *direction* the extent is measured along, but the floor's own position cancels out of
+a difference between two heights above it. That is why both plants on raised beds measured
+correctly: the bed's height is in both endpoints and therefore in neither result.
+
+**Every number in this file is replayed, not transcribed.** `scripts/collect-evidence.mjs`
+back-projects each recorded mask again, refits nothing, and measures a second time; a row is
+published only if the replay reproduces the stored reading. As of 2026-08-15 all 26 trials
+reproduce to within 0.0002 mm, and every selected point lands back inside its own mask pixel
+(0 round-trip misses). Rebuild the whole study, images included, in about a minute:
+
+```bash
+node scripts/collect-evidence.mjs
+```
 
 ---
 
-## Clip B — `test-demo-door.mp4`, the primary clip
+## The clips, and what was taped in each
 
-35.57 s · 1067 frames · HEVC · **portrait** (stored as 1920×1080 with a rotation flag, displays as
-1080×1920) · 55.6 MB. Covered by `.gitignore`; never commit it.
+### `RoomNewFixture.mp4` — indoor, the current primary clip
 
-| # | Object | What is measured | Truth | Notes |
-|---|---|---|---|---|
-| B1 | Door leaf | bottom edge to top edge | **2.10 m** | The long reference. An extent, not a height above the floor. |
-| B2 | Table | floor to tabletop | **0.750 m** | Confirmed as a height by the user, 2026-08-01. |
-| B3 | Computer tower | its own height, from where it rests | **0.45 m** | Stands on the tabletop, so it is measured as an extent. |
-| B4 | Curved monitor | stand contact to top of screen | **0.534 m** | Not gradable in this clip — the laptop hides the stand's contact point. |
-| B5 | Monitor top above floor | floor to top of screen | **1.284 m** | *Derived* from B2 + B4. A composition check, not an independent measurement. |
-
-**Why a set rather than one reference.** Four measurements spanning 0.45 m to 2.10 m — a factor of
-4.7 — can define a calibration line rather than a single correction. Fitting
-`predicted = a × truth + b` separates the two error types that matter: `a` away from 1 is a scale
-bias, `b` away from 0 is an offset such as a ground plane sitting too low, and the leftover
-scatter is the noise floor. Both biases are correctable; the scatter is not. That decomposition is
-more useful than any single accuracy figure.
-
-## Clip A — `test_demo.mp4`
-
-26.61 s · 1579 frames · 3840×2160 HEVC, landscape · 172 MB. Same room, but it has no door, so its
-longest reference is 0.750 m and its calibration baseline is correspondingly weak. It has been
-superseded by clip B for grading and is kept only because three reconstructions at different
-resolutions already exist for it.
+Run `20260811-161356-d387ec` · 112 frames at 2.62 fps over 42.7 s · 280×504 px · 38.9 s GPU.
 
 | # | Object | What is measured | Truth |
 |---|---|---|---|
-| A1 | Table | floor to tabletop | **0.750 m** — same table as B2 |
-| A2 | Curved monitor | including stand | **0.534 m** — same monitor as B4 |
-| A3 | Monitor top above floor | floor to top | **1.284 m** — *derived* from A1 + A2 |
+| T1 | PC tower | its own height, from where it rests | **0.440 m** |
+| T2 | Table | floor to tabletop | **0.730 m** |
+| T3 | Monitor | stand contact to top of screen | **0.430 m** |
 
-No objects on clip A have been graded. Its reconstructions exist to compare resolutions offline.
+### `Test_Grass2.mp4` — outdoor, garden bed against a wall
 
----
+Run `20260814-174814-b245bc` · 94 frames at 5 fps over 18.8 s · 280×504 px · 31.5 s GPU.
 
-## Current results — clip B at 504 px, 112 frames
+| # | Object | What is measured | Truth |
+|---|---|---|---|
+| T1 | Grass-Exe1 | a clumping ornamental plant, base of the clump to leaf tips | **0.980 m** |
+| T2 | Garden light | its own height, from the stone it stands on | **0.300 m** |
 
-Collected 2026-08-04 under the trial protocol below: nine trials, three per object, each painted
-from scratch with its own mask. Raw evidence: `docs/measurement-trials-2026-08-04.json`.
+### `Test_Grass.mp4` — outdoor, raised planter beside a patio
 
-| Object | Truth | n | Mean | Median | Spread (max−min) | Median time | Error |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| B1 door leaf | 2.100 | 3 | 2.0197 | 2.0184 | **0.0059** | 5 s | −0.080 (−3.8%) |
-| B2 floor → table | 0.750 | 3 | 0.6983 | 0.6971 | **0.0041** | 10 s | −0.052 (−6.9%) |
-| B3 tower extent | 0.450 | 3 | 0.4275 | 0.4276 | **0.0009** | 5 s | −0.023 (−5.0%) |
+Run `20260814-174520-eebd17` · 64 frames at 5 fps over 12.8 s · 280×504 px · 21.9 s GPU.
 
-B4 is absent because its contact point is hidden. Inventing that endpoint would make the table
-more complete and the evidence less honest. B5 has not been re-measured under this protocol.
+| # | Object | What is measured | Truth |
+|---|---|---|---|
+| T1 | Grass | a row of clumping plants, base of the clump to leaf tips | **0.450 m** |
+| T2 | Plant | base to top | **0.500 m** |
 
-### The error model on these three objects
+⚠️ **Neither "Grass" target is a lawn.** Both are clumping ornamental plants with leaf tips a
+person can put a tape against. Lawn height is a different problem — a mown surface has no single
+top to tape, so the number being claimed has to be defined first, which is `docs/TASK.md` item 4.
+Nothing below speaks to it.
 
-| | Value | Meaning |
-|---|---:|---|
-| slope `a` | **0.969** | The model's raw scale on this clip is about 3% low |
-| offset `b` | −0.018 m | A small fixed offset |
-| residual scatter | 0.008 m | Consistency, **not** a noise floor — three points, two parameters |
-| B1 scale factor | 1.040 | What door-based correction would multiply by |
-| raw average error, B2 + B3 | **0.0371 m** | |
-| corrected average error, B2 + B3 | **0.0147 m** | |
+**Both grass truths were taped from the base of the clump** (user-confirmed, 2026-08-15), which is
+the same quantity the extent measurement reports. Both clumps sit on raised beds, so a tape from
+the surrounding patio would have measured something else entirely and the two would not be
+comparable.
 
-### Checked a second time, by an instrument with no operator in it
+### `test-demo-door.mp4` — the earlier indoor clip
 
-Added 2026-08-08. The table above rests entirely on hand-painted masks, so it could not rule out
-the possibility that the masks themselves were the error. `inspect levels` measures the same table
-with no mask, no segmentation model and no person: it takes every point's height above the fitted
-floor and finds the surfaces as spikes in the distribution. Different evidence, different code
-path, same physical quantity.
+35.57 s · 1067 frames · HEVC · portrait · 55.6 MB. Fixture `door-504px-112f`.
 
-| Instrument | Floor → tabletop | Points used |
-|---|---:|---:|
-| Brush, three trials, one operator | 0.6983 m | ~600 |
-| Height histogram, no mask | **0.6994 m** | 6,640 |
-| A second reconstruction of the same clip (`20260806-173802`, 81 frames) | 0.7013 m | 6,454 |
-| Tape | **0.750 m** | — |
+| # | Object | What is measured | Truth |
+|---|---|---|---|
+| B1 | Door leaf | bottom edge to top edge | **2.100 m** |
+| B2 | Table | floor to tabletop | **0.750 m** |
+| B3 | Computer tower | its own height, from where it rests | **0.450 m** |
+| B4 | Curved monitor | stand contact to top of screen | **0.534 m** — not gradable, the stand's contact point is hidden |
 
-**The two instruments agree to 1.1 mm, and two independent reconstructions agree to 1.9 mm.** So
-the −5.1 cm against the tape is not the operator, not the brush and not the mask. It is in the
-reconstruction. Painting is not the weak link, and the repeatability figures above are measuring
-what they claim to.
-
-The band was checked by eye as well as by number: painting 0.68–0.72 m onto frame 93 covers the
-desk top and nothing else.
-
-⚠️ **This checks B2 only.** The instrument finds surfaces, so it cannot reach B1 (a door leaf),
-B3 (a tower) or B4 (a monitor). Those three remain graded on masks alone.
-
-### Floor quality at this setting
-
-The ground fit is part of the result, not decoration. A small fit error with little support is not
-evidence of a floor.
-
-| Setting | Support | Tilt vs camera-derived vertical | Fit error | Hypothesis chosen |
-|---|---:|---:|---:|---|
-| **504 px · 112f** | **14.6%** | 11.8° | **0.012 m** | whole cloud |
-| 356 px · 256f | 10.5% | 15.4° | 0.018 m | whole cloud |
-| 252 px · 256f | 2.7% | **9.1°** | 0.020 m | lower region |
-
-All nine trials reported byte-identical floor diagnostics (support 0.145536, tilt 11.84694728°,
-fit error 0.01231087 m, camera agreement 0.94942707). Determinism was asserted by a unit test and
-is now confirmed end to end by independent user-driven recordings.
-
-**Those diagnostics survived the 2026-08-08 selection-rule fix unchanged**, to six decimal places
-and the same 9096 inliers. The rule that decides which candidate plane wins was rewritten and this
-fixture's floor did not move at all, so every graded number above still stands on the plane it was
-taken against. The 356 px and 252 px rows below did move, and their floors were wrong before.
+`test_demo.mp4` (26.61 s, 3840×2160, same room) has three tape truths and no graded object. Its
+reconstructions exist to compare resolutions offline.
 
 ---
 
-## Resolution and frame count — the verdict
+## Current results
 
-Raw error is averaged over the holdout objects, excluding whichever object supplies the
-correction. "Corrected" multiplies every predicted length by the door's truth-over-raw factor,
-which is mathematically consistent because extents are lengths.
+Median of three independently repainted trials per target, except where noted. Collected
+2026-08-13 to 2026-08-15; the door rows are the 2026-08-04 study, replayed unchanged.
 
-| Setting | GPU time | Raw average error | Corrected average error |
-|---|---:|---:|---:|
-| **504 px · 112f** | 31.3 s | **0.061 m** | **0.026 m** |
-| 356 px · 256f | 40.8 s | 0.193 m | 0.029 m |
-| 252 px · 256f | 16.5 s | 0.227 m | 0.187 m |
+| Clip | Target | Mask | Truth | n | Median | Error | | Spread |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| RoomNewFixture | PC tower | brush | 0.440 | 3 | 0.4455 | +0.0055 | **+1.3%** | 6.2 mm |
+| RoomNewFixture | Table | brush | 0.730 | 3 | 0.7324 | +0.0024 | **+0.3%** | 11.1 mm |
+| RoomNewFixture | Monitor | brush | 0.430 | 3 | 0.4286 | −0.0014 | **−0.3%** | 3.1 mm |
+| Test_Grass2 | Grass-Exe1 | brush | 0.980 | 3 | 0.9983 | +0.0183 | **+1.9%** | 15.5 mm |
+| Test_Grass2 | Garden light | brush | 0.300 | 3 | 0.3005 | +0.0005 | **+0.2%** | 7.2 mm |
+| Test_Grass | Grass | automatic | 0.450 | **1** | 0.4751 | +0.0251 | **+5.6%** | — |
+| Test_Grass | Plant | automatic | 0.500 | **1** | 0.4635 | −0.0365 | **−7.3%** | — |
+| door-504px-112f | Door leaf | brush | 2.100 | 3 | 2.0184 | −0.0816 | **−3.9%** | 5.9 mm |
+| door-504px-112f | Table top | brush | 0.750 | 3 | 0.6971 | −0.0529 | **−7.0%** | 4.1 mm |
+| door-504px-112f | PC tower | brush | 0.450 | 3 | 0.4276 | −0.0224 | **−5.0%** | 0.9 mm |
 
-**Use 504 px with 112 frames.** It wins on raw error and on corrected error, costs less GPU time
-than the 356 px alternative, and preserves small objects. At the same frame count, 252 px loses
-too much spatial detail.
+Spread is `max − min` within one sitting. It is operator repeatability, **not** measurement
+uncertainty — see the warning at the end of the protocol section.
 
-⚠️ **The corrected column uses an earlier, worse door measurement** (1.887 m rather than 2.020 m),
-because only the 504 px setting has been re-measured under the trial protocol. The ranking is
-unaffected — 504 px already won on raw error, which needs no correction at all — but the corrected
-figures for all three rows are stale. Recomputing them honestly needs the 356 px and 252 px doors
-re-measured, which is another nine trials nobody has painted.
+Full per-trial table, provenance and images: `.inspect/evidence/SUMMARY.md`, rebuilt by the
+command at the top of this file.
+
+### The headline: the −5% bias was the clip, not the pipeline
+
+The door study found every object reading 3.9–7.0% low and concluded the model's raw scale on that
+clip was a few percent short. That conclusion was right about the clip and wrong as a description
+of the system. **On two later clips, five brushed targets read +0.2%, +0.3%, −0.3%, +1.3% and
++1.9%.** The largest absolute error among them is 18.3 mm on a 0.98 m plant; three of the five are
+under 6 mm.
+
+Nothing in the measurement path changed between the two studies to explain this. What changed was
+the capture, and the honest statement is that **this pipeline's accuracy is a property of the clip
+and not a constant of the system.** A per-clip scale correction remains the right mental model;
+what is new is that a well-captured clip may need no correction at all.
+
+⚠️ **Do not read this as "the pipeline is now accurate to 2%."** Five targets on two clips, both
+recorded by one person who had already learned what makes a good capture, is what it is. The
+mechanism that makes one clip land at +0.3% and another at −7.0% is not identified, which means it
+is also not yet controlled.
+
+### The automatic mask is the weak row, and it measures differently
+
+The two automatic-mask trials are the worst results in the new study (+5.6%, −7.3%) and each is a
+single trial, so neither has a spread and neither should be quoted as a rate.
+
+They are also not the same instrument as the rows above them. When the mask comes from the
+browser-local segmentation model, `Measure Height` keeps only the top and bottom tenth of the
+masked points by height and takes its percentiles within those tails; a brushed mask gets no such
+treatment. Measured on these two trials:
+
+| Target | Truth | Full mask, no adapter | Adapter supplies | Reported |
+|---|---:|---:|---:|---:|
+| Grass | 0.450 | 0.4010 (−10.9%) | +7.4 cm | 0.4751 (+5.6%) |
+| Plant | 0.500 | 0.4133 (−17.3%) | +5.0 cm | 0.4635 (−7.3%) |
+
+The adapter is doing most of the work and it is doing it in the right direction — a dense mask's
+2nd and 98th percentiles genuinely do sit inside the real ends. But **5–7 cm of a 45–50 cm answer
+is arriving from a correction rather than from the reconstruction**, and on this evidence it
+overshoots on one target and undershoots on the other. Two trials cannot separate the adapter's
+error from the reconstruction's.
+
+### The choice of vertical matters far more outdoors
+
+Every trial is also measured against the gravity estimate instead of the fitted floor normal, as a
+control. The two never agree exactly; how much they disagree is the interesting part.
+
+| Target class | Reading minus gravity control |
+|---|---:|
+| Indoor rigid objects (9 trials, both indoor clips) | 0.6 to 4.0 cm |
+| Garden light — outdoor, rigid (3 trials) | 0.9 to 1.7 cm |
+| Grass-Exe1 — outdoor, clumping plant (3 trials) | 7.3 to 8.2 cm |
+| Grass — outdoor, clumping plant, automatic mask (1 trial) | **24.3 cm** |
+
+A rigid object is a rigid object whichever direction you call up: outdoors and indoors it moves by
+a couple of centimetres. A sprawling plant is not. Its points spread sideways as well as upward, so
+tilting the measurement axis by a few degrees sweeps a different part of the clump into the top and
+bottom bands. **The 24.3 cm row is the warning in this table**: that target's answer depends on
+which vertical you choose almost as much as on the reconstruction.
+
+### Floor quality on the new clips
+
+The ground fit is part of the result, not decoration. Eight fits per clip differing only in the
+RANSAC seed (`inspect floor <id> --repeat 8`, 2026-08-15):
+
+| Clip | Support | Tilt vs camera-derived vertical | Height spread over 8 seeds | Below plane |
+|---|---:|---:|---:|---:|
+| RoomNewFixture | 10.7% | 17.4° | **0.4 mm** | 0.0% |
+| Test_Grass (patio) | 34.2% | 22.5° | 6.9 mm | 0.0% |
+| Test_Grass2 (lawn) | 27.8% | 23.5° | 6.5 mm | 0.4–0.5% |
+
+Support and tilt are the default seed's, which is the one the app uses; the spread column is the
+range across all eight.
+
+The outdoor clips have three times the floor support of the indoor one, which is what a large
+uninterrupted lawn or patio should give. None of the three refused, none put a meaningful fraction
+of the cloud below the plane, and all are stable under reseeding.
+
+The two clumping-plant targets sit on **raised beds**, so their lower endpoint lands 10–17 cm above
+the fitted floor while the indoor table's lands at 0.000 m. That is not an error: an extent is a
+difference of two heights above the same plane, so a raised bed cancels out of it. It is visible
+in the framed elevation images — the fitted floor is drawn across each one, and the ruler's lower
+end sits clearly above it.
 
 ---
 
-## What the trials established
-
-**Repeatability within one sitting is excellent, and the study's own premise was wrong.** It was
-designed on the assumption that the door's 1.887 m → ≈2.0 m swing was operator jitter of order
-0.1 m. It is not: the same person reproduces an endpoint to **1 to 6 mm**, which is 15 to 90 times
-*smaller* than the error against the tape measure. Endpoint placement is one of the most
-repeatable parts of this pipeline, not the least.
-
-**What is left is bias, and bias is correctable.** All three errors are negative and of similar
-relative size (−3.8%, −6.9%, −5.0%). With scatter that small, the residual is dominated by
-systematic scale — exactly the error the calibration line removes. With the door correctly at
-2.020 m, the model's raw scale on this clip is about 3% low, not the ~11% a single earlier
-measurement implied. That one measurement was carrying most of the apparent scale error.
-
-**The earlier figures came from a worse operator, and the cause is known.** Compared against the
-frozen single measurements from 2026-08-03, B1 moved +0.133 m and B3 +0.021 m — 23 and 24 times
-their within-sitting spread. Those masks were painted in an earlier agent session, and the door
-mask's lower edge never reached the bottom of the leaf (user-confirmed, 2026-08-04). That is one
-identifiable mistake, not scatter, and it does not belong in an uncertainty budget.
-
-**The dangerous case is a wrong answer that looks healthy.** The 1.887 m result arrived with a
-±0.037 m local spread, a supported floor, a 2 cm fit error and a plausible number. Nothing in the
-reported statistics distinguished it from the correct 2.020 m — only looking at where the mask sat
-did. This is why the app highlights the selected points live in 3D while painting, and why an
-automatic mask must be able to abstain rather than quietly return a confident short answer.
-
-⚠️ **Do not quote 1–6 mm as the measurement uncertainty.** It bounds one sitting of one operator
-who knows this scene, and it is by construction blind to a mask placed in the wrong place — which
-is the failure that actually happened here.
-
-### The trial protocol
+## The trial protocol
 
 For each object, at one setting:
 
@@ -190,25 +207,85 @@ For each object, at one setting:
 
 Report `max − min` as the operator spread; at three to five trials that is the honest statement.
 
+⚠️ **Do not quote the spread as measurement uncertainty.** It bounds one sitting of one operator
+who knows the scene, and it is by construction blind to a mask placed in the wrong place. On the
+door clip that exact failure produced a 1.887 m reading with a healthy ±0.037 m spread, a supported
+floor and a plausible number; nothing in the reported statistics distinguished it from the correct
+2.020 m, and only looking at where the mask sat did. This is why the app highlights selected points
+live in 3D while painting.
+
+### Known bias in the operator, stated plainly
+
+The person painting these masks can see the reading update as they paint, and knows the tape truth
+for most targets. That is a route for the mask to be adjusted, consciously or not, until the number
+looks right — and the results above cannot rule it out. Three things bound it, none of which
+eliminate it:
+
+- The garden light (+0.2%) and the monitor (−0.3%) are rigid objects with unambiguous ends, where
+  there is little freedom to move a mask without obviously leaving the object.
+- The mask-free control on the door clip found the same tabletop within 1.1 mm of the brushed
+  result, so on that clip the brush was not where the error lived.
+- Every mask is frozen and can be looked at. `.inspect/evidence/` draws all 26 of them on their
+  source frames.
+
+The clean way to close this is a mask painted by someone who has not seen the truth, or a
+mask-free instrument for each target class. Neither exists yet for the new clips.
+
+---
+
+## Resolution and frame count — the verdict
+
+Measured on the door clip only. Raw error is averaged over the holdout objects, excluding whichever
+object supplies the correction.
+
+| Setting | GPU time | Raw average error | Corrected average error |
+|---|---:|---:|---:|
+| **504 px · 112f** | 31.3 s | **0.061 m** | **0.026 m** |
+| 356 px · 256f | 40.8 s | 0.193 m | 0.029 m |
+| 252 px · 256f | 16.5 s | 0.227 m | 0.187 m |
+
+**Use 504 px with 112 frames.** It wins on raw error and on corrected error, costs less GPU time
+than the 356 px alternative, and preserves small objects. Every clip in the new study used it.
+
+⚠️ **The corrected column uses an earlier, worse door measurement** (1.887 m rather than 2.020 m),
+because only the 504 px setting was re-measured under the trial protocol. The ranking is unaffected
+— 504 px already won on raw error, which needs no correction — but the corrected figures for all
+three rows are stale.
+
 ---
 
 ## What is established, and what is not
 
-**Established on clip B.** The pipeline takes sparse two-dimensional endpoint evidence, places it
-correctly on the reconstruction, recovers a supported ground direction, measures extents, and
-audits the result against tape measurements. At 504 px the best observed errors are roughly 0.08 m
-on the 2.10 m door and 0.02–0.05 m on the table and tower. Short-term repeatability is 1–6 mm.
+**Established.** The pipeline takes sparse two-dimensional endpoint evidence, places it correctly
+on the reconstruction, recovers a supported ground direction, measures a vertical extent, and
+audits the result against tape. Across three clips and two scene types, **eight brushed targets
+from 0.30 m to 2.10 m have been graded against tape**, and on the two clips captured after
+2026-08-11 the error is within 2%. Short-term repeatability is 0.9–15.5 mm. Every recorded trial
+replays exactly from its frozen mask.
 
-**Not established.** Any accuracy figure across new rooms, phones, camera paths, floor visibility
-or outdoor terrain. The benchmark is one clip, one room and one operator.
+**Established outdoors, specifically.** Outdoor scenes are not a failure mode. Both outdoor clips
+produced better floor support than the indoor one, and a rigid outdoor object (the garden light)
+was measured to +0.5 mm on a 0.300 m truth.
 
-**The largest open risk** is between-sitting repeatability. The 23–24× shifts show that variation
-across sittings exists and that back-to-back trials cannot measure it. A second capture with a
-different camera orientation and path remains untested.
+**Not established.**
+
+- Turf, ground cover, or any surface without a single identifiable top. Nothing here measures it.
+- Any accuracy figure across cameras, operators, or a scene nobody has taped. One person, one
+  phone, one garden, one room.
+- The automatic mask as a graded instrument. Two trials, no repeats, and 5–7 cm of each answer
+  supplied by an adapter whose own error is not separable on this evidence.
+- Why one clip lands at −7.0% and another at +0.3%. This is the largest open question in the
+  project, and until it is answered a new clip's accuracy cannot be predicted before taping it.
+
+**The largest open risk** remains between-sitting repeatability. All three trials of a target are
+painted back to back, so they cannot see variation that arrives with a new sitting, a new mask
+style or a new day. The Monitor target is the one partial exception — its three trials were
+recorded on 2026-08-15, two days after the other two targets in the same run, and it produced the
+smallest spread in that clip (3.1 mm).
 
 **Two endpoint measurements can be enough**, and this is deliberate. The brush does not need to
 outline every pixel: it needs trustworthy 3D points near the intended lower and upper endpoints.
 The measurement takes robust height percentiles along the fitted ground direction, and the line
-drawn in 3D is the ruler between those bands — not invented geometry, and not a claim that the
-pixels between them were inferred. A connecting stroke still helps when it stays on the object,
-because it supplies more points and makes an accidental endpoint easier to see.
+drawn in 3D is the ruler between those bands — not invented geometry. A connecting stroke still
+helps when it stays on the object, because it supplies more points and makes an accidental endpoint
+easier to see.

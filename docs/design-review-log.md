@@ -6,6 +6,124 @@ the checklist in [DESIGN.md](DESIGN.md), what was measured, and what was fixed a
 This is a record, not a task list. Anything a review found and left unfixed becomes a task in
 [TASK.md](TASK.md); findings below describe the state on their own date.
 
+**Grade every item; write down the ones that carry information.** From 2026-08-12 an entry holds
+the items that failed, the items whose grade changed, the items measured for the first time, and
+one line collapsing the rest — *"Items 1–9, 11–14, 16–20, 22–28: PASS, unchanged from
+2026-08-09"*. The full form ran about fifty lines an entry, of which roughly eight were new: the
+remainder was `N/A` for a pane the change never touched and `PASS, unchanged` for one nobody
+looked at. Both are true, neither is evidence. Grading every item is what catches a regression;
+writing every item down is what buries the lines that matter. The entries below 2026-08-12 are in
+the old form and are left as they were written.
+
+**This file is allowed to grow, and has no size budget.** It is a record of dates and nobody
+reads it start to finish. When it becomes unwieldy, summarise the older entries by hand — keep
+each one's date, commit and findings, drop the rest — rather than trimming as you go. A retention
+rule enforced by the docs check would make that a chore on somebody's critical path, which is how
+evidence gets deleted in a hurry to make a build pass.
+
+## 2026-08-13 — target identity and delete-by-archive, 1280×800 (working tree on a932364)
+
+Focused pass for the change that made a target's identity independent of its name, restored target
+definitions from disk evidence, and turned both delete paths into archiving. Graded on
+`RoomNewFixture` rather than the door, because the recovery path is what this change is about and
+the room is the run with recorded trials on disk. Every item graded. No inference ran, no service
+was deployed.
+
+**Object codes are not unique — FAIL, pre-existing, and this change makes it reachable.** The room
+clip holds `T2 = Monitor` and `T2 = PC Tower`: two different objects under one label, drawn that
+way on the rulers in Viewport 3D (`T2 · 0.440 m`) and listed that way in Objects. `AddTargetForm`
+issues `T${existing.length + 1}`, a position rather than an identity, so any deletion frees a
+number for the next target to take. It was always possible; removing a target is now something the
+interface actually does, and recovery from disk restores the codes as they were recorded. This is
+the same defect as the id-from-name bug one layer up — the code is what a person reads on the
+ruler. Fixed in the main loop by `nextTargetCode`, which takes the highest code ever issued rather
+than counting rows, so a deletion leaves a gap instead of freeing the label. Re-graded in the
+running app: with `T1`–`T3` present the next target came back `T4`. The two `T2`s already stored
+are left as they are — repairing them means editing recorded packets, and this clip's definitions
+are about to be replaced by the fresh study.
+
+**19 — Narrow pane — PASS for controls, measured for the first time on `.pane-status`.** At a
+179 px Objects pane, two row children sit outside it: the counter span (right edge 1326 against
+the pane's 1280) and the `.hint` clip name (1445). Both are text, not controls, and
+`.pane-status` is `white-space: nowrap; overflow: hidden` deliberately — the reason the Blind chip
+was moved out of that row in an earlier pass. No document scroll (`scrollWidth` 1280 = `innerWidth`).
+Recorded because the number is new, not because the item changed.
+
+**7 — Pane status rows — PASS, and one number is now true that was not.** The Objects row read
+`5 targets · 33 trials · RoomNewFixture.mp4` while 16 of those trials were the room's and 17 the
+door's: `ui.observations.length` is the whole store, printed beside one clip's name. It now counts
+this clip's runs and reads `4 targets · 13 trials`.
+
+**10a — Reference comparison — PASS, no drift introduced.** `advanced-measured.png` shows the
+Objects status row as `5 targets · 17 trials` on the door fixture, where the store held only door
+trials, so the scoped counter prints the same figure there. The capture stays valid for this row.
+
+**22 — Measurement headline — not graded live.** With no mask painted, Viewport 3D reads
+`T1 Table  paint this target in Depth 2D to measure it`, the same state the reference capture is
+deliberately frozen in. Painting an honest mask cannot be scripted from a guess, and this change
+touches neither the headline nor the measurement path.
+
+Items 1–6, 8, 9, 11–18, 20, 21, 23–28: PASS, unchanged from 2026-08-12. Measured this pass:
+background `rgb(13,13,15)`; tab strip 26 px; columns 512/512/256 = 40/40/20; no rendered text above
+14 px; the recovery line `Recovered 13 recorded trials and 4 targets from disk` computes
+`rgb(138,138,144)` at 9 px on `.honesty-note`, so item 26 holds — it is not amber and it names what
+happened rather than what to press.
+
+## 2026-08-12 — recorded evidence in the 3D scene, 1280×800 (working tree on 61cc56e)
+
+Focused pass for the recorded-evidence layer: the **Show evidence** chip (Standard, default on),
+the labelled rulers drawn from frozen trials, the bottom-left evidence note, and the new `ruler`
+cell in the Objects trial list. Every item graded. No inference ran, no service was deployed. The
+door fixture was measured locally to produce trials to draw; disk writes were refused by the local
+API's loopback-origin guard, so `~/verge-runs` was left at its 33 door packets, unchanged.
+
+**26 — No amber instruction text — FAIL.** `.evidence-note` computes `rgb(232,169,91)`
+(`--port-measurement`) against `--accent-busy` `#f59e0b`. The two differ mostly in blue (91 vs 11)
+and are not separable as a single line over a point cloud. The line states what is drawn rather
+than what to press, so it does not break the rule's letter — but it is on permanently whenever
+evidence is shown, which is exactly the desensitising the "Amber is a warning" section exists to
+prevent. Fixed in the main loop: the note takes `--text-dim` like `.viewport-overlay` and now
+computes `rgb(138,138,144)`; the measurement hue stays on the rulers and their labels, where it
+encodes the data type.
+
+**19 — Narrow pane — FAIL, pre-existing and worsened.** With Objects at 180 px, a `.trial-list`
+row measured `scrollWidth` 266 against `clientWidth` 148, putting the ruler cell, the paint time
+and the discard `×` outside the pane, unreachable. The row was already over budget before this
+change — six fixed columns plus gaps came to 219 px against a 148 px content box, so `×` was
+already lost — and the new 36 px ruler column plus its gap added 41 px. Fixed in the main loop by
+scrolling the list rather than clipping it: `overflow-x: auto` on the `<ol>` so the columns stay
+aligned under one scrollbar instead of six, the mask column floored at 72 px, and the row's
+`min-width: min-content`, which a grid derives from its own column list and so tracks any column
+added later. Re-measured at 180 px: `scrollWidth` 344 against `clientWidth` 148, and scrolling to
+the end brings the ruler cell, the paint time and the `×` inside the pane — all four cells were
+unreachable at any scroll position before.
+
+**10a — Reference comparison — FAIL, capture stale, not app drift.**
+`docs/reference/default-standard.png` shows the Viewport 3D VIEW row ending at `Cameras`; the row
+now carries `Show evidence` after it. That is the intended change, so the capture is what is out
+of date. Redrawing it needs the user's agreement and has not been done.
+
+**First measurements this pass.** Viewport 3D Standard control rows: `.pane-controls` 19 px +
+`.output-row` 19 px, with `.result-strip` 23 px as reserved chrome — two control rows, unchanged,
+because the chip went inside the existing VIEW row rather than adding one. `Show evidence` chip
+font 10 px. The evidence note is 19 px tall, 11 px mono, and at a 180 px pane measures 172 px
+wide with no overflow. At 180 px the VIEW row wraps to 75 px with zero children outside the pane.
+
+**Interactions verified.** Orbit: two screenshots either side of a drag differ, and the ruler,
+its endpoint markers and its label all follow the scene while the label holds a constant size on
+screen — `sizeSceneLabels` reads the live projection each frame, so a resize, a mode change and
+Cinematic's zoom do not need the sprites rebuilt. Toggling `Show evidence` off leaves only a
+trial explicitly singled out from Objects, and the note drops from `RECORDED 3 RULERS · AS
+MEASURED` to `RECORDED 1 RULER · B3 SINGLED OUT`. In Free the chip is disabled and says why. A
+reload restores the trials and redraws their rulers on re-entering object context.
+
+**Items 1–9, 11–18, 20–25, 27–28: PASS.** Body computed `rgb(13,13,15)`; no horizontal scroll at
+1280×800; tab strips 26 px; largest in-pane font 13.33 px; result strip does not overlap the
+canvas. Item 2 holds for the new controls without relying on hue: the chip carries `aria-pressed`
+and a background change, the trial-list `ruler` cell adds `font-weight: 600` beside its colour,
+and focus in the scene is a brightness difference (opacity 1 against 0.5), all of which survive
+greyscale.
+
 ## 2026-08-11 — repository-local cloud configuration, 1280×800 (commit pending on 2b8c725)
 
 Focused pass for the status-bar and Cloud-control change. The full 28-item publication pass

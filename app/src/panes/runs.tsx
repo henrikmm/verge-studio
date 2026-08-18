@@ -10,6 +10,7 @@
 import { useState } from "react";
 import { refreshRuns, useRuns } from "../lib/runs-store";
 import { deleteRun, estimateSaveBytes, formatBytes, saveRun, type RunRecord } from "../lib/runs";
+import { removeObservationsForRun } from "../measurement/measurement-store";
 import { setNodeParam, runAuto, useGraph } from "../graph/graph-store";
 import { FIXTURE_RUN_ID } from "../graph/nodes";
 import { DEFAULT_RUN_ID } from "../graph/nodes/fixture-run";
@@ -230,12 +231,20 @@ export function RunsPane() {
               void act(async () => {
                 if (
                   !window.confirm(
-                    `Delete ${run.label}?\n\nThis removes its artifacts from disk permanently. Recorded measurements that reference it stay, but become unverifiable.`,
+                    `Delete ${run.label}?\n\nIts artifacts go from disk permanently — rerunning the clip is the only way back. Recorded trials are archived to ~/verge-runs/.archive first, and stop appearing in this session.`,
                   )
                 ) {
                   return;
                 }
-                await deleteRun(run.id);
+                const { archived } = await deleteRun(run.id);
+                // The rows outlived the run: no run left to select them under, nothing to remove
+                // them, and the export still counting them. Their packets are in the archive.
+                const dropped = removeObservationsForRun(run.id);
+                setNote(
+                  archived || dropped.length
+                    ? `Deleted ${run.label}; archived ${archived} recorded trial${archived === 1 ? "" : "s"}`
+                    : `Deleted ${run.label}`,
+                );
               })
             }
           />

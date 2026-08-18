@@ -96,8 +96,14 @@ export async function saveRun(id: RunId): Promise<{ run: RunRecord; output: stri
   )) as { run: RunRecord; output: string };
 }
 
-export async function deleteRun(id: RunId): Promise<void> {
-  await expectOk(await fetch(`${BASE}/runs/${encodeURIComponent(id)}`, { method: "DELETE", headers: localApiHeaders() }));
+/**
+ * Delete a run's artifacts. Its recorded trials are archived first, and `archived` says how many —
+ * the artifacts can be reconstructed by running the clip again, the trials cannot.
+ */
+export async function deleteRun(id: RunId): Promise<{ deleted: RunId; archived: number }> {
+  return (await expectOk(
+    await fetch(`${BASE}/runs/${encodeURIComponent(id)}`, { method: "DELETE", headers: localApiHeaders() }),
+  )) as { deleted: RunId; archived: number };
 }
 
 /**

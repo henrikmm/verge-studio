@@ -32,6 +32,104 @@ written. Unticked boxes are allowed in this file and nowhere else in the reposit
 
 ## Now
 
+### 9. Find out why one clip reads −7% and another +0.3%
+
+**Why.** This is now the largest open question in the project. The door clip's three objects read
+3.9–7.0% low, and five brushed targets on the two clips captured after 2026-08-11 read within 2%.
+No code in the measurement path changed between them. Until the cause is known, **no clip's
+accuracy can be stated before something in it is taped**, which is the single biggest limit on the
+tool being useful to anyone who does not own a tape measure.
+
+**Gate.** A named, measured mechanism that predicts the sign and rough size of the scale error on a
+clip the prediction was not fitted to. "We looked and could not find one" is a real outcome and
+must be written up as such rather than left open.
+
+**Regression.** None to the measurement path; this is an investigation of it. Nothing here may
+change a recorded number — `scripts/collect-evidence.mjs` must replay all 26 trials unchanged.
+
+**Approval.** `none` for the analysis, which is entirely local. `cloud spend + user confirmation`
+if it turns out to need new reconstructions.
+
+**Start.** `.inspect/evidence/manifest.json` has all 26 trials with their floor diagnostics.
+`inspect run <id>` reports sampling fps, duration and resolution for each; the door clip sampled
+2.6 fps over 42.7 s where the outdoor clips sampled 5 fps over 13–19 s. REGISTRY section 3,
+"The −5% scale error was the clip, not the pipeline".
+
+- [ ] List what actually differs between the clips: sampling rate, duration, camera path length,
+      depth range, scene scale, texture. Measure them rather than recalling them.
+- [ ] Check the cheap hypothesis first — the door clip's floor has 10.7% support against 27–34%
+      outdoors, and a plane fitted to less evidence can be tilted without looking wrong.
+- [ ] Whatever the candidate, test it against a clip it was not derived from.
+
+### 10. Make automatic selection work on a plant
+
+**Why.** Measuring a plant's own extent works. Brushed by hand, one clump read +1.9% against tape
+and another rigid outdoor object read +0.2%. The measurement is not the weak part.
+
+Automatic selection is. Its one plant trial read +5.6%, and the reason is not that the mask missed
+blades — it is that **the mask covered the wrong amount of the world.** Clicking on a plant asks
+SlimSAM for "the thing I clicked", and on vegetation the thing it returns is the whole textured
+region: a three-metre row of separate clumps at different distances from the camera.
+
+The evidence is already recorded, and it separates the cases cleanly:
+
+| Trial | What the mask covered | Endpoint pieces, bottom / top | Camera distance, top − bottom | Error |
+|---|---|---|---|---|
+| Garden light, brushed | one rigid object | 1 / 1 | −0.09 m | +0.2% |
+| Grass-Exe1, brushed | **one clump** | 1 / 1 | −0.04 m | +1.9% |
+| Grass, automatic | **a row of clumps** | **7 / 6** | **+0.64 m** | +5.6% |
+
+Read the bottom row: the two ends of that "object" are 64 cm apart in distance from the camera, and
+each end is built from six or seven disconnected pieces. It measured the base of a near clump
+against the tip of a further one. That is not a plant's height, and nothing on screen said so.
+
+A good mask and a bad one are therefore already distinguishable from numbers the code computes —
+just not in the app.
+
+**Gate.** Three things, in order:
+
+1. The app shows, while painting, how many separate pieces each endpoint band is made of and how
+   far apart the two bands sit in camera distance. It warns when a mask looks like the bottom row
+   above. The thresholds come from the table — good masks sit at 1 piece and under 0.1 m.
+2. Automatic selection on the two plant targets produces masks that pass that check, three trials
+   each, repainted from scratch.
+3. Those trials are graded against tape and reported in `MEASUREMENTS.md`, with the full-mask
+   control beside each reading. Either the automatic rows join the graded table or they leave it.
+
+**Regression.** The brush path must not change. `node scripts/collect-evidence.mjs` must still
+replay every trial with no failures, brushed rows included.
+
+**Approval.** `user confirmation` for the wording of the warning, since it is a refusal the
+operator has to act on. Everything else is local and free — the runs are already on disk.
+
+**Start.** `app/src/measurement/segmenter.ts` is the whole segmentation path: SlimSAM-77 on WebGPU,
+click-prompted, decoding three candidate masks and keeping whichever the model scores highest.
+`voxelConnectivity` and the camera-depth numbers in the table above already exist — `inspect
+measurement <run> <trial>` prints them under "endpoint components" and "camera depth", and
+`cmdMeasurement` in `scripts/inspect.mjs` shows how they are computed.
+
+Ideas worth trying, cheapest first:
+
+- [ ] **Pick the candidate by geometry, not by the model's own score.** Three masks are already
+      decoded per click and the app keeps the highest predicted IoU — a guess about mask quality,
+      not about whether the mask is one plant. Back-project all three and prefer the one whose
+      endpoints are single pieces at matching camera distance. No new model, no new download.
+- [ ] **Say why a mask is bad, not just that it is.** The store already tells the operator to add
+      negative clicks when a mask touches the image boundary. Nothing tells them when it is too
+      deep — which is the failure that actually happened here.
+- [ ] **Reject background points after back-projection, not before.** The depth-step filter
+      rejected at most 10 pixels on any trial in the whole study — out of masks up to 22,809
+      pixels — and 0 on four of the five plant trials. Whatever is keeping the wall out of a
+      vegetation mask, it is not that filter. A cut on distance from the mask's own front surface
+      would actually bite.
+- [ ] **Measure one target on three frames and compare.** A plant self-occludes and moves; one
+      frame is one sample of it. This bounds an error the repeat-trial protocol cannot see, because
+      all three trials currently use the same frame.
+- [ ] **Only then consider a bigger model.** SlimSAM-77 is heavily pruned and SAM decodes masks at
+      256×256, so blade-level detail is not representable at any setting. It also appears not to
+      matter: DA3 does not resolve blades either, and the smoothed single clump measured to +1.9%.
+      This is the last lever, not the first.
+
 ### 2. Let the app say "I cannot find the ground"
 
 **Why.** When the evidence for a floor is weak, the app picks a winner anyway and draws it exactly
@@ -94,35 +192,87 @@ idle while doing something else and come back.
       revision instance, rather than assuming the fifteen minutes elapsed.
 - [ ] Record the real cold-start duration against the quoted 64 s.
 
+### 8. Grade the orbit without asking the user
+
+**Why.** Acceptance item 5 wants proof that dragging inside Viewport 3D changes the camera, and
+until 2026-08-12 that needed the user's hand: every drag rests on `setPointerCapture`, which
+refuses events the page synthesised. What was wrong was the scope of that conclusion. Chrome's
+DevTools protocol injects at the browser level, its events are trusted, and a ten-step drag over
+the canvas orbits the camera — measured 2026-08-12, two screenshots either side showing the room
+from a different angle with both elapsed clocks unchanged. So the one review step that reliably
+interrupts a person is automatable, and is still being handed to them.
+
+**Gate.** A design review grades item 5 from a script, with the two screenshots as its evidence
+and no request to the user. The check fails when the camera does not move — proven by running it
+against a build with orbit disabled, not by watching it pass.
+
+**Regression.** `scripts/capture-reference.mjs` must keep producing the same five captures. This
+shares its CDP plumbing, and a refactor that makes the captures drift silently costs more than
+the manual orbit check ever did.
+
+**Approval.** `none`.
+
+**Start.** `scripts/capture-reference.mjs` has the whole mechanism — `dragSash` is the same shape
+the orbit needs. REGISTRY section 3, "Drag can be automated, but not from inside the page", has
+the measurement and the reason. The browser pane still cannot do this; do not retry it there.
+
+- [ ] Lift the CDP driving out of the capture script so both callers share it, without changing
+      what the captures look like.
+- [ ] Compare the two screenshots on pixels rather than byte length — a PNG can differ in size
+      for reasons that are not the camera.
+- [ ] Prove the check can fail before trusting it to pass.
+- [ ] Update the design-review skill so item 5 names the script instead of the human gateway.
+
 ---
 
 ## Later
 
-### 4. Decide what measuring grass means, then build it
+### 4. Decide what measuring a lawn means, then build it
 
-**Why.** Vegetation is the goal this project is aimed at, and we cannot currently measure it. A
-plant is not a door repeated many times: it has no single height to be right or wrong about, so
-the question has to be redefined before any code is written.
+**Why.** There are two different jobs hiding under the word "grass", and only one of them is done.
+
+**Measuring one plant** — a clump with leaf tips you can hold a tape against — works. Two of them
+are graded: 0.980 m read to +1.9%, 0.450 m to +5.6%. Both stand on raised beds and both still came
+out right, because the app measures a thing's own top against its own bottom, so the bed's height
+cancels out. Making that more reliable is task 10, not this one.
+
+**Measuring a lawn** is the job nobody has started. A mown lawn has no single top to put a tape
+on: press harder and you get a smaller number. So the question is not "how tall is it" but "what
+number are we claiming, and how would a person check it" — and that has to be answered before any
+code is written.
+
+Two measured constraints the design has to respect:
+
+- **The vertical matters much more here than for furniture.** Measured against the gravity estimate
+  instead of the fitted floor normal, rigid objects move 0.6–4.0 cm and clumping plants move
+  7.3–8.2 cm, with one automatic-mask trial at 24.3 cm. A few degrees of tilt sweeps different
+  parts of a sprawling canopy into the top and bottom bands.
+- **Outdoor ground is the easy half.** Both outdoor clips fitted a better floor than the indoor
+  one — 34.2% and 27.8% support against 10.7%, all stable across eight seeds. The floor under a
+  lawn is not what will make this hard.
 
 **Gate.** The definition and the physical reference protocol are agreed with the user first. Then
 the raster is built and checked against a real reference, reporting its error, how much of the
 area had enough evidence, and how often it abstained.
 
 **Regression.** The existing object measurement path must keep working. This adds a second way to
-measure, and must not disturb the one that is already graded against tape.
+measure, and must not disturb the one that is already graded against tape — `node
+scripts/collect-evidence.mjs` must still replay all 26 trials with no failures.
 
 **Approval.** `user confirmation` of what is being measured and how it will be checked, before any
 code. This is a definition problem before it is an engineering one.
 
 **Start.** `donor/` has a worked version of the cell-and-percentile approach and is the template.
-The outdoor clip on disk (`20260806-193346-26d16e`) is useful scene evidence, but its current
-1.150 m truth belongs to a large tree-like endpoint target. It is not grass truth and must not be
-relabelled as one.
+`Test_Grass2.mp4` (`20260814-174814-b245bc`) is the best scene evidence on disk: it has a mown lawn
+in the foreground, a graded 0.300 m rigid object standing on that lawn, and a floor fitted to 27.8%
+support. No lawn height has been taped in it.
 
 - [ ] Agree with the user what number we are claiming and how a person could check it.
 - [ ] Lay a grid on the local ground; take a robust height statistic per cell.
 - [ ] Gate each cell on coverage and confidence, and abstain where the evidence is thin. Do not
       try to find individual plants.
+- [ ] Decide which vertical the cell statistic is taken along, and justify it against the 7–24 cm
+      sensitivity measured above. This is a decision, not a default.
 - [ ] Output a heat map, not a list of objects.
 - [ ] Check it against the physical reference and report error, coverage and abstention rate.
 

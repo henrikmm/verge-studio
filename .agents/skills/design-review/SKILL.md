@@ -1,6 +1,6 @@
 ---
 name: design-review
-description: Visual QA loop — drive the running app in a browser, screenshot it, and grade it against the acceptance checklist in docs/DESIGN.md and the reference captures in docs/reference/. Run after any change you can see on screen.
+description: Visual QA loop — drive the running app in a browser, screenshot it, and grade it against the acceptance checklist in docs/DESIGN.md and this app's own reference captures in docs/reference/. Run after any change you can see on screen.
 ---
 
 # Design review
@@ -22,8 +22,12 @@ The canonical workflow, shared by every tool. Tool-specific adapters point here.
      own, with no other interaction, and that no costly node starts.
    - Wire selection: click a wire, confirm it highlights, press Backspace, confirm only that wire
      disappeared.
-6. **Squint test.** Read the reference captures in `docs/reference/` and compare darkness, density
-   and contrast. Name concrete mismatches ("our headers are twice as tall"), not impressions.
+6. **Compare against `docs/reference/`.** Those captures are this app, not a target to grow into,
+   so read the one showing the *same state* as your screenshot and name concrete mismatches
+   ("our headers are twice as tall"), never impressions. A mismatch is a finding in one of two
+   directions: usually the app has drifted, occasionally the capture is stale. Say which you
+   think it is. Redrawing them is `node scripts/capture-reference.mjs`, and it needs the user's
+   agreement first — see the head of `docs/DESIGN.md` for why.
 7. **Report a fix-list ordered by severity**: checklist item → what is wrong → suggested fix.
 
 **Do not fix anything inside this workflow.** Report, fix in the main loop, then re-run.
@@ -40,6 +44,22 @@ the item as passed, and do not leave the write-up to the user.
 
 ## Recording the result
 
-Add a dated entry at the **top** of `docs/design-review-log.md` with the commit it refers to, the
-viewport size, the grade for every item, and what was fixed during the pass. Anything found and
-left unfixed becomes a task in `docs/TASK.md` — the log records evidence, never a backlog.
+Grade every item. **Write down the ones that carry information.**
+
+Add a dated entry at the **top** of `docs/design-review-log.md`: the commit, the viewport size,
+what changed in this pass, then
+
+- every item that **failed**, with what you measured;
+- every item whose grade **changed** since the last pass, in either direction;
+- every item you measured **for the first time**, with the number;
+- one line collapsing the rest — *"Items 1–9, 11–14, 16–20, 22–28: PASS, unchanged from
+  2026-08-09"*;
+- what you fixed during the pass, and anything surprising that happened while grading.
+
+An entry written out in full runs about fifty lines, of which roughly eight are new: the rest is
+`N/A` for a pane the change never touched, and `PASS, unchanged` for one nobody looked at. Both
+are true and neither is evidence. Grading every item is what makes a regression visible; writing
+every item down is what makes the useful lines hard to find.
+
+Anything found and left unfixed becomes a task in `docs/TASK.md` — the log records evidence,
+never a backlog.
